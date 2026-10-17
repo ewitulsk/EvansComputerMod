@@ -2,9 +2,11 @@ package com.example.evanscomputermod.computer.wasi;
 
 /**
  * File descriptor backed by a WasiPipe.
- * Can be either the read end or write end.
+ * Can be either the read end or write end. The read end can be polled
+ * ({@code poll_oneoff}): a program waits for keys with a timeout that way
+ * (vim's Escape timeout).
  */
-public class PipeFd implements WasiFileDescriptor {
+public class PipeFd implements WasiFileDescriptor, Pollable {
 
     private final WasiPipe pipe;
     private final boolean isReadEnd;
@@ -52,6 +54,27 @@ public class PipeFd implements WasiFileDescriptor {
             pipe.closeWrite();
         }
     }
+
+    @Override
+    public boolean readReady() {
+        return isReadEnd && (pipe.hasData() || pipe.isWriteClosed());
+    }
+
+    @Override
+    public int readable() {
+        return isReadEnd ? pipe.available() : 0;
+    }
+
+    @Override
+    public boolean hungUp() {
+        return isReadEnd ? pipe.isWriteClosed() && !pipe.hasData() : pipe.isReadClosed();
+    }
+
+    @Override
+    public void addWaiter(Object waiter) { pipe.addWaiter(waiter); }
+
+    @Override
+    public void removeWaiter(Object waiter) { pipe.removeWaiter(waiter); }
 
     @Override
     public boolean isReadable() { return isReadEnd; }

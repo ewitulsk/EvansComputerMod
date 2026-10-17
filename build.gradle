@@ -390,6 +390,8 @@ test {
 tasks.named('processResources') {
     from(rootProject.file('wasm-bin')) {
         include '*.wasm'
+        // Vim's runtime files and licence (scripts/stage-wasm.sh), extracted next to vim.wasm.
+        include 'vim/**'
         into 'wasm-bin'
     }
     // The Tech Village repository's Chat package (scripts/stage-wasm.sh, village_repo example).

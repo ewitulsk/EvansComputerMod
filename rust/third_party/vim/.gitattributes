@@ -1,0 +1,3 @@
+# Vim's sources and runtime files ship byte for byte (no CRLF conversion on
+# Windows checkouts): the computer runs Vim as on Unix.
+* -text

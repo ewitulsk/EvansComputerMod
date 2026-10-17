@@ -41,8 +41,13 @@ import java.util.Map;
  */
 final class ChicoryRuntime implements WasmRuntime {
 
-    /** Modules up to this size are compiled before their first instance. */
-    private static final int SYNC_COMPILE_MAX_BYTES = 2 * 1024 * 1024;
+    /**
+     * Modules up to this size are compiled before their first instance (on the
+     * thread that loads them: a child program's own thread). vim.wasm (2.8 MB)
+     * compiles in about 1.5 s; started interpreted it would stay interpreted,
+     * too slow to notice Ctrl+C between its own work.
+     */
+    private static final int SYNC_COMPILE_MAX_BYTES = 4 * 1024 * 1024;
 
     private static final java.util.concurrent.ExecutorService BACKGROUND_COMPILER =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -198,12 +203,12 @@ final class ChicoryRuntime implements WasmRuntime {
                         + imp.module() + "::" + imp.name() + " is not provided by the host;"
                         + " refusing to stub it with zeros");
             } else {
-                // Auto-stub: return zeros.
+                // Auto-stub: zeros, or ENOSYS for a WASI function (WasmRuntime.stubResult).
                 hostFuncs.add(new HostFunction(
                         imp.module(),
                         imp.name(),
                         fty,
-                        new StubHandler(fty)));
+                        new StubHandler(fty, WasmRuntime.stubResult(imp.module(), imp.name()))));
             }
         }
 
@@ -316,15 +321,19 @@ final class ChicoryRuntime implements WasmRuntime {
         }
     }
 
-    /** Default zero-returning stub for function imports the host doesn't supply. */
+    /** Stub for function imports the host doesn't supply: {@code result} (zero, or ENOSYS for WASI). */
     private static final class StubHandler implements com.dylibso.chicory.runtime.WasmFunctionHandle {
         private final int returnArity;
-        StubHandler(FunctionType ft) {
+        private final long result;
+        StubHandler(FunctionType ft, long result) {
             this.returnArity = ft.returns().size();
+            this.result = result;
         }
         @Override
         public long[] apply(Instance instance, long... args) {
-            return returnArity == 0 ? new long[0] : new long[returnArity];
+            long[] out = new long[returnArity];
+            if (returnArity > 0) out[0] = result;
+            return out;
         }
     }
 

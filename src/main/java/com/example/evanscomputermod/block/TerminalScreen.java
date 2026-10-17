@@ -762,6 +762,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         sendRawKey(keyCode, modifiers, true);
         altTyped = false;
 
+        // A full-screen program (vim, the pager) holds the keyboard: plain Esc is
+        // its key and Shift+Esc closes the screen, whatever Esc does otherwise.
+        if (keyCode == 256 && programHoldsKeys()) {
+            if (shift) this.onClose();
+            else sendInput("\u001b");
+            return true;
+        }
+
         // Esc is a key for the computer (programs never exit on it: Ctrl+C
         // does that); Shift+Esc closes the screen.
         if (keyCode == 256) {
@@ -1414,6 +1422,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             gfxTexture = null;
         }
         super.onClose();
+    }
+
+    /** Does a full-screen program hold this computer's keyboard ({@code TerminalKeysPacket})? */
+    private boolean programHoldsKeys() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        return te != null && com.example.evanscomputermod.network.TerminalKeysPacket.programHoldsKeys(te.getComputerId());
     }
 
     /** Esc goes to the computer; Shift+Esc closes the screen (see handleKeyPressed). */

@@ -10,12 +10,14 @@ import java.nio.file.Path;
 public class VfsFileFd implements WasiFileDescriptor {
 
     private final RandomAccessFile raf;
+    private final Path path;
     private final boolean readable;
     private final boolean writable;
 
     public VfsFileFd(Path path, boolean readable, boolean writable, boolean append) throws IOException {
         String mode = writable ? "rw" : "r";
         this.raf = new RandomAccessFile(path.toFile(), mode);
+        this.path = path;
         this.readable = readable;
         this.writable = writable;
         if (append && writable) {
@@ -44,6 +46,14 @@ public class VfsFileFd implements WasiFileDescriptor {
 
     @Override
     public boolean isReadable() { return readable; }
+
+    /** ftruncate: cut or extend the file to {@code size} bytes. */
+    public void setSize(long size) throws IOException {
+        raf.setLength(size);
+    }
+
+    /** The real file (fstat reads its inode and times). */
+    public Path path() { return path; }
 
     @Override
     public boolean isWritable() { return writable; }

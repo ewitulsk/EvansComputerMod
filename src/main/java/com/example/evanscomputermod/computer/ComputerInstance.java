@@ -453,6 +453,14 @@ public class ComputerInstance implements AutoCloseable {
     private int lastBellCounter = Integer.MIN_VALUE;
     private final java.util.concurrent.atomic.AtomicInteger bellsRung = new java.util.concurrent.atomic.AtomicInteger();
 
+    /** The framebuffer's program_keys flag last seen: a full-screen program holds the keyboard. */
+    private volatile boolean programHoldsKeys;
+
+    /** Does a full-screen program (vim, the pager) hold the console's keyboard? */
+    public boolean programHoldsKeys() {
+        return programHoldsKeys;
+    }
+
     /** How many times the console's bell rang since boot (for checks). */
     public int bellsRung() {
         return bellsRung.get();
@@ -484,6 +492,13 @@ public class ComputerInstance implements AutoCloseable {
                 IComputerHost h = host;
                 if (!first) bellsRung.incrementAndGet();
                 if (!first && h != null && h.getServer() != null) h.getServer().execute(h::bell);
+            }
+
+            boolean keys = memSize > fbBase + 0x14 && memory.readByte(fbBase + 0x14) != 0;
+            if (keys != programHoldsKeys) {
+                programHoldsKeys = keys;
+                IComputerHost h = host;
+                if (h != null && h.getServer() != null) h.getServer().execute(() -> h.programKeysChanged(keys));
             }
 
             if (memSize >= gfxBase + 16) {

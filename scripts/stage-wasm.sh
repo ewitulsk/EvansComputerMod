@@ -15,9 +15,9 @@ export PATH="$HOME/.cargo/bin:/c/Users/$USERNAME/.cargo/bin:$PATH"
 echo "Building kernel (terminal_os.wasm)..."
 (cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
-# lua's C sources (Lua 5.2) and the browser's (QuickJS) need wasi-sdk's clang and
-# sysroot: WASI_SDK_PATH, or wasi-sdk unpacked in one of the usual places. Without
-# it lua and browser are skipped, loudly.
+# lua's C sources (Lua 5.2), the browser's (QuickJS) and vim's (Vim 9.2) need
+# wasi-sdk's clang and sysroot: WASI_SDK_PATH, or wasi-sdk unpacked in one of the
+# usual places. Without it lua, browser and vim are skipped, loudly.
 if [ -z "$WASI_SDK_PATH" ]; then
     for d in /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk" /c/wasi-sdk-*; do
         if [ -x "$d/bin/clang" ] || [ -x "$d/bin/clang.exe" ]; then export WASI_SDK_PATH="$d"; break; fi
@@ -26,15 +26,15 @@ fi
 if [ -n "$WASI_SDK_PATH" ]; then
     export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
 else
-    echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua and browser will NOT be built"
-    rm -f rust/target/wasm32-wasip1/release/lua.wasm rust/target/wasm32-wasip1/release/browser.wasm
+    echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua, browser and vim will NOT be built"
+    rm -f rust/target/wasm32-wasip1/release/lua.wasm rust/target/wasm32-wasip1/release/browser.wasm rust/target/wasm32-wasip1/release/vim.wasm
 fi
 
 echo "Building WASI programs..."
 PKGS=()
 for dir in rust/wasm-programs/*/; do
     prog="$(basename "$dir")"
-    { [ "$prog" = lua ] || [ "$prog" = browser ]; } && [ -z "$WASI_SDK_PATH" ] && continue
+    { [ "$prog" = lua ] || [ "$prog" = browser ] || [ "$prog" = vim ]; } && [ -z "$WASI_SDK_PATH" ] && continue
     PKGS+=("-p" "$prog")
 done
 # A failed build must stop here: staging would otherwise ship whatever stale
@@ -73,7 +73,22 @@ for app in browser; do
     fi
 done
 
-ls wasm-bin/*.wasm | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
+# Vim's runtime files (syntax, filetype plugins, colours, help, defaults.vim) go with
+# vim.wasm: the server's program folder is server-bin/ on every computer, so Vim
+# finds them at /server-bin/vim/runtime (rust/wasm-programs/vim/port/pathdef.c).
+rm -rf wasm-bin/vim
+if [ -f wasm-bin/vim.wasm ]; then
+    mkdir -p wasm-bin/vim
+    cp -r rust/third_party/vim/runtime wasm-bin/vim/runtime
+    cp rust/third_party/vim/LICENSE wasm-bin/vim/LICENSE
+    cp rust/wasm-programs/vim/vimrc wasm-bin/vim/vimrc
+fi
+
+{
+    ls wasm-bin/*.wasm | xargs -I{} basename {} | sort
+    # Data files under wasm-bin/ (extracted next to the programs, WasmManager).
+    if [ -d wasm-bin/vim ]; then (cd wasm-bin && find vim -type f | sort); fi
+} > src/main/resources/wasm-bin/manifest.txt
 
 # The Tech Village repository's packages (docs/TECH_VILLAGE_NETWORK.md "Apps"): Discord packed
 # from the staged discord.wasm the way `discord --source` + `pkg build` do, natively (debug

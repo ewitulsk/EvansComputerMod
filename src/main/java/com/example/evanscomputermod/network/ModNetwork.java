@@ -71,6 +71,11 @@ public class ModNetwork {
                 ClipboardPackets.Push.TYPE,
                 ClipboardPackets.Push.STREAM_CODEC,
                 ClipboardPackets.Push::handle);
+        // A full-screen program holds a computer's keyboard: the Terminal screen gives it Esc.
+        registrar.playToClient(
+                TerminalKeysPacket.TYPE,
+                TerminalKeysPacket.STREAM_CODEC,
+                TerminalKeysPacket::handle);
         registrar.playToClient(
                 ClipboardPackets.Set.TYPE,
                 ClipboardPackets.Set.STREAM_CODEC,

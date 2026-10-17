@@ -18,3 +18,9 @@ The gba program (rust/wasm-programs/gba) includes:
   (rust/wasm-programs/gba/bios/LICENSE-cult-of-gba-bios);
 - test ROMs from gba-tests by Julian Smolka, MIT License, used only by tests
   (rust/wasm-programs/gba/tests/roms/LICENSE-gba-tests).
+
+The vim program (rust/wasm-programs/vim) is Vim 9.2 by Bram Moolenaar and the
+Vim community, under the Vim license (rust/third_party/vim/LICENSE, shipped as
+server-bin/vim/LICENSE with the program). It is built from the Vim sources and
+runtime files vendored in rust/third_party/vim, modified for WASI as described
+in rust/third_party/vim/README.ecm.md.

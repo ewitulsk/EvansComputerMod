@@ -15,7 +15,7 @@ pub const LOCAL_DIR: &str = "/usr/share/man";
 /// `help`'s index: headings and the pages under each.
 pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Getting started", &["intro", "shell", "keys", "terminal", "filesystem", "help", "man", "less", "history"]),
-    ("Files", &["ls", "cd", "pwd", "cat", "cp", "mv", "rm", "mkdir", "touch", "echo", "grep", "wc", "edit", "upload", "git"]),
+    ("Files", &["ls", "cd", "pwd", "cat", "cp", "mv", "rm", "mkdir", "touch", "echo", "grep", "wc", "edit", "vim", "vi", "upload", "git"]),
     ("Programs and jobs", &["ps", "kill", "jobs", "fg", "bg", "set", "sleep", "clear", "exit", "passwd"]),
     ("Scripting", &["scripting", "python", "lua", "peripheral", "peripherals"]),
     ("Desktop and apps", &["gui", "desktop", "terminal-app", "files", "editor", "notes", "settings", "store", "pkg", "picker", "chooser", "visual"]),

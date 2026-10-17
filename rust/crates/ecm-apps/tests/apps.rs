@@ -462,6 +462,14 @@ fn terminal_shows_the_session_types_into_it_and_pastes() {
     let out = run(&mut app, &m, &mut t, vec![key(1, 0x06, proto::mods::CTRL | proto::mods::SHIFT)]);
     let copied = out.iter().find_map(|x| if let Message::ClipboardSet(c) = x { Some(String::from_utf8_lossy(&c.data).into_owned()) } else { None });
     assert!(copied.is_some(), "Ctrl+Shift+C copies the selection");
+    // A program that asks for resize reports (?2048, vim) gets the size now and after a resize.
+    sys.state.borrow_mut().session_out = b"\x1b[?1049h\x1b[?2048h".to_vec();
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(sys.state.borrow().session_in.ends_with(b"\x1b[48;24;80;0;0t"), "the size now");
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 644 + 8 * 10, 388, proto::window_states::ACTIVATED)]);
+    let (c, r) = sys.state.borrow().session_size.unwrap();
+    assert_eq!((c, r), (90, 24), "the window is wider");
+    assert!(sys.state.borrow().session_in.ends_with(b"\x1b[48;24;90;0;0t"), "the new size");
     // The session ends: the window says so.
     sys.state.borrow_mut().session_exited = true;
     run(&mut app, &m, &mut t, vec![]);

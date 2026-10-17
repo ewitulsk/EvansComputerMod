@@ -38,6 +38,7 @@ public class WasiFunctions {
     private static final int ERRNO_NOSYS = 52;
     private static final int ERRNO_NOENT = 44;
     private static final int ERRNO_ACCES = 2;
+    private static final int ERRNO_NOTEMPTY = 55;
     /** Returned by env:: functions when an app lacks the permission (docs/gui/APPS.md). */
     private static final int EACCES = -13;
 
@@ -186,10 +187,10 @@ public class WasiFunctions {
             for (int i = 0; i < 64; i++) mem.writeByte(bufPtr + i, (byte) 0);
             WasiFileDescriptor desc = state.fdTable.get(fd);
             if (desc instanceof VfsFileFd vfs) {
-                mem.writeByte(bufPtr + 16, (byte) 4);
+                writeFilestat(mem, bufPtr, vfs.path());
                 try { mem.writeLong(bufPtr + 32, vfs.size()); } catch (IOException ignored) {}
-            } else if (desc instanceof DirFd) {
-                mem.writeByte(bufPtr + 16, (byte) 3);
+            } else if (desc instanceof DirFd dir) {
+                writeFilestat(mem, bufPtr, dir.getDirPath());
             } else {
                 mem.writeByte(bufPtr + 16, (byte) 2);
             }
@@ -456,6 +457,78 @@ public class WasiFunctions {
             }
         });
 
+        // rename(): within the computer's own files (the server's programs are read-only).
+        // Before these existed the auto-stub "succeeded" without moving anything.
+        addWasi(sink, "path_rename", I32x6, RET_I32, (inst, args) -> {
+            String from = state.mem().readString((int) args[1], (int) args[2]);
+            String to = state.mem().readString((int) args[4], (int) args[5]);
+            Path src = resolveChildPath(state, from);
+            Path dst = resolveChildPath(state, to);
+            if (src == null || dst == null) return retI32(ERRNO_NOENT);
+            if (!pathAllowed(state, from, true) || !pathAllowed(state, to, true)) return retI32(ERRNO_ACCES);
+            if (!Files.exists(src)) return retI32(serverBinPath(from) != null && Files.exists(serverBinPath(from)) ? ERRNO_ACCES : ERRNO_NOENT);
+            if (dst.getParent() != null && !Files.isDirectory(dst.getParent())) return retI32(ERRNO_NOENT);
+            try {
+                try {
+                    Files.move(src, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                    Files.move(src, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                return retI32(ERRNO_SUCCESS);
+            } catch (java.nio.file.DirectoryNotEmptyException e) {
+                return retI32(ERRNO_NOTEMPTY);
+            } catch (IOException e) {
+                return retI32(ERRNO_ACCES);
+            }
+        });
+
+        // readlink(): a computer's files have no symbolic links, so an existing path is "not a link".
+        addWasi(sink, "path_readlink", I32x6, RET_I32, (inst, args) -> {
+            String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            Path p = resolveChildReadPath(state, pathStr);
+            if (p == null || !Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return retI32(ERRNO_NOENT);
+            return retI32(ERRNO_INVAL);
+        });
+
+        // fsync()/fdatasync(): writes go straight to the file; nothing is held back.
+        addWasi(sink, "fd_sync", I32, RET_I32, (inst, args) ->
+                retI32(state.fdTable.get((int) args[0]) != null ? ERRNO_SUCCESS : ERRNO_BADF));
+        addWasi(sink, "fd_datasync", I32, RET_I32, (inst, args) ->
+                retI32(state.fdTable.get((int) args[0]) != null ? ERRNO_SUCCESS : ERRNO_BADF));
+
+        // ftruncate().
+        addWasi(sink, "fd_filestat_set_size", List.of(WasmValType.I32, WasmValType.I64), RET_I32, (inst, args) -> {
+            if (!(state.fdTable.get((int) args[0]) instanceof VfsFileFd vfs)) return retI32(ERRNO_BADF);
+            if (!vfs.isWritable()) return retI32(ERRNO_BADF);
+            try {
+                vfs.setSize(args[1]);
+                return retI32(ERRNO_SUCCESS);
+            } catch (IOException e) {
+                return retI32(ERRNO_INVAL);
+            }
+        });
+
+        // utimes(): the modification time (flags 4 = given, 8 = now); access times aren't kept.
+        addWasi(sink, "path_filestat_set_times",
+                List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I64, WasmValType.I64, WasmValType.I32),
+                RET_I32, (inst, args) -> {
+            String pathStr = state.mem().readString((int) args[2], (int) args[3]);
+            Path p = resolveChildPath(state, pathStr);
+            if (p == null || !Files.exists(p)) return retI32(ERRNO_NOENT);
+            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            int fst = (int) args[6];
+            try {
+                if ((fst & 8) != 0) {
+                    Files.setLastModifiedTime(p, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis()));
+                } else if ((fst & 4) != 0) {
+                    Files.setLastModifiedTime(p, java.nio.file.attribute.FileTime.from(args[5], java.util.concurrent.TimeUnit.NANOSECONDS));
+                }
+                return retI32(ERRNO_SUCCESS);
+            } catch (IOException e) {
+                return retI32(ERRNO_ACCES);
+            }
+        });
+
         addWasi(sink, "path_filestat_get", I32x5, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[2], (int) args[3]);
             if (pathStr.startsWith("dev/") && childBridge != null && childBridge.hasDevice(pathStr.substring(4))) {
@@ -464,18 +537,15 @@ public class WasiFunctions {
                 dm.writeByte((int) args[4] + 16, (byte) 2); // character device
                 return retI32(ERRNO_SUCCESS);
             }
-            Path p = state.storagePath.resolve(pathStr).normalize();
-            if (!Files.exists(p) || !pathAllowed(state, pathStr, false)) {
+            // The computer's own file, else the server's program folder (server-bin/, as path_open).
+            Path p = resolveChildReadPath(state, pathStr);
+            if (p == null || !Files.exists(p) || !pathAllowed(state, pathStr, false)) {
                 return retI32(ERRNO_NOENT);
             }
             WasmMemory mem = state.mem();
             int bufPtr = (int) args[4];
             for (int i = 0; i < 64; i++) mem.writeByte(bufPtr + i, (byte) 0);
-            try {
-                byte filetype = Files.isDirectory(p) ? (byte) 3 : (byte) 4;
-                mem.writeByte(bufPtr + 16, filetype);
-                mem.writeLong(bufPtr + 32, Files.size(p));
-            } catch (IOException ignored) {}
+            writeFilestat(mem, bufPtr, p);
             return retI32(ERRNO_SUCCESS);
         });
 
@@ -493,23 +563,9 @@ public class WasiFunctions {
 
             WasmMemory mem = state.mem();
 
-            java.util.List<DirFd.DirEntry> entries = dirFd.readDir(cookie);
-            int offset = 0;
-            long nextCookie = cookie;
-
-            for (DirFd.DirEntry entry : entries) {
-                nextCookie++;
-                byte[] nameBytes = entry.name().getBytes(StandardCharsets.UTF_8);
-                int entrySize = 24 + nameBytes.length;
-                if (offset + entrySize > bufLen) break;
-                int pos = bufPtr + offset;
-                mem.writeLong(pos, nextCookie);
-                mem.writeLong(pos + 8, entry.inode());
-                mem.writeInt(pos + 16, nameBytes.length);
-                mem.writeByte(pos + 20, entry.type());
-                mem.writeBytes(pos + 24, nameBytes);
-                offset += entrySize;
-            }
+            byte[] out = direntRecords(dirFd.readDir(cookie), cookie, bufLen);
+            mem.writeBytes(bufPtr, out, 0, out.length);
+            int offset = out.length;
 
             mem.writeInt(bufusedPtr, offset);
             return retI32(ERRNO_SUCCESS);
@@ -1834,6 +1890,58 @@ public class WasiFunctions {
         Path filePath = state.storagePath.resolve(pathStr).normalize();
         if (!filePath.startsWith(state.storagePath)) return null;
         return filePath;
+    }
+
+    /**
+     * A WASI filestat (64 bytes) for a real file: dev, inode, type, nlink, size
+     * and the times. Programs tell files apart by dev and inode (vim keeps one
+     * buffer per file that way), so the inode is derived from the real path
+     * and is never 0; dev 1 is the computer's storage, 2 the server's programs.
+     */
+    static void writeFilestat(WasmMemory mem, int bufPtr, Path p) {
+        for (int i = 0; i < 64; i++) mem.writeByte(bufPtr + i, (byte) 0);
+        Path real = p.toAbsolutePath().normalize();
+        Path bin = com.example.evanscomputermod.wasm.WasmManager.getWasmBinPath();
+        boolean server = bin != null && real.startsWith(bin.toAbsolutePath().normalize());
+        long ino = real.toString().hashCode() & 0xFFFFFFFFL;
+        mem.writeLong(bufPtr, server ? 2 : 1);
+        mem.writeLong(bufPtr + 8, ino == 0 ? 1 : ino);
+        mem.writeByte(bufPtr + 16, Files.isDirectory(real) ? (byte) 3 : (byte) 4);
+        mem.writeLong(bufPtr + 24, 1);
+        try {
+            if (!Files.isDirectory(real)) mem.writeLong(bufPtr + 32, Files.size(real));
+            long mtime = Files.getLastModifiedTime(real).to(java.util.concurrent.TimeUnit.NANOSECONDS);
+            mem.writeLong(bufPtr + 40, mtime);
+            mem.writeLong(bufPtr + 48, mtime);
+            mem.writeLong(bufPtr + 56, mtime);
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * {@code fd_readdir}'s buffer for {@code entries} (those after {@code cookie}):
+     * WASI dirent records (u64 next cookie, u64 inode, u32 name length, u8 type,
+     * 3 padding, name) filling up to {@code bufLen} bytes. As WASI specifies, the
+     * last record is cut short when it doesn't fit: a full buffer tells the reader
+     * there is more (wasi-libc's readdir takes a buffer that isn't full for the
+     * end of the directory, and would stop listing early).
+     */
+    static byte[] direntRecords(java.util.List<DirFd.DirEntry> entries, long cookie, int bufLen) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        long next = cookie;
+        for (DirFd.DirEntry entry : entries) {
+            if (out.size() >= bufLen) break;
+            next++;
+            byte[] name = entry.name().getBytes(StandardCharsets.UTF_8);
+            ByteBuffer rec = ByteBuffer.allocate(24 + name.length).order(ByteOrder.LITTLE_ENDIAN);
+            rec.putLong(0, next);
+            rec.putLong(8, entry.inode());
+            rec.putInt(16, name.length);
+            rec.put(20, entry.type());
+            rec.put(24, name);
+            out.write(rec.array(), 0, Math.min(rec.capacity(), bufLen - out.size()));
+        }
+        return out.toByteArray();
     }
 
     /**

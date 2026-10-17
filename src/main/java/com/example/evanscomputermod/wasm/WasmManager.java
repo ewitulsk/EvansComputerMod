@@ -49,8 +49,12 @@ public class WasmManager {
         return handle;
     }
 
-    /** Large programs worth compiling before their first launch. */
-    private static final String[] PREWARM={"python.wasm"};
+    /**
+     * Large programs worth compiling before their first launch: python.wasm, and
+     * vim.wasm (2.8 MB: compiled before it runs, so the first vim after a server
+     * start would otherwise wait about 1.5 s for it).
+     */
+    private static final String[] PREWARM={"vim.wasm","python.wasm"};
     private static volatile WasmRuntime prewarmedFor;
     /**
      * Once the first computer boots, parse and compile the big programs in the
@@ -147,7 +151,7 @@ public class WasmManager {
                 String content = new String(manifestIs.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 for (String line : content.split("\n")) {
                     String name = line.trim();
-                    if (!name.isEmpty() && name.endsWith(".wasm")) {
+                    if (!name.isEmpty() && (name.endsWith(".wasm") || isBundledDataFile(name))) {
                         wasmFiles.add(name);
                     }
                 }
@@ -165,7 +169,9 @@ public class WasmManager {
             String resourcePath = "/wasm-bin/" + fileName;
             try (InputStream is = WasmManager.class.getResourceAsStream(resourcePath)) {
                 if (is != null) {
-                    Path target = wasmBinPath.resolve(fileName);
+                    Path target = wasmBinPath.resolve(fileName).normalize();
+                    if (!target.startsWith(wasmBinPath.normalize())) continue;
+                    Files.createDirectories(target.getParent());
                     Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
                     extracted++;
                 } else {
@@ -177,6 +183,14 @@ public class WasmManager {
         }
 
         EvansComputerMod.LOGGER.info("Extracted {} WASM files to {}", extracted, wasmBinPath.toAbsolutePath());
+    }
+
+    /**
+     * A data file a program needs next to it (manifest lines under {@code vim/}: Vim's
+     * runtime files, read from {@code /server-bin/vim/runtime}). Relative, no {@code ..}.
+     */
+    static boolean isBundledDataFile(String name) {
+        return name.startsWith("vim/") && !name.contains("..") && !name.contains("\\") && !name.contains(":");
     }
 
     /**

@@ -159,6 +159,12 @@ pub mod ffi {
         pub static FILES: RefCell<BTreeMap<String, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         pub static SPAWNED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
         pub static TX: RefCell<Vec<(i32, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+        /// Children keep running (else they exit at once with 0).
+        pub static CHILD_RUNNING: RefCell<bool> = const { RefCell::new(false) };
+        /// What the children print next (process_read_output drains it).
+        pub static CHILD_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        /// Everything written to a child's stdin (process_write_input).
+        pub static CHILD_IN: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     }
 
     unsafe fn s<'a>(p: usize, l: i32) -> &'a [u8] { core::slice::from_raw_parts(p as *const u8, l as usize) }
@@ -189,9 +195,23 @@ pub mod ffi {
     pub unsafe fn process_spawn(p: usize, l: i32, a: usize, al: i32, _: i32, _: i32, _: i32) -> i32 {
         SPAWNED.with(|v| { let mut v = v.borrow_mut(); v.push((key(p, l), key(a, al))); v.len() as i32 })
     }
-    pub unsafe fn process_try_wait(_: i32, c: usize) -> i32 { *(c as *mut i32) = 0; 1 }
-    pub unsafe fn process_read_output(_: i32, _: usize, _: i32) -> i32 { 0 }
-    pub unsafe fn process_write_input(_: i32, _: usize, l: i32) -> i32 { l }
+    pub unsafe fn process_try_wait(_: i32, c: usize) -> i32 {
+        if CHILD_RUNNING.with(|r| *r.borrow()) { return 0; }
+        *(c as *mut i32) = 0; 1
+    }
+    pub unsafe fn process_read_output(_: i32, b: usize, bl: i32) -> i32 {
+        CHILD_OUT.with(|o| {
+            let mut o = o.borrow_mut();
+            let n = o.len().min(bl as usize);
+            core::ptr::copy_nonoverlapping(o.as_ptr(), b as *mut u8, n);
+            o.drain(..n);
+            n as i32
+        })
+    }
+    pub unsafe fn process_write_input(_: i32, d: usize, l: i32) -> i32 {
+        CHILD_IN.with(|i| i.borrow_mut().extend_from_slice(s(d, l)));
+        l
+    }
     pub unsafe fn process_kill(_: i32, _: i32) -> i32 { 0 }
     pub unsafe fn process_list(_: usize, _: i32) -> i32 { 0 }
     pub unsafe fn file_write(p: usize, l: i32, d: usize, dl: i32) -> i32 {

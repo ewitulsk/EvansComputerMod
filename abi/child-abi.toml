@@ -1,6 +1,8 @@
 # Device ABI for WASI programs (rust/wasm-programs/*).
 #
-# Programs are wasm32-wasip1 binaries. Besides WASI they may import these
+# Programs are wasm32-wasip1 binaries. A WASI preview1 function the host doesn't
+# implement returns ENOSYS (52), never a fake success (WasmRuntime.stubResult).
+# Besides WASI they may import these
 # functions from module "env". The Java host implements them in
 # computer/wasi/WasiFunctions.java; the simulator links stubs
 # (rust/simulator/src/child.rs). Rust wrappers live in crates/ecm-host-abi.

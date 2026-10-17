@@ -43,6 +43,7 @@ members = [
     "wasm-programs/help",
     "wasm-programs/man",
     "wasm-programs/less",
+    "wasm-programs/vim",
     "wasm-programs/clear",
     "wasm-programs/pwd",
     "wasm-programs/mkdir",
@@ -205,6 +206,11 @@ opt-level = "s"
 # Browser stays interpreted, far too slow for typing into a page.
 [profile.release.package.browser]
 opt-level = "s"
+strip = "symbols"
+
+# Vim (C, built by its build.rs): drop the name section so it parses faster
+# (ChicoryRuntime compiles it before it runs; WasmManager prewarms it).
+[profile.release.package.vim]
 strip = "symbols"
 
 [profile.release.package.ecm-web]

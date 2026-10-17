@@ -63,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "lua.wasm", "gba.wasm", "rng_test.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "lua.wasm", "gba.wasm", "rng_test.wasm", "vim.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -288,6 +288,33 @@ public class KernelHostIntegrationTest {
         Thread.sleep(50);
         for (short v : audio.drain()) got.add(v);
         assertEquals(400, got.size(), "0.05 s at 8 kHz");
+    }
+
+    /**
+     * Vim on the real kernel and WASI host (Chicory): it opens a file full screen,
+     * edits it with keys as the Terminal sends them (Enter as \n, Esc, Ctrl+C and
+     * Ctrl+Z as its own keys on the alternate screen), follows a console resize
+     * through the ?2048 report, writes the file and gives the shell's screen back.
+     */
+    @Test
+    void vimEditsAFileOnTheRealHost() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("vim.wasm")),
+                "vim not built (WASI_SDK_PATH=... cargo build --release --target wasm32-wasip1 -p vim)");
+        computer.sendInput("vim -u NONE -i NONE notes.txt\n");
+        waitForScreen(s -> s.contains("\"notes.txt\" [New"), 60_000, "vim open");
+        computer.sendInput("ihello world\nsecond line\u001b");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("second line")), 30_000, "typed lines");
+        computer.sendInput("\u0003");
+        waitForScreen(s -> s.contains("Type  :qa!  and press <Enter>"), 30_000, "Vim's Ctrl+C message");
+        computer.requestConsoleResize(80, 25);
+        waitFor(() -> display.getWidth() == 80, 5_000, "80x25 console");
+        computer.sendInput(":echo &columns .. 'x' .. &lines\n");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().startsWith("80x25")), 30_000, "Vim at 80x25");
+        computer.sendInput("\u001a");
+        waitForScreen(s -> s.contains("E9998"), 30_000, "Ctrl+Z is Vim's key");
+        computer.sendInput(":wq\n");
+        waitForScreen(s -> s.contains("/ > "), 30_000, "back at the shell");
+        assertEquals("hello world\nsecond line\n", Files.readString(dataDir.resolve("notes.txt")));
     }
 
     /**

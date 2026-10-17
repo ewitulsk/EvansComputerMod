@@ -40,6 +40,10 @@ pub enum SwitchCmd {
     Stop,
 }
 
+/// Other names for programs, as on Unix: Vim answers to vi, view (read-only),
+/// vimdiff (diff mode) and ex (Ex mode).
+pub const PROGRAM_ALIASES: &[(&str, &str)] = &[("vi", "vim"), ("view", "vim"), ("vimdiff", "vim"), ("ex", "vim")];
+
 pub struct Shell {
     pub cwd: String,
     /// Running over SSH: no local-only commands (graphics).
@@ -144,7 +148,7 @@ impl Shell {
         format!("/{} > ", self.cwd)
     }
 
-    /// Resolve a command name to a program path.
+    /// Resolve a command name to a program path (or the program an alias names).
     fn resolve_program(&self, cmd: &str) -> Option<String> {
         if is_builtin(cmd) || cmd.is_empty() {
             return None;
@@ -161,7 +165,11 @@ impl Shell {
         candidates.push(format!("bin/{}", cmd));
         candidates.push(format!("server-bin/{}.wasm", cmd));
         candidates.push(format!("server-bin/{}", cmd));
-        candidates.into_iter().find(|c| fs::exists(c))
+        candidates.into_iter().find(|c| fs::exists(c)).or_else(|| {
+            // Another name for a program (`vi` is `vim`), unless a program has that name.
+            let target = PROGRAM_ALIASES.iter().find(|(alias, _)| *alias == cmd)?.1;
+            self.resolve_program(target)
+        })
     }
 
     pub fn execute(&mut self, line: &str, con: &mut dyn Term) -> Outcome {
@@ -352,7 +360,11 @@ impl Shell {
                 }
                 _ => -1,
             };
-            let mut argv = paths[i].clone();
+            // A program started by an alias sees the name it was called by
+            // (`view` opens files read-only, `vimdiff` compares them).
+            let called_by_alias = PROGRAM_ALIASES.iter().any(|(alias, _)| *alias == stage.command)
+                && !paths[i].ends_with(&format!("{}.wasm", stage.command));
+            let mut argv = if called_by_alias { stage.command.clone() } else { paths[i].clone() };
             for a in &stage.args {
                 argv.push('\n');
                 argv.push_str(a);
@@ -478,6 +490,38 @@ mod tests {
         sh.execute("cd --help", &mut con);
         let spawned = ffi::SPAWNED.with(|s| s.borrow().last().cloned()).unwrap();
         assert_eq!(spawned.1, "server-bin/help.wasm\ncd");
+    }
+
+    #[test]
+    fn aliases_start_their_program_under_their_own_name() {
+        let _g = crate::hal::test_lock();
+        ffi::FILES.with(|f| {
+            f.borrow_mut().insert("server-bin/vim.wasm".into(), vec![0]);
+        });
+        let mut con = Console::new();
+        let mut sh = Shell::new();
+        let spawned = |sh: &mut Shell, con: &mut Console, line: &str| {
+            assert!(matches!(sh.execute(line, con), Outcome::Foreground(..)), "{line} started");
+            ffi::SPAWNED.with(|s| s.borrow().last().cloned()).unwrap()
+        };
+        // vim itself gets its path as argv[0], as every program does.
+        assert_eq!(spawned(&mut sh, &mut con, "vim notes.txt"), ("server-bin/vim.wasm".into(), "server-bin/vim.wasm\nnotes.txt".into()));
+        // vi, view, vimdiff and ex run vim under the name typed.
+        assert_eq!(spawned(&mut sh, &mut con, "vi notes.txt"), ("server-bin/vim.wasm".into(), "vi\nnotes.txt".into()));
+        assert_eq!(spawned(&mut sh, &mut con, "view a"), ("server-bin/vim.wasm".into(), "view\na".into()));
+        assert_eq!(spawned(&mut sh, &mut con, "vimdiff a b"), ("server-bin/vim.wasm".into(), "vimdiff\na\nb".into()));
+        // A program of the alias's own name wins.
+        ffi::FILES.with(|f| {
+            f.borrow_mut().insert("bin/vi.wasm".into(), vec![0]);
+        });
+        assert_eq!(spawned(&mut sh, &mut con, "vi x"), ("bin/vi.wasm".into(), "bin/vi.wasm\nx".into()));
+        ffi::FILES.with(|f| {
+            f.borrow_mut().remove("bin/vi.wasm");
+            f.borrow_mut().remove("server-bin/vim.wasm");
+        });
+        // Control: without vim the alias is an unknown command.
+        assert!(matches!(sh.execute("vi x", &mut con), Outcome::Done));
+        assert_eq!(sh.status, 127);
     }
 
     #[test]

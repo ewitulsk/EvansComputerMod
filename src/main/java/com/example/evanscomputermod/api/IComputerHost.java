@@ -147,6 +147,14 @@ public interface IComputerHost {
     /** The console's bell rang (BEL): beep where the computer is. Server thread. */
     default void bell() {}
 
+    /**
+     * A full-screen program started or stopped holding the keyboard (the
+     * kernel's {@code program_keys} framebuffer flag): a host with a screen
+     * players type into tells their clients, so Esc reaches the program.
+     * Server thread.
+     */
+    default void programKeysChanged(boolean held) {}
+
     /** Wireless controllers connected to this computer, or null if the host takes none. */
     @Nullable
     default com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {

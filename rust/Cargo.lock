@@ -4548,6 +4548,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vim"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "virtue"
 version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

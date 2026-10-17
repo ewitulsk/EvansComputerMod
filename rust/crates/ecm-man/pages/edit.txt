@@ -87,4 +87,4 @@ EXAMPLES
       edit /etc/ui.toml
 
 SEE ALSO
-    cat, touch, keys, filesystem
+    vim, cat, touch, keys, filesystem

@@ -460,6 +460,12 @@ fn view(vcx: &ecm_ui::ViewCtx, term: &TermRef, sys: &SysRef) -> Element {
                 t.sent_size = Some((t.cols, t.rows));
                 sys.borrow_mut().session_resize(id, t.cols, t.rows);
             }
+            // A program that asked for resize reports (?2048, vim) gets the new size.
+            let replies = t.vte.take_responses();
+            if !replies.is_empty() && t.session >= 0 {
+                let id = t.session;
+                sys.borrow_mut().session_write(id, &replies);
+            }
         }
     }
     let t = term.borrow();

@@ -5,6 +5,7 @@
 //! wants to run, and host events (input, frames, child output, socket
 //! requests) call in earlier.
 
+use crate::framebuffer;
 use crate::console::{Console, Term};
 use crate::gfx::Plane;
 use crate::gfx_test::GfxTest;
@@ -387,6 +388,20 @@ impl Kernel {
                 }
             }
         }
+        self.forward_replies();
+    }
+
+    /// The console's answers to the program's queries (cursor position, size,
+    /// in-band resize reports) go to the foreground program as input, the way
+    /// a real terminal answers on the tty.
+    fn forward_replies(&mut self) {
+        let replies = self.con.take_responses();
+        if !replies.is_empty() && self.ui == Ui::Program {
+            self.jobs.send_input(&replies);
+        }
+        // A full-screen program (or one reading Ctrl+C itself) holds the
+        // keyboard: the host's Terminal screen gives it Esc too.
+        framebuffer::set_program_keys(self.ui == Ui::Program && self.con.modes().program_takes_ctrl_c());
     }
 
     /// The host installed a display panel with a different text grid: resize
@@ -403,6 +418,8 @@ impl Kernel {
             // The console re-wrapped the text; draw the line again in place.
             self.editor.refresh(&mut TermOut(&mut self.con));
         }
+        // A program that asked for resize reports (?2048, vim) learns the new size.
+        self.forward_replies();
         size
     }
 
@@ -669,7 +686,6 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framebuffer;
 
     fn row_text(y: u16) -> String {
         (0..framebuffer::width()).map(|x| framebuffer::read_cell(x, y).0 as char).collect::<String>()
@@ -712,6 +728,44 @@ mod tests {
 
     fn screen() -> String {
         (0..framebuffer::height()).map(|y| row_text(y).trim_end().to_string()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// The console answers a running program's queries on its stdin, as a
+    /// tty does: the cursor position, and with ?2048 (vim) the size now and
+    /// after every panel swap. Programs that didn't ask get nothing.
+    #[test]
+    fn console_replies_reach_the_foreground_program() {
+        use crate::hal::ffi::{CHILD_IN, CHILD_OUT, CHILD_RUNNING, FILES};
+        let _g = crate::hal::test_lock();
+        let mut k = Kernel::boot(0);
+        FILES.with(|f| f.borrow_mut().insert("server-bin/vim.wasm".into(), vec![0]));
+        CHILD_RUNNING.with(|r| *r.borrow_mut() = true);
+        CHILD_IN.with(|i| i.borrow_mut().clear());
+        k.on_input(b"vim\n", 0);
+        assert!(k.ui == Ui::Program);
+        let input = || CHILD_IN.with(|i| std::mem::take(&mut *i.borrow_mut()));
+        // Control: a resize before the program asks sends nothing.
+        k.resize_console(100, 40);
+        assert!(input().is_empty(), "no reports unasked");
+        CHILD_OUT.with(|o| o.borrow_mut().extend_from_slice(b"\x1b[?1049h\x1b[3;7H\x1b[6n\x1b[?2048h"));
+        k.on_tick(0);
+        assert_eq!(input(), b"\x1b[3;7R\x1b[48;40;100;0;0t", "cursor report, then the size");
+        assert!(framebuffer::program_keys(), "a full-screen program holds the keys (the screen gives it Esc)");
+        assert_eq!(k.resize_console(80, 25), (80, 25));
+        assert_eq!(input(), b"\x1b[48;25;80;0;0t", "the new size after a panel swap");
+        // Ctrl+C on the alternate screen is the program's key, not an interrupt.
+        k.on_input(b"\x03", 0);
+        assert_eq!(input(), b"\x03");
+        assert!(k.ui == Ui::Program);
+        // The program exits: its modes go, and a resize reports nothing.
+        CHILD_RUNNING.with(|r| *r.borrow_mut() = false);
+        k.on_tick(0);
+        assert!(k.ui != Ui::Program);
+        assert!(!framebuffer::program_keys(), "back at the shell: Esc is the screen's again");
+        k.resize_console(160, 50);
+        assert!(input().is_empty(), "no reports after the program ended");
+        FILES.with(|f| f.borrow_mut().remove("server-bin/vim.wasm"));
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
     }
 
     /// The console's own keys: editing in the middle of a line, history saved
