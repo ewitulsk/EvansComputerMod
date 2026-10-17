@@ -11,6 +11,7 @@
 //!                 `_peripheral` native module)
 //!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
 //!   ui          — GUI apps (ui.py over the `_ui` native module and ecm-ui)
+//!   web         — web servers and CGI scripts for the Browser (web.py, same API as Lua's web)
 
 mod peripheral_module;
 
@@ -161,6 +162,27 @@ mod shell_module {
         }
 
         crate::read_line_echo().unwrap_or_default()
+    }
+
+    // ==================== Upload (files from the player's real computer) ====================
+
+    /// "ready", "not_installed", "no_client" (the player using the computer lacks the
+    /// add-on in their game) or "not_permitted".
+    #[pyfunction]
+    fn upload_supported() -> String {
+        crate::upload_support_name(ecm_host_abi::upload::supported()).to_string()
+    }
+
+    /// Ask the player using this computer to pick a file on their real computer;
+    /// it is copied into `dir` (default "/home"). Returns the new file's path, or
+    /// raises OSError (cancelled, too large, not installed, ...).
+    #[pyfunction]
+    fn upload(dir: OptionalArg<PyStrRef>, vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let dir = match &dir {
+            OptionalArg::Present(d) => d.as_str().to_string(),
+            OptionalArg::Missing => "/home".to_string(),
+        };
+        crate::upload_blocking(&dir).map_err(|e| vm.new_os_error(format!("upload: {e}")))
     }
 
     // ==================== Redstone Functions ====================
@@ -785,7 +807,10 @@ struct PythonRepl {
 
 impl PythonRepl {
     fn new() -> Self {
-        let settings = Settings::default();
+        let mut settings = Settings::default();
+        // Like CPython: sys.argv is the script's path and its arguments
+        // (`python /apps/dev.ecm.bankd/main.py serve 7000` -> ["/apps/.../main.py", "serve", "7000"]).
+        settings.argv = std::env::args().skip(1).collect();
 
         let interpreter = Interpreter::with_init(settings, |vm| {
             vm.add_native_module("shell".to_owned(), Box::new(shell_module::make_module));
@@ -801,6 +826,7 @@ impl PythonRepl {
                 Box::new(ecm_python::radio_module::make_native_module),
             );
             vm.add_native_module("_ui".to_owned(), Box::new(ecm_python::ui_module::make_native_module));
+            vm.add_native_module("_web".to_owned(), Box::new(ecm_python::web_module::make_native_module));
         });
 
         let scope = interpreter.enter(|vm| {
@@ -966,6 +992,37 @@ impl PythonRepl {
 }
 
 /// Paths on the computer are relative to its root: "/etc/x" and "etc/x" are the same file.
+/// The name Python and Lua give an upload support state.
+fn upload_support_name(s: ecm_host_abi::upload::Support) -> &'static str {
+    use ecm_host_abi::upload::Support;
+    match s {
+        Support::Ready => "ready",
+        Support::NotInstalled => "not_installed",
+        Support::NoClient => "no_client",
+        Support::NotPermitted => "not_permitted",
+    }
+}
+
+/// Run one upload to the end: the new file's path, or why there is none.
+fn upload_blocking(dir: &str) -> Result<String, String> {
+    use ecm_host_abi::upload::{self, State, Support};
+    let support = upload::supported();
+    if support != Support::Ready {
+        return Err(support.message().to_string());
+    }
+    let ticket = upload::begin(dir).map_err(|e| format!("{dir}: {}", e.message()))?;
+    loop {
+        match upload::poll(ticket) {
+            State::Done(path) => return Ok(path),
+            State::Failed(e) => {
+                upload::cancel(ticket);
+                return Err(e.message().to_string());
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
 fn rel(p: &str) -> &str {
     p.trim_start_matches('/')
 }

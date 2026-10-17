@@ -561,6 +561,11 @@ public final class RadioScenarios {
         add(CellularScenarios.roaming());
         add(CellularScenarios.wrongCarrier());
         add(CardScenarios.cardWriter());
+        add(CardSystemScenarios.cardPrint());
+        add(CardSystemScenarios.cardBank());
+        add(CardSystemScenarios.cardStripe());
+        add(CardSystemScenarios.cardNfc());
+        add(CardSystemScenarios.cardReaderModule());
         add(FramedScenarios.sdrFramed());
         add(CellNetScenarios.cellSiteCore());
     }

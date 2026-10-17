@@ -1,0 +1,404 @@
+{
+  "meta": {
+    "format_version": "5.0",
+    "model_format": "java_block",
+    "box_uv": false
+  },
+  "name": "card_printer",
+  "parent": "",
+  "java_block_version": "1.21.11",
+  "ambientocclusion": true,
+  "front_gui_light": false,
+  "visible_box": [
+    1,
+    1,
+    0
+  ],
+  "variable_placeholders": "",
+  "variable_placeholder_buttons": [],
+  "unhandled_root_fields": {},
+  "ai_used": true,
+  "ai_agents": "claude-code",
+  "resolution": {
+    "width": 64,
+    "height": 64
+  },
+  "elements": [
+    {
+      "name": "base",
+      "box_uv": false,
+      "render_order": "default",
+      "rescale": false,
+      "locked": false,
+      "shade": true,
+      "light_emission": 0,
+      "allow_mirror_modeling": true,
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        16,
+        10,
+        16
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            32,
+            0,
+            48,
+            10
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            16,
+            0,
+            32,
+            10
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            16,
+            0,
+            32,
+            10
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            16,
+            0,
+            32,
+            10
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            0,
+            16,
+            16,
+            32
+          ],
+          "texture": 0
+        }
+      },
+      "type": "cube",
+      "uuid": "d16e27d8-470d-9ca9-9aa2-14989f2be9ec"
+    },
+    {
+      "name": "tray",
+      "box_uv": false,
+      "render_order": "default",
+      "rescale": false,
+      "locked": false,
+      "shade": true,
+      "light_emission": 0,
+      "allow_mirror_modeling": true,
+      "from": [
+        1,
+        10,
+        1
+      ],
+      "to": [
+        15,
+        12,
+        15
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            16,
+            0,
+            30,
+            2
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            16,
+            0,
+            30,
+            2
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            16,
+            0,
+            30,
+            2
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            16,
+            0,
+            30,
+            2
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            1,
+            15,
+            15
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      },
+      "type": "cube",
+      "uuid": "659476e0-3212-064d-bf6e-850ab982219e"
+    },
+    {
+      "name": "lit_head",
+      "box_uv": false,
+      "render_order": "default",
+      "rescale": false,
+      "locked": false,
+      "shade": true,
+      "light_emission": 0,
+      "allow_mirror_modeling": true,
+      "from": [
+        3,
+        12,
+        7
+      ],
+      "to": [
+        13,
+        13,
+        9
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            16,
+            16,
+            26,
+            17
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            16,
+            16,
+            18,
+            17
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            16,
+            16,
+            26,
+            17
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            16,
+            16,
+            18,
+            17
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            16,
+            16,
+            26,
+            18
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            16,
+            16,
+            26,
+            18
+          ],
+          "texture": 0
+        }
+      },
+      "type": "cube",
+      "uuid": "f0d4e6a5-947d-da3a-3249-025e0111b9a9"
+    },
+    {
+      "name": "lit_lamp",
+      "box_uv": false,
+      "render_order": "default",
+      "rescale": false,
+      "locked": false,
+      "shade": true,
+      "light_emission": 0,
+      "allow_mirror_modeling": true,
+      "from": [
+        12,
+        6,
+        -0.2
+      ],
+      "to": [
+        14,
+        8,
+        0
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            60,
+            2,
+            62,
+            4
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            60,
+            2,
+            60.2,
+            4
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            1,
+            1
+          ]
+        },
+        "west": {
+          "uv": [
+            60,
+            2,
+            60.2,
+            4
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            60,
+            2,
+            62,
+            2.2
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            60,
+            2,
+            62,
+            2.2
+          ],
+          "texture": 0
+        }
+      },
+      "type": "cube",
+      "uuid": "202046e1-e743-686a-4bff-64f29f05346b"
+    }
+  ],
+  "groups": [],
+  "outliner": [
+    "d16e27d8-470d-9ca9-9aa2-14989f2be9ec",
+    "659476e0-3212-064d-bf6e-850ab982219e",
+    "f0d4e6a5-947d-da3a-3249-025e0111b9a9",
+    "202046e1-e743-686a-4bff-64f29f05346b"
+  ],
+  "textures": [
+    {
+      "name": "card_printer",
+      "path": "C:\\Users\\evanw\\AppData\\Local\\Temp\\claude-cards\\card_printer.png",
+      "folder": "",
+      "namespace": "",
+      "id": "0",
+      "group": "",
+      "width": 64,
+      "height": 64,
+      "uv_width": 16,
+      "uv_height": 16,
+      "particle": false,
+      "use_as_default": false,
+      "layers_enabled": false,
+      "sync_to_project": "",
+      "render_mode": "default",
+      "render_sides": "auto",
+      "pbr_channel": "color",
+      "frame_time": 1,
+      "frame_order_type": "loop",
+      "frame_order": "",
+      "frame_interpolate": false,
+      "visible": true,
+      "internal": true,
+      "saved": true,
+      "uuid": "927a4500-5983-95fb-7a3a-a361f3f72c32",
+      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABQklEQVR4nO3XsUoDQRAG4P+GwSK1iiySKoiFiIiFlU+QIoWktvAhfBJbO4tDJEUKC/ERRMRCJJWISLAQEVslm3gnASHuBXaT+T/YneWYWbi9W5bNdnb3vmCYDjq3Wg8qfn569HFjcyuo/u72Jnq9YMb0zk99C3XSv/bth8A4RSK6nbPJEmXBh0Zg/dIoNlvbw+lgnMA4RSKarf0o9Tp+pE0q9OhMjc7bC0XbAr2H+3/lN9bWw06BP3750HqBcQLjFImIfgpUNb6nZ0Vm/jr88f5WaQWvLi8q1TvnMkSkg25xeSWo+LX/4uNnu108OziqlQmd42KYH5Y5qHeRCoFxOo1JanlejMsRgOGNcySdrz7VBXCR93BVAuMExgmMExgnME5gnMA4gXEC4wTG6e9bHRERERERERERERERERERERHm0DcswkLAqF+RvgAAAABJRU5ErkJggg=="
+    }
+  ]
+}

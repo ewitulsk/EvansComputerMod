@@ -71,7 +71,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     public static final String SHELL = "dev.ecm.phone";
     /** Apps that come with every phone: app id, the program in the server's wasm-bin that is its entry. */
     static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"},
-            {"dev.ecm.settings", "settings"}};
+            {"dev.ecm.settings", "settings"}, {"dev.ecm.files", "files"}};
     /** A celld report older than this no longer counts (the daemon reports every 5 s). */
     static final long CELL_REPORT_MS = 12_000;
     /** celld is not started again sooner than this after it exited. */
@@ -242,8 +242,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         }
     }
 
-    /** Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps). */
-    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages"));
+    /**
+     * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps)
+     * and its Files (the documents folder).
+     */
+    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages"),
+            "dev.ecm.files", List.of("files:documents"));
 
     @Nullable
     private static byte[] resource(String path) throws IOException {

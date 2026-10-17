@@ -350,6 +350,8 @@ pub struct Request {
     pub path: String,
     pub query: String,
     pub body: String,
+    /// The `Cookie:` header ("" when none).
+    pub cookie: String,
 }
 
 pub fn read_request(fd: i32, timeout_ms: i64) -> Option<Request> {
@@ -381,11 +383,27 @@ pub fn read_request(fd: i32, timeout_ms: i64) -> Option<Request> {
                 let target = w.next().unwrap_or("/").to_string();
                 let (path, query) = target.split_once('?').map_or((target.clone(), String::new()), |(p, q)| (p.to_string(), q.to_string()));
                 let body = String::from_utf8_lossy(&data[end + 4..end + 4 + len]).to_string();
-                return Some(Request { method, path, query, body });
+                let cookie = head
+                    .lines()
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("cookie")).map(|(_, v)| v.trim().to_string()))
+                    .unwrap_or_default();
+                return Some(Request { method, path, query, body, cookie });
             }
         }
     }
     None
+}
+
+/// [`reply`] with more header lines (`Set-Cookie`, `Location`).
+pub fn reply_with(fd: i32, status: &str, content_type: &str, headers: &[(&str, &str)], body: &str) {
+    let mut head = format!("HTTP/1.0 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    for (k, v) in headers {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    send_all(fd, head.as_bytes());
+    send_all(fd, body.as_bytes());
+    socket::shutdown(fd, socket::SHUT_WR);
 }
 
 pub fn reply(fd: i32, status: &str, content_type: &str, body: &str) {

@@ -521,7 +521,7 @@ public final class CellularScenarios {
 
     /**
      * {@code cell_wrong_carrier}: carrier cell-red's core and site (an LTE panel facing south, channel 5); the phone, 12
-     * blocks south, has an LTE Modem with a cell-blue SIM (written with simtool at the same card writer: a carrier this
+     * blocks south, has an LTE Modem with a cell-blue SIM (written with cardtool sim at the same card writer: a carrier this
      * core knows nothing about). It hears the red site but never attaches, and the site sees no phone. A cell-red SIM
      * clicked into the modem pops the blue one out (with its key) and attaches.
      */
@@ -554,13 +554,13 @@ public final class CellularScenarios {
         b.expect("core", "eth0: inet 10\\.0\\.52\\.1/24", "the core has 10.0.52.1");
         coreUp(b, "core", "cell-red", WC_POOL, "site-red");
         siteUp(b, "site", "site-red", "cell-red", "10.0.52.1", 1, PhyProfile.LTE, 5, "");
-        b.note("At the same card writer, a SIM for carrier cell-blue, written with simtool (cell-red's core knows nothing about it)");
+        b.note("At the same card writer, a SIM for carrier cell-blue, written with cardtool sim (cell-red's core knows nothing about it)");
         b.mutate(r -> insertBlank(r, WC_READER), "right-click the Card Reader/Writer with a blank SIM card");
-        b.send("core", "simtool write " + BLUE_IMSI + " cell-blue --random");
-        b.expectOrFail("core", "^card released: waiting to be taken or pulled out$", "the cell-blue SIM is written", "^simtool:");
+        b.send("core", "cardtool sim write " + BLUE_IMSI + " cell-blue --random");
+        b.expectOrFail("core", "^card released: waiting to be taken or pulled out$", "the cell-blue SIM is written", "^cardtool:");
         b.mutate(r -> {
             String key = CellNetScenarios.last(r.screen("core"), "^key ([0-9a-f]{32})");
-            if (key == null) r.fail("simtool printed no key");
+            if (key == null) r.fail("cardtool printed no key");
             run(r).notes.put("blue_key", key);
             takeOut(r, WC_READER, "blue", BLUE_IMSI);
         }, "take the blue SIM out (empty hand)");

@@ -1,0 +1,13 @@
+[package]
+name = "ecm-web"
+version = "0.1.0"
+edition = "2021"
+description = "The web engine of the in-game Browser (docs/gui/BROWSER.md): URLs, an HTTP/1.0 and file:// fetcher over a transport trait, a forgiving HTML parser into a small DOM, the CSS cascade, block/inline/flex layout with the ECM font metrics, and a display list. Sans-IO: no host calls, tested on the host."
+
+[lib]
+name = "ecm_web"
+doctest = false
+
+[dependencies]
+ecm-ui-proto = { workspace = true }
+miniz_oxide = "0.8"

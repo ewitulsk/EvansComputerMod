@@ -1,0 +1,13 @@
+[package]
+name = "ecm-js"
+version = "0.1.0"
+edition = "2021"
+description = "The Browser's page scripts: QuickJS (rquickjs; its C sources built with wasi-sdk for wasm32-wasip1, like Lua) with a DOM subset over ecm-web's document, events, timers, fetch() and localStorage, under an instruction and time budget."
+
+[lib]
+name = "ecm_js"
+doctest = false
+
+[dependencies]
+ecm-web = { workspace = true }
+rquickjs = { version = "0.9", default-features = false }

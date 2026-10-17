@@ -228,7 +228,10 @@ domain show mybase.ecm | domain list | domain delete mybase.ecm
 whois mybase.ecm
 ```
 
-The same is on the web at http://nic.ring/ (forms) and in `POST /api` (the plain-text API
+The same is on the web at http://nic.ring/ (made for the in-game Browser, docs/gui/BROWSER.md:
+search a name, create an account or log in, which keeps a session cookie (`nic_session`, in
+memory: a restart of `registrard` logs everyone out), then register names and add records on
+the home page, which lists the account's domains; `ecm_dns::registrar_web`) and in `POST /api` (the plain-text API
 `domain` uses: `op=account|login|check|register|set|del|ns|show|list|delete`). A domain is
 either **hosted** (its records live in the `.ecm` zone itself, served by `ns1.ecm.ring` and
 `ns2.ecm.ring`) or **delegated** to the registrant's nameservers.
@@ -300,6 +303,7 @@ New worlds' home routers hand out the village resolver already.
 | `dns_resilience` | `/ecm net cut` around a root server's village: names still resolve through the other letters; the ring cut in two: each half resolves its `.ring` names | a name in the other half: SERVFAIL |
 | `dns_register` | A computer in a free Data Center rack makes an account, registers `mybase.ecm`, points `www` at itself; the house PC curls it, `whois` shows the registrant, the `.ecm` secondary has it (NOTIFY), with the primary cut off the secondary still answers | the same name again, a wrong password, a reserved name; a change while the registry is unreachable |
 | `dns_own_nameserver` | The fiber-tap lab's PC runs `named` for `tapbase.ecm`, registers a delegation with glue; `dig +trace` shows the fourth hop; a changed record is served from the resolver's cache until its TTL runs out | the player's `named` stopped: SERVFAIL, everything else keeps resolving |
+| `browser_dns` (docs/gui/BROWSER.md) | At a house PC, the Browser: `web.vN.ring`, `web` (search domain); at http://nic.ring/ a search, an account, a registration and a `www` record, then `http://www.NAME.ecm/` | `nosuch.ring`: Can't find the server; the same name twice |
 | `dns_tld` | The fiber-tap lab runs `.base` on the tap router and the PC (which also serves `shop.base`), applies to IANA; `dig +trace www.shop.base` shows root, `base.`, `shop.base.`; another village's resolver finds it | `.test` refused; a lame nameserver refused; before the application the root says NXDOMAIN |
 
 Spawn them with `/ecm scenario spawn <name>`. The ring scenarios start at the house PC

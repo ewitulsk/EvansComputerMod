@@ -17,10 +17,11 @@ import java.util.*;
 /**
  * The ISP router's own cables, routed knowing the building's rotation.
  *
- * <p>NIC numbering follows absolute directions (a terminal's non-screen faces in DOWN, UP,
- * NORTH, SOUTH, WEST, EAST order, then its Interface Block's faces), so which wall of a
- * rotated ISP faces eth2 or eth3 changes with the rotation, and the panels hang on
- * world-fixed sides of the mast. This computes, in the ISP template's coordinates:
+ * <p>NIC numbering is relative to the router's screen (bottom, top, back, left, right,
+ * then its Interface Block's faces in the same relative order, see
+ * {@link TerminalBlock#relativeFaces}), so eth2 and eth3 sit on the same walls of the room
+ * in every rotation, but the panels hang on world-fixed sides of the mast, so the runs to
+ * them still change with the rotation. This computes, in the ISP template's coordinates:
  *
  * <ul>
  *   <li>eth2 (fiber to the previous village): from its face, through the room (preferring
@@ -56,15 +57,15 @@ public final class IspCabling {
 
     /**
      * Local NIC exit cells in eth order for the terminal at {@code router} (template
-     * coordinates) when the template is placed with {@code rotation}.
+     * coordinates). Numbering is relative to the screen, so it is the same for every
+     * rotation the template is placed with.
      */
-    public static List<BlockPos> nicExits(TemplateScan scan, BlockPos router, Rotation rotation) {
-        Rotation inv = inverse(rotation);
+    public static List<BlockPos> nicExits(TemplateScan scan, BlockPos router) {
         Direction screen = scan.state(router.getX(), router.getY(), router.getZ()).getValue(TerminalBlock.FACING);
+        Direction[] faces = TerminalBlock.relativeFaces(screen);
         List<BlockPos> exits = new ArrayList<>();
         List<Direction> interfaces = new ArrayList<>();
-        for (Direction world : Direction.values()) {
-            Direction local = inv.rotate(world);
+        for (Direction local : faces) {
             BlockPos n = router.relative(local);
             if (scan.state(n.getX(), n.getY(), n.getZ()).getBlock() instanceof InterfaceBlock) {
                 interfaces.add(local);
@@ -76,8 +77,8 @@ public final class IspCabling {
         for (Direction d : interfaces) visited.add(router.relative(d));
         for (Direction d : interfaces) {
             BlockPos block = router.relative(d);
-            for (Direction world : Direction.values()) {
-                BlockPos f = block.relative(inv.rotate(world));
+            for (Direction local : faces) {
+                BlockPos f = block.relative(local);
                 if (!visited.contains(f) && !(scan.state(f.getX(), f.getY(), f.getZ()).getBlock() instanceof InterfaceBlock))
                     exits.add(f);
             }
@@ -104,7 +105,7 @@ public final class IspCabling {
         BlockPos router = scan.findNbt("ecmRole", "isp.router");
         if (router == null) return null;
         Rotation inv = inverse(rotation);
-        List<BlockPos> exits = nicExits(scan, router, rotation);
+        List<BlockPos> exits = nicExits(scan, router);
         if (exits.size() < 4) return null;
         Direction screen = scan.state(router.getX(), router.getY(), router.getZ()).getValue(TerminalBlock.FACING);
         int mastTop = scan.mastTop();

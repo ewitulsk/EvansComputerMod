@@ -3,6 +3,7 @@ package com.example.evanscomputermod.testing.v1211;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.computer.WorldNetwork;
+import com.example.evanscomputermod.testing.TechCableChecks;
 import com.example.evanscomputermod.testing.TechRoadChecks;
 import com.example.evanscomputermod.testing.scenario.VillageRoadScenarios;
 import com.example.evanscomputermod.worldgen.TechVillageLocator;
@@ -57,6 +58,40 @@ public final class VillageRoadTests {
         }
         String failure = failures.isEmpty() ? null : String.join("\n", failures);
         TestDriver.drive(h, NS, "tech_village_roads_every_style", () -> true, () -> failure);
+    }
+
+    /** The {@code tech_village_cables} scenario on the village nearest the test. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cables")
+    public static void tech_village_cables(GameTestHelper h) {
+        var level = h.getLevel();
+        var d = WorldNetwork.get(level);
+        d.plan(level);
+        int n = d.nearest(h.absolutePos(net.minecraft.core.BlockPos.ZERO)).number();
+        TechVillageLocator.placeForTest(level, n);
+        TestDriver.scenario(h, NS, VillageRoadScenarios.ALL.get("tech_village_cables"), false,
+                r -> VillageRoadScenarios.VILLAGE.put(r, n));
+    }
+
+    /** One village of every style (so several rotations): the ISP's cables join what they are wired to. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cables_styles")
+    public static void tech_village_cables_every_style(GameTestHelper h) {
+        var level = h.getLevel();
+        var d = WorldNetwork.get(level);
+        d.plan(level);
+        Map<String, Integer> first = new LinkedHashMap<>();
+        for (var v : d.villages) first.putIfAbsent(v.style(), v.number());
+        List<String> failures = new ArrayList<>();
+        for (var e : first.entrySet()) {
+            var start = TechVillageLocator.placeForTest(level, e.getValue());
+            var visit = TechVillageLocator.resolve(level, e.getValue(), start);
+            List<String> details = new ArrayList<>();
+            String why = TechCableChecks.check(level, visit, details);
+            EvansComputerMod.LOGGER.info("tech_village_cables_every_style: village {} ({}, {}): {}", e.getValue(), e.getKey(),
+                    visit.isp().getRotation(), String.join("; ", details));
+            if (why != null) failures.add("village " + e.getValue() + " (" + e.getKey() + "): " + why);
+        }
+        String failure = failures.isEmpty() ? null : String.join("\n", failures);
+        TestDriver.drive(h, NS, "tech_village_cables_every_style", () -> true, () -> failure);
     }
 
     /**

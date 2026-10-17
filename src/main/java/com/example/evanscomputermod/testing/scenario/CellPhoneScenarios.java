@@ -29,7 +29,7 @@ import java.util.Map;
  *
  * <ul>
  *   <li>{@code cell_phone_celld} (GameTest {@code ecm_phone}): a player writes a SIM at a Card
- *       Reader/Writer with {@code simtool}, takes it out, holds a new ePhone and fits an LTE Modem and
+ *       Reader/Writer with {@code cardtool sim}, takes it out, holds a new ePhone and fits an LTE Modem and
  *       the SIM in its slot screen. The phone starts {@code celld} by itself; in the phone's Terminal
  *       {@code cell} shows the SIM (read through the {@code sim} peripheral of the SIM tray) and celld
  *       searching (no network is built here); the status bar has cellular bars and no carrier; {@code
@@ -84,15 +84,15 @@ public final class CellPhoneScenarios {
         inv.setItem(from, ItemStack.EMPTY);
     }
 
-    /** The card writer, the player's blank SIM written with simtool and taken out by hand. */
+    /** The card writer, the player's blank SIM written with cardtool sim and taken out by hand. */
     static void writeSim(Scenario.Builder b) {
-        b.note("At the card writer: a blank SIM clicked into the Card Reader/Writer, written with simtool, taken out by hand")
+        b.note("At the card writer: a blank SIM clicked into the Card Reader/Writer, written with cardtool sim, taken out by hand")
                 .mutate(r -> r.player().use(new ItemStack(CellularContent.SIM_CARD.get()), r.abs(READER), Direction.NORTH, false),
                         "right-click the Card Reader/Writer with a blank SIM card")
-                .send("pc", "simtool write " + IMSI + " " + CARRIER + " --key " + KEY)
+                .send("pc", "cardtool sim write " + IMSI + " " + CARRIER + " --key " + KEY)
                 .expectOrFail("pc", "^card released: waiting to be taken or pulled out$", "the SIM is written (" + CARRIER + ", IMSI " + IMSI + ")",
-                        "^simtool:")
-                .expect("pc", PROMPT, "simtool finished")
+                        "^cardtool:")
+                .expect("pc", PROMPT, "cardtool finished")
                 .mutate(r -> {
                     Inventory inv = PhoneScenarios.holder(r).getInventory();
                     inv.selected = 8;   // an empty hand: the card goes into the inventory
