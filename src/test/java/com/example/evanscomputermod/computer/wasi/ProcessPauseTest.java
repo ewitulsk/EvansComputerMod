@@ -239,6 +239,64 @@ public class ProcessPauseTest {
         pm.kill(spin);
     }
 
+    /**
+     * Wake locks (docs/gui/APPS.md "Wake locks"): a held lock keeps a sleeping computer
+     * running; when the last one runs out or is released, it sleeps again. A program's
+     * {@code /dev/uictl wakelock} lock is renewed by sending it again and released when the
+     * program exits; a plain sleep() can't put a locked computer to sleep, an ePhone switched
+     * off (sleepIgnoringWakeLocks) can.
+     */
+    @Test
+    void wakeLocksKeepASleepingComputerAwake() throws Exception {
+        int dots = spawn("dots.wasm");
+        DotCounter out = new DotCounter(dots);
+        waitFor(() -> out.poll() > 20, 10_000, "dots flowing");
+
+        // Asleep (the phone went into a pocket) while a call holds a lock: it runs on.
+        ComputerInstance.WakeLock call = computer.acquireWakeLock("call", 400);
+        computer.sleep();
+        assertFalse(computer.isAsleep(), "a held wake lock let the computer sleep");
+        long d1 = out.poll();
+        waitFor(() -> out.poll() > d1 + 20, 5_000, "dots while the lock holds");
+        assertTrue(computer.wakeLockHolders().stream().anyMatch(h -> h.startsWith("call ")), computer.wakeLockHolders().toString());
+        // Renewed before it runs out: still awake past the first deadline.
+        Thread.sleep(250);
+        call.renew(400);
+        Thread.sleep(250);
+        assertFalse(computer.isAsleep(), "a renewed lock ran out");
+        // Not renewed: it runs out and the computer sleeps as it was told to.
+        waitFor(computer::isAsleep, 2_000, "asleep once the lock ran out");
+        assertFalse(call.isHeld());
+
+        // A lock taken while asleep wakes it; release() puts it back to sleep.
+        ComputerInstance.WakeLock l = computer.acquireWakeLock("test", 5_000);
+        assertFalse(computer.isAsleep());
+        l.release();
+        assertTrue(computer.isAsleep());
+
+        // A program's lock (/dev/uictl wakelock): released when the program exits.
+        computer.uictlWakeLock(dots, 5_000);
+        assertFalse(computer.isAsleep());
+        assertTrue(computer.wakeLockHolders().stream().anyMatch(h -> h.startsWith("pid " + dots + " ")), computer.wakeLockHolders().toString());
+        computer.uictlWakeLock(dots, 0);
+        assertTrue(computer.isAsleep(), "wakelock 0 didn't release it");
+        computer.uictlWakeLock(dots, 5_000);
+        pm.kill(dots);
+        waitFor(computer::isAsleep, 5_000, "the lock released when its program exited");
+        assertTrue(computer.wakeLockHolders().isEmpty(), computer.wakeLockHolders().toString());
+
+        // A budgeted wake ending doesn't sleep a computer a lock holds; switched off does.
+        ComputerInstance.WakeLock l2 = computer.acquireWakeLock("call", 5_000);
+        ComputerInstance.BudgetedWake w = computer.wakeFor(10_000);
+        w.finish();
+        assertFalse(computer.isAsleep(), "a budgeted wake's end overrode a wake lock");
+        computer.sleepIgnoringWakeLocks();
+        assertTrue(computer.isAsleep(), "switched off, but a wake lock kept it running");
+        l2.release();
+        assertTrue(computer.isAsleep());
+        computer.wake();
+    }
+
     // ------------------------------------------------------------ helpers
 
     private int spawn(String file) {

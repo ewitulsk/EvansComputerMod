@@ -386,8 +386,10 @@ public class ComputerInstance implements AutoCloseable {
                 new com.example.evanscomputermod.computer.apps.BackgroundScheduler.SleepControl() {
                     @Override public boolean isAsleep() { return ComputerInstance.this.isAsleep(); }
                     @Override public Runnable wakeFor(long ms) {
-                        BudgetedWake w = ComputerInstance.this.wakeFor(ms);
-                        return w::finish;
+                        // A duty-cycle slice or refresh window: a wake lock, so ending it can't put to
+                        // sleep a computer that another lock (a call) keeps awake.
+                        WakeLock l = acquireWakeLock("background", ms);
+                        return l::release;
                     }
                 });
 
@@ -879,8 +881,33 @@ public class ComputerInstance implements AutoCloseable {
     public void sleep() {
         synchronized (sleepLock) {
             wakeGeneration++;
+            wantAsleep = true;
+            offAsleep = false;
+            applySleep();
+        }
+    }
+
+    /** Sleep even while wake locks are held (an ePhone switched off: it is about to unload). */
+    public void sleepIgnoringWakeLocks() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            wantAsleep = true;
+            offAsleep = true;
             sleepNow();
         }
+    }
+
+    /** What the last sleep/wake decision wants (wake locks may still hold it awake). */
+    private boolean wantAsleep;
+    /** Put to sleep by {@link #sleepIgnoringWakeLocks}: locks don't wake it until the next wake. */
+    private boolean offAsleep;
+
+    /** Sleep or wake as {@link #wantAsleep} and the live wake locks say. Holds sleepLock. */
+    private void applySleep() {
+        boolean asleep = offAsleep || wantAsleep && !wakeLockHeld();
+        if (asleep == isAsleep()) return;
+        if (asleep) sleepNow();
+        else wakeNow();
     }
 
     private void sleepNow() {
@@ -895,8 +922,105 @@ public class ComputerInstance implements AutoCloseable {
     public void wake() {
         synchronized (sleepLock) {
             wakeGeneration++;
+            wantAsleep = false;
+            offAsleep = false;
             wakeNow();
         }
+    }
+
+    // ------------------------------------------------------------ wake locks (docs/gui/APPS.md "Wake locks")
+
+    /** Held wake locks: each keeps a sleeping computer awake until its deadline (or its release). */
+    private final java.util.Set<WakeLock> wakeLocks = new java.util.LinkedHashSet<>();
+    /** The /dev/uictl wake lock of each program. */
+    private final java.util.Map<Integer, WakeLock> pidWakeLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Keep the computer awake for {@code ms} from now (an ePhone in the hotbar or pocket runs on),
+     * capped at {@code apps.wakelockMaxMs}; the handle renews or releases it. A lock that runs
+     * out lets the computer sleep again if the last sleep/wake decision was to sleep.
+     */
+    public WakeLock acquireWakeLock(Object owner, long ms) {
+        WakeLock l = new WakeLock(owner);
+        l.renew(ms);
+        return l;
+    }
+
+    private boolean wakeLockHeld() {
+        long now = System.nanoTime();
+        wakeLocks.removeIf(l -> l.deadlineNanos - now <= 0);
+        return !wakeLocks.isEmpty();
+    }
+
+    /** The live wake locks: one line each, {@code <owner> <ms left>}. */
+    public java.util.List<String> wakeLockHolders() {
+        synchronized (sleepLock) {
+            wakeLockHeld();
+            long now = System.nanoTime();
+            java.util.List<String> out = new java.util.ArrayList<>();
+            for (WakeLock l : wakeLocks) out.add(l.owner + " " + Math.max(0, (l.deadlineNanos - now) / 1_000_000L));
+            return out;
+        }
+    }
+
+    /** A wake lock ({@link #acquireWakeLock}). */
+    public final class WakeLock {
+        private final Object owner;
+        private long deadlineNanos;
+
+        private WakeLock(Object owner) {
+            this.owner = owner;
+        }
+
+        /** Hold it for {@code ms} more from now (capped at apps.wakelockMaxMs); 0 releases it. */
+        public void renew(long ms) {
+            if (ms <= 0) {
+                release();
+                return;
+            }
+            long hold = Math.min(ms, com.example.evanscomputermod.EcmConfig.appsWakelockMaxMs());
+            synchronized (sleepLock) {
+                deadlineNanos = System.nanoTime() + hold * 1_000_000L;
+                wakeLocks.add(this);
+                applySleep();
+            }
+            WAKE_BUDGET_TIMER.schedule(() -> {
+                synchronized (sleepLock) {
+                    applySleep();
+                }
+            }, hold + 1, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+
+        public void release() {
+            synchronized (sleepLock) {
+                if (wakeLocks.remove(this)) applySleep();
+            }
+        }
+
+        public boolean isHeld() {
+            synchronized (sleepLock) {
+                return wakeLocks.contains(this) && deadlineNanos - System.nanoTime() > 0;
+            }
+        }
+    }
+
+    /** {@code /dev/uictl wakelock MS} from program {@code pid}: renew (or with 0 release) its lock. */
+    public void uictlWakeLock(int pid, long ms) {
+        if (ms <= 0) {
+            WakeLock l = pidWakeLocks.remove(pid);
+            if (l != null) l.release();
+            return;
+        }
+        pidWakeLocks.computeIfAbsent(pid, p -> new WakeLock("pid " + p + " " + programLabel(p))).renew(ms);
+    }
+
+    private String programLabel(int pid) {
+        var app = appManager != null ? appManager.instanceOf(pid) : null;
+        if (app != null) return app.appId();
+        String n = processManager != null ? processManager.nameOf(pid) : null;
+        if (n == null) return "?";
+        int s = n.lastIndexOf('/');
+        return s >= 0 ? n.substring(s + 1) : n;
     }
 
     private void wakeNow() {
@@ -1021,6 +1145,8 @@ public class ComputerInstance implements AutoCloseable {
         long gen;
         synchronized (sleepLock) {
             gen = ++wakeGeneration;
+            wantAsleep = false;
+            offAsleep = false;
             wakeNow();
         }
         BudgetedWake w = new BudgetedWake(gen);
@@ -1051,8 +1177,9 @@ public class ComputerInstance implements AutoCloseable {
             synchronized (sleepLock) {
                 if (wakeGeneration != generation) return false;
                 wakeGeneration++;
-                sleepNow();
-                return true;
+                wantAsleep = true;
+                applySleep();
+                return isAsleep();
             }
         }
     }
@@ -3065,6 +3192,8 @@ public class ComputerInstance implements AutoCloseable {
         uploadPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
         uiManager.onProcessExit(pid);
+        WakeLock l = pidWakeLocks.remove(pid);
+        if (l != null) l.release();
     }
 
     // --- Player input (from any host: a Terminal's GUI today) ---

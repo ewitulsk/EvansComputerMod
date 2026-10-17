@@ -533,3 +533,27 @@ app.step(0)
     assert_eq!(*sessions[0], want.to_wire());
     assert_eq!(*sessions[1], ecm_ui::MediaSession::ended().to_wire());
 }
+
+/// ui.wakelock(ms) writes `wakelock MS` to /dev/uictl and raises the refusal; without a
+/// GUI device (here, on the host) it raises OSError; a bad ms is a TypeError/ValueError.
+#[test]
+fn python_wakelock_needs_the_gui_device() {
+    let interp = interpreter();
+    interp.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+        run(vm, &scope, &format!("{SETUP}"));
+        run(
+            vm,
+            &scope,
+            "import ui
+assert callable(ui.wakelock)
+try:
+    ui.wakelock(5000)
+    raised = False
+except OSError:
+    raised = True
+assert raised
+",
+        );
+    });
+}

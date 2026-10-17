@@ -237,7 +237,16 @@ public final class UiManager implements CompositorHost {
         var apps = computer.getAppManager();
         if (apps != null && apps.isConfined(pid)) {
             String cmd = t.isEmpty() ? "" : t.split("\\s+")[0];
-            if (!cmd.equals("launch")) return "gui: apps may only use launch\n";
+            if (cmd.equals("wakelock")) {
+                // An app holds the computer awake only for a call or audio it is playing.
+                var i = apps.instanceOf(pid);
+                boolean releasing = t.split("\\s+").length > 1 && t.split("\\s+")[1].equals("0");
+                if (!releasing && (i == null || !(i.activeModes().contains("call") || i.activeModes().contains("audio")))) {
+                    return "gui: wakelock needs an active call or audio mode\n";
+                }
+            } else if (!cmd.equals("launch")) {
+                return "gui: apps may only use launch\n";
+            }
         }
         return command(pid, line);
     }
@@ -279,6 +288,23 @@ public final class UiManager implements CompositorHost {
             }
             case "status" -> {
                 return status();
+            }
+            case "wakelock" -> {
+                // wakelock MS: keep the computer awake MS from now (renew before it runs out; 0 releases);
+                // no argument: the holders.
+                if (parts.length < 2) {
+                    var holders = computer.wakeLockHolders();
+                    return holders.isEmpty() ? "gui: no wake locks\n" : String.join("\n", holders) + "\n";
+                }
+                long ms;
+                try {
+                    ms = Long.parseLong(parts[1]);
+                } catch (NumberFormatException e) {
+                    return "usage: wakelock [MS]\n";
+                }
+                if (ms < 0) return "usage: wakelock [MS]\n";
+                computer.uictlWakeLock(pid, ms);
+                return "ok\n";
             }
             case "phone" -> {
                 PhoneUi p = phone;

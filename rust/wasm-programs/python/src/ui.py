@@ -985,6 +985,19 @@ class App:
         _ui.flush(self._h)
 
 
+def wakelock(ms):
+    """Keep the computer awake (an ePhone in the hotbar or pocket) for ms from now,
+    at most apps.wakelockMaxMs (10 s); call it again before it runs out to keep
+    holding it, wakelock(0) releases it (and so does exiting). An app may hold
+    one only while its call or audio background mode is on."""
+    import builtins
+    with builtins.open("/dev/uictl", "r+b", buffering=0) as dev:
+        dev.write(("wakelock %d\n" % max(0, int(ms))).encode())
+        reply = dev.read(256).decode().strip()
+    if reply != "ok":
+        raise OSError(reply)
+
+
 def _read_text(path):
     """A file's text: through open(), or the computer's storage (paths from its root)."""
     try:

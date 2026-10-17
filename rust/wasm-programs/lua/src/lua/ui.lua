@@ -1022,6 +1022,20 @@ function App:run()
   native.flush(self._h)
 end
 
+--- Keep the computer awake (an ePhone in the hotbar or pocket) for ms from now, at most
+--- apps.wakelockMaxMs (10 s); call it again before it runs out to keep holding it,
+--- wakelock(0) releases it (and so does exiting). An app may hold one only while its call
+--- or audio background mode is on. Errors with the reason when it is refused.
+function M.wakelock(ms)
+  local f = io.open("/dev/uictl", "r+b")
+  if not f then error("no GUI device", 2) end
+  f:write(string.format("wakelock %d\n", math.max(0, math.floor(ms))))
+  f:flush()
+  local reply = (f:read("*a") or ""):gsub("%s+$", "")
+  f:close()
+  if reply ~= "ok" then error(reply, 2) end
+end
+
 -- A file's text: through io.open, or the computer's storage (paths from its root).
 local function read_text(path)
   local f = io.open(path, "rb")

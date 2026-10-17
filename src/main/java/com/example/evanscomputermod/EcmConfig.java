@@ -51,6 +51,7 @@ public final class EcmConfig {
     private static final java.util.Map<String, ModConfigSpec.IntValue> APPS_BACKGROUND_CPU_PERCENT = new java.util.LinkedHashMap<>();
     private static final ModConfigSpec.IntValue APPS_MAX_BACKGROUND_APPS;
     private static final ModConfigSpec.IntValue APPS_WAKE_MIN_INTERVAL_MS;
+    private static final ModConfigSpec.IntValue APPS_WAKELOCK_MAX_MS;
     private static final ModConfigSpec.IntValue AUDIO_DUCK_LEVEL_PERCENT;
     /** Defaults of the per-mode CPU shares: a call mixes talkers and runs the microphone, so it gets more. */
     public static final java.util.Map<String, Integer> BACKGROUND_CPU_DEFAULTS = java.util.Map.of(
@@ -187,6 +188,10 @@ public final class EcmConfig {
                 .comment("ePhone: data on a wake socket (SO_ECM_WAKE) gives a suspended app a refresh window right away,",
                         "at most once per this many ms per app.")
                 .defineInRange("wakeMinIntervalMs", 2000, 100, 600000);
+        APPS_WAKELOCK_MAX_MS = b
+                .comment("Longest one wake lock renewal (/dev/uictl wakelock MS, ui.wakelock) keeps a sleeping computer awake;",
+                        "the holder renews it before it runs out.")
+                .defineInRange("wakelockMaxMs", 10000, 100, 600000);
         b.pop();
 
         b.comment("Sound cards (Speakers, ePhones, AirPods): the per-stream mixer.").push("audio");
@@ -395,6 +400,10 @@ public final class EcmConfig {
 
     public static int appsWakeMinIntervalMs() {
         return get(APPS_WAKE_MIN_INTERVAL_MS, 2000);
+    }
+
+    public static int appsWakelockMaxMs() {
+        return get(APPS_WAKELOCK_MAX_MS, 10000);
     }
 
     public static int audioDuckLevelPercent() {

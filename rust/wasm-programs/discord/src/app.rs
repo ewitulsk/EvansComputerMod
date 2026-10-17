@@ -74,7 +74,14 @@ pub trait Audio {
         false
     }
     fn close(&mut self);
+    /// Hold the computer awake `ms` more (`0` releases): a call runs on with the phone pocketed.
+    fn wakelock(&mut self, _ms: u64) {}
 }
+
+/// A call's wake lock: held this long, renewed this often (ms).
+const WAKELOCK_MS: u64 = 10_000;
+// Often: this clock stops while the app is paused between background slices (25 % of the time runs).
+const WAKELOCK_RENEW_MS: u64 = 1_000;
 
 /// How often connections are polled while something is connected, ms.
 pub const POLL_MS: i32 = 100;
@@ -97,6 +104,7 @@ struct Call {
     mixer: Mixer,
     last_keepalive: u64,
     last_played: u64,
+    last_wakelock: u64,
     audio_ok: bool,
 }
 
@@ -562,6 +570,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         if self.call.take().is_some() {
             self.net.voice_close();
             self.audio.close();
+            self.audio.wakelock(0);
             self.app.core.background_mode("call", false);
         }
     }
@@ -599,7 +608,18 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             self.net.voice_send(&sender.keepalive().encode());
             // The call keeps running when Discord is hidden or the phone is pocketed (the player is asked once).
             self.app.core.background_mode("call", true);
-            self.call = Some(Call { backend: v.backend, channel: v.channel, sender, mixer: Mixer::new(), last_keepalive: now, last_played: 0, audio_ok });
+            // And a wake lock, so the computer keeps running it in the hotbar or a pocket (renewed below).
+            self.audio.wakelock(WAKELOCK_MS);
+            self.call = Some(Call {
+                backend: v.backend,
+                channel: v.channel,
+                sender,
+                mixer: Mixer::new(),
+                last_keepalive: now,
+                last_played: 0,
+                last_wakelock: now,
+                audio_ok,
+            });
             let hp = audio_ok && self.audio.headphones();
             self.model.borrow_mut().headphones = hp;
             changed = true;
@@ -640,6 +660,10 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
                     self.audio.play(&pcm);
                 }
             }
+        }
+        if now.saturating_sub(call.last_wakelock) >= WAKELOCK_RENEW_MS {
+            call.last_wakelock = now;
+            self.audio.wakelock(WAKELOCK_MS);
         }
         if now.saturating_sub(call.last_keepalive) >= KEEPALIVE_MS {
             call.last_keepalive = now;

@@ -32,7 +32,8 @@ import java.util.WeakHashMap;
  *   <li>{@code background_duck}: Tone plays (media) while Voice holds a call (call mode, a
  *       voice stream talking in 1 s bursts): the music is ducked to 25 % while Voice carries
  *       sound and comes back when it is quiet; a silent stretch of the call doesn't duck it
- *       (control).</li>
+ *       (control). Then the phone goes into the hotbar: Voice's wake lock keeps the computer
+ *       running (not just duty-cycle slices) and the call keeps playing.</li>
  *   <li>{@code background_limit}: with {@code apps.maxBackgroundApps = 2} a third app with a
  *       background mode stops the one whose mode started first, and a notification names it;
  *       with the limit at 3 (an operator's config edit) all three keep their modes
@@ -221,7 +222,22 @@ public final class BackgroundScenarios {
             return t != null && t.ducked() ? null : "tone " + t;
         }, "Voice talks again: ducked again", 10_000);
         b.mutate(r -> r.say("§f  mixer: " + PhoneGuiScenarios.computer(r).volumeMixer().text().replace('\n', ';')), "read the Volume Mixer");
-        b.timeLimit(90_000);
+        b.note("The call in the hotbar: the player goes home, allows Voice in the background and puts the phone away");
+        home(b);
+        answerPrompt(b, "Voice", "Allow");
+        b.mutate(r -> PhoneScenarios.select(PhoneScenarios.holder(r), 1), "select hotbar slot 2 (the phone in the hotbar)");
+        b.await(r -> host(r).state() == PhoneState.ASLEEP ? null : "phone " + host(r).state(), "the phone is asleep in the hotbar", 5_000);
+        b.await(r -> {
+            String locks = PhoneGuiScenarios.ui(r).control("wakelock");
+            return locks.contains(VOICE) ? null : locks;
+        }, "Voice holds a wake lock for its call (/dev/uictl wakelock lists it)", 10_000);
+        b.mutate(r -> st(r).at = System.currentTimeMillis(), "watch the computer");
+        b.await(r -> {
+            if (PhoneGuiScenarios.computer(r).isAsleep()) r.fail("the computer slept during the call");
+            return System.currentTimeMillis() - st(r).at >= 3_000 ? null : "watching";
+        }, "the computer keeps running for 3 s (asleep, it would only get short slices)", 6_000);
+        plays(b, 2_000, 8_000, "and the call keeps playing");
+        b.timeLimit(120_000);
         return b.build();
     }
 

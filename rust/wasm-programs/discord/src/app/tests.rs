@@ -256,6 +256,7 @@ fn voice_sends_the_microphone_and_plays_others() {
         m.sent_messages().iter().any(|x| matches!(x, ecm_ui_proto::Message::BackgroundMode(b) if b.mode == "call" && b.on == on))
     };
     assert!(call_on(&mock, true), "joining voice starts the call background mode");
+    assert_eq!(d.audio.wakelocks, vec![10_000], "and holds a wake lock for the call");
     assert_eq!(d.net.backends[0].backend.voice_in(2), vec!["alex"]);
     let first = Packet::decode(&d.net.voice_sent[0]).unwrap();
     assert_eq!(first.kind, PacketKind::KeepAlive, "a keep-alive tells the backend where we are");
@@ -291,6 +292,7 @@ fn voice_sends_the_microphone_and_plays_others() {
     click(&mut d, &mock, "hangup");
     assert!(!d.audio.open);
     assert!(call_on(&mock, false), "hanging up ends it");
+    assert_eq!(d.audio.wakelocks.last(), Some(&0), "and releases the wake lock");
     assert_eq!(d.net.backends[0].backend.voice_in(2), vec!["bo"]);
 }
 

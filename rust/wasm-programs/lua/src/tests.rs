@@ -259,6 +259,18 @@ assert(not ok and tostring(e):find("console mode"), tostring(e))
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// ui.wakelock(ms), as in Python: a function that writes `wakelock MS` to /dev/uictl and
+/// errors with the refusal; without a GUI device (here, on the host) it errors.
+#[test]
+fn lua_wakelock_needs_the_gui_device() {
+    let l = lua();
+    run(&l, "local ui = require('ui')
+assert(type(ui.wakelock) == 'function')
+local ok, err = pcall(ui.wakelock, 5000)
+assert(not ok and tostring(err):find('no GUI device'), tostring(err))
+");
+}
+
 // ---------------------------------------------------------------- radio
 
 /// Background apps from Lua, the same calls as Python: background_mode() sends

@@ -388,6 +388,8 @@ pub struct FakeAudio {
     pub queued: i64,
     pub headphones: bool,
     pub fail: Option<String>,
+    /// Every wake lock request (ms; 0 = release).
+    pub wakelocks: Vec<u64>,
 }
 
 impl Audio for FakeAudio {
@@ -412,5 +414,8 @@ impl Audio for FakeAudio {
     }
     fn close(&mut self) {
         self.open = false;
+    }
+    fn wakelock(&mut self, ms: u64) {
+        self.wakelocks.push(ms);
     }
 }

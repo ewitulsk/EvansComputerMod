@@ -11,7 +11,8 @@
 //! * `...tone`: plays a 440 Hz square wave on `/dev/audio` (8 kHz, 8-bit,
 //!   half-second writes) for as long as it runs (the `audio` mode starts by itself).
 //! * `...voice`: a call: says `BackgroundMode{call, on}`, then plays a louder 660 Hz tone as a
-//!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off.
+//!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off; holds a
+//!   wake lock (`ui.wakelock`, renewed every 2 s) so the call runs on in the hotbar or a pocket.
 //! * `...wake`: like a chat app, keeps a TCP connection to its server, port 7999 on the
 //!   `.1` address of its Wi-Fi subnet, as a wake socket (SO_ECM_WAKE), and posts a
 //!   notification "Wake: <line>" for every line the server sends.
@@ -84,6 +85,8 @@ fn main() {
     let tone: Vec<u8> = (0..4000).map(|i| if (i * hz / 4000) % 2 == 0 { hi } else { lo }).collect();
     let quiet = vec![0x80u8; 4000];
     let mut burst = 0u64;
+    // Wall time: the app's own clock stops while it is paused between background slices.
+    let mut last_lock: Option<std::time::SystemTime> = None;
     let mut last = Instant::now();
     let mut last_wall = std::time::SystemTime::now();
     loop {
@@ -115,6 +118,14 @@ fn main() {
                 AppEvent::CloseRequested { .. } => return,
                 _ => {}
             }
+        }
+        if mode == "voice" && last_lock.is_none_or(|t| t.elapsed().map_or(true, |d| d >= Duration::from_secs(2))) {
+            // Refused until the call mode is on (the first try may come first): renewed anyway.
+            let r = ecm_ui::wakelock(10_000);
+            if last_lock.is_none() {
+                println!("phonetest: wakelock {}", r.err().unwrap_or_else(|| "ok".into()));
+            }
+            last_lock = Some(std::time::SystemTime::now());
         }
         if let Some(a) = audio.as_mut() {
             // Blocks until the speaker has room: paced by its clock. A voice talks in 1 s bursts.

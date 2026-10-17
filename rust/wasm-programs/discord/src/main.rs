@@ -217,6 +217,11 @@ impl Audio for HostAudio {
         self.speaker.as_mut().and_then(|d| d.stat("headphones").ok().flatten()).unwrap_or(0) == 1
     }
 
+    fn wakelock(&mut self, ms: u64) {
+        // Refused until the call mode is on (the first request may come before it is): renewed anyway.
+        let _ = ecm_ui::wakelock(ms);
+    }
+
     fn close(&mut self) {
         if let Some(d) = self.speaker.as_mut() {
             let _ = d.flush_queue();

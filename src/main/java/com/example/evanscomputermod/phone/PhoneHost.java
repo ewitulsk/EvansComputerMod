@@ -406,7 +406,9 @@ public final class PhoneHost implements IComputerHost {
 
     private void sleepComputer() {
         ComputerInstance c = instance();
-        if (c != null) c.sleep();
+        // Switched off (about to unload): a wake lock doesn't keep it running; asleep, a call's lock may.
+        if (c != null && state == PhoneState.OFF) c.sleepIgnoringWakeLocks();
+        else if (c != null) c.sleep();
     }
 
     /** Hook the host into the computer: attach, register by UUID, load the hardware from the stack, start modules. */

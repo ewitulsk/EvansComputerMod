@@ -136,6 +136,8 @@ UI
                                  "call", ...); on_background_result(fn)
       app.media_session(title=, artist=, state=, actions=)  Now Playing
       app.on_media(fn)           fn(action, position_ms): play, pause...
+      wakelock(ms)               keep a pocketed phone awake ms more
+                                 (renew it; 0 releases; needs call/audio)
       load(file.ui.json, handlers)   a Visual Programmer layout
       app.canvas(w, h, format)   a Canvas with its own pixels:
                                  put(pixels, damage), commit_at(pts_us),

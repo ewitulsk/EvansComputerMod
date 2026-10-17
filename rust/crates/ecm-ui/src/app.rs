@@ -727,6 +727,22 @@ impl Core {
     }
 }
 
+/// Keep the computer awake (an ePhone in the hotbar or pocket) for `ms` from now, at most
+/// `apps.wakelockMaxMs` (10 s): renew it before it runs out, `wakelock(0)` releases it (so does
+/// exiting). An app may hold one only while its `call` or `audio` background mode is on;
+/// the error is the refusal (`gui: wakelock needs an active call or audio mode`).
+pub fn wakelock(ms: u64) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let mut dev = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uictl").map_err(|e| format!("no GUI device ({e})"))?;
+    dev.write_all(format!("wakelock {ms}\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut reply = String::new();
+    let _ = dev.read_to_string(&mut reply);
+    match reply.trim() {
+        "ok" => Ok(()),
+        r => Err(r.to_string()),
+    }
+}
+
 /// What an app is playing, for the Now Playing card (§12 MediaSession).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MediaSession {
