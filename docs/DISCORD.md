@@ -184,8 +184,10 @@ talker id, sequence, samples, IMA ADPCM (`rust/crates/ecm-discord/src/voice.rs`)
 | `discord_voice` | Two players in General: a Speaker beeping beside alex's Microphone plays on bo's Speaker 30 blocks away; not before; not while alex is muted. |
 | `cell_chat`, `cell_tech_village` | A phone installs Discord over LTE; in a Tech Village it finds the ring's backend by itself. |
 | `router_chat` | The `chat` command on two LANs against `discordd`. |
+| `auth_pinned_key` | A backend trusting `authd`; the Auth server is reinstalled with a new key: Discord shows the changed-key warning (no sign-in, no `HELLO`) and `chat --user` refuses, until Settings > Forget realm / `chat --forget` (see [AUTH.md](AUTH.md)). |
+| `auth_shared_realm` | Two backends share one `authd`: one sign-up, the other signs in by itself; a backend with its own accounts asks again; Music keeps its own login. |
 
-Tests: `cargo test -p ecm-discord -p discord -p ecm-chat -p ecm-audio`;
+Tests: `cargo test -p ecm-discord -p discord -p ecm-chat -p ecm-audio`; accounts: `-GameTests ecm_discord -GameTestOnly auth_pinned_key,auth_shared_realm`;
 `scripts/Test.ps1 -GameTests ecm_discord`, `-GameTests ecm_apps -GameTestOnly discord_app,service_discovery`;
 goldens `discord_compact`, `discord_medium`, `discord_wide` (`cargo run -p discord --example
 record_discord_sessions -- ../src/test/resources/ui-sessions`, then `-JUnit UiGoldenTest -McVersion 26.1`).

@@ -136,4 +136,11 @@ realm with a changed key is refused, tokens for the wrong audience, expired, wit
 or tampered are refused, the wire never carries the password or the account seed, refresh,
 revoke, reset, PASSWD), `cargo test -p authd`, `cargo test -p python -p lua` (the `auth`
 module), `-JUnit VillageAuthTest -McVersion 26.1` (the village realm's key matches
-`ecm-auth`'s vector). Scenarios: `auth_signup`, `auth_shared` (see TESTING.md).
+`ecm-auth`'s vector).
+
+Scenarios (`/ecm scenario spawn <name>`; GameTests `-GameTests ecm_discord -GameTestOnly auth_pinned_key,auth_shared_realm`):
+
+| Scenario | Shows | Controls |
+|---|---|---|
+| `auth_pinned_key` | `authd --name Lab` and a `discordd` that trusts it (`--auth-key`, the fingerprint typed from `authd key`); alex signs up in Discord, the server's console with `chat --user base --new`. The operator reinstalls the Auth server (`kill` it, delete `/var/auth/realm.key` and `/var/auth/users`, start it: a new key) and restarts `discordd` with the new fingerprint: Discord shows "The identity of Lab has changed" with both fingerprints and no sign-in button; `chat --user base` refuses and names `chat --forget <old fp>` | the backend sees no sign-in from alex; Discord's Settings > Forget realm makes it a first contact again and sign-up works; `chat --forget` (the pin removed by hand) lets `chat` sign up again |
+| `auth_shared_realm` | One `authd` ("Village Accounts") for the Discord backends Lab and Village and for `musicd`: alex signs up once, on Lab, and Village signs in by itself (a refresh token) | Other (`--auth local`, another realm) still asks ("First time here"); Music keeps its own logins: it asks too (first contact for Music) and alex signs in there with the same account |
