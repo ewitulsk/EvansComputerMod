@@ -69,7 +69,16 @@ public final class TechServerChecks {
 
   private static int phase, finishTicks = -1, a, b;
   private static boolean failed;
-  private static long phaseStart, nextProbe;
+  private static long phaseStart, nextProbe, lastProbe, nextDump;
+  /**
+   * The suite's multi-minute parts run only when asked for ({@code -TechParts}, system property
+   * {@code ecm.clientChecks.techParts}): {@code ride} is the {@code cell_tech_village} phone ride
+   * (~5 min), {@code reroute} the fiber/cable cut and repair checks (~1.5 min), {@code all} both.
+   */
+  private static final Set<String> PARTS = new HashSet<>(Arrays.asList(System.getProperty("ecm.clientChecks.techParts", "").toLowerCase().split("[,\\s]+")));
+  private static boolean part(String name) {
+    return PARTS.contains(name) || PARTS.contains("all");
+  }
   private static WorldNetwork data;
   private static final Map<Integer, TechVillageLocator.Visit> visits = new HashMap<>();
   private static List<ChunkPos> chordChunks = List.of();
@@ -197,6 +206,9 @@ public final class TechServerChecks {
             "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "fiber_tap_peering", "runbook",
             "chat_villages", "cell_store_" + a, "cell_store_" + b, "cell_core_db", "cell_span_sites", "cell_tech_village",
             "scenario_commands"));
+    if (!part("ride")) serverOnly.remove("cell_tech_village");
+    if (!part("reroute")) serverOnly.removeAll(List.of("fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair"));
+    LOG.info("ECM_VISUAL_TECH_PARTS ride={} reroute={}", part("ride"), part("reroute"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
     LOG.info("Tech checks: villages {} ({}) and {} ({}); seed {}", a, style(a), b, style(b), level.getSeed());
@@ -517,17 +529,27 @@ public final class TechServerChecks {
     return sb.toString();
   }
 
-  /** Step machine: traceroute the remote server until it completes with a reply. */
+  /**
+   * Step machine: traceroute the remote server until it completes with a reply. The next
+   * traceroute is typed once the last one is back at the prompt (a player retrying), at most
+   * every 2 s, or after 20 s if it hangs; the routers' diagnostics are refreshed every 20 s.
+   */
   private static int traceroute(TerminalBlockEntity pc, String remote) {
-    if (System.currentTimeMillis() > nextProbe) {
-      var level = (ServerLevel) pc.getLevel();
-      for (int n : diagnosed()) {
-        var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
-        if (host.instance() != null)
-          host.instance().sendInput("router\nshow bgp ipv4 unicast summary\nshow ip route\nexit\n");
+    long now = System.currentTimeMillis();
+    boolean idle = now > lastProbe + 2_000 && screen(pc).stripTrailing().endsWith("/ >");
+    if (now > nextProbe || idle) {
+      if (now > nextDump) {
+        var level = (ServerLevel) pc.getLevel();
+        for (int n : diagnosed()) {
+          var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
+          if (host.instance() != null)
+            host.instance().sendInput("router\nshow bgp ipv4 unicast summary\nshow ip route\nexit\n");
+        }
+        nextDump = now + 20_000;
       }
       send(pc, "traceroute " + remote + " 16");
-      nextProbe = System.currentTimeMillis() + 20_000;
+      lastProbe = now;
+      nextProbe = now + 20_000;
       return -1;
     }
     int h = hops(screen(pc), remote);
@@ -956,6 +978,11 @@ public final class TechServerChecks {
       pass("cell_span_sites", "chord=" + WorldNetwork.linkName(a, b) + " sites=" + spans.size() + " largestGap=" + (int) gap
           + " generated=" + placed + " avgPlaceMs=" + String.format("%.2f", com.example.evanscomputermod.worldgen.CellSites.PLACE_NANOS.get() / 1e6 / Math.max(1, placed))
           + " ms=" + elapsed());
+      if (!part("ride")) {
+        LOG.info("Tech checks: cell_tech_village (the ride) skipped; run it with -TechParts ride");
+        next(17);
+        return;
+      }
       BlockPos origin = TechCellChecks.store(visits.get(a), TechCellChecks.STORE_INSIDE);
       cellRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL.get("cell_tech_village"), level, origin,
           msg -> LOG.info("[cell_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
@@ -1124,7 +1151,11 @@ public final class TechServerChecks {
         var inv = player.getInventory();
         inv.setItem(30, inv.getItem(0));
         inv.setItem(0, net.minecraft.world.item.ItemStack.EMPTY);
-        next(5);
+        if (part("reroute")) next(5);
+        else {
+          LOG.info("Tech checks: fiber/cable cut and repair skipped; run them with -TechParts reroute");
+          next(14);
+        }
       }
       default -> {}
     }

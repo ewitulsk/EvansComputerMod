@@ -1,6 +1,10 @@
 # EvansComputerMod development
 
 Follow the targeted testing workflow in `TESTING.md` and `../ModTesting.md`.
+Long runs (anything over a couple of minutes, such as the tech client suite's
+`cell_tech_village` ride or its reroute checks) run only when a change majorly
+touches the specific parts they test; otherwise skip them (`-TechParts` is
+opt-in) and say so. See `TESTING.md` "Long runs".
 Build a coherent change before running its tests, retain failure receipts, and
 report executed counts. Tests and test worlds stay inside this repository.
 
