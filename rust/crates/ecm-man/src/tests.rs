@@ -138,3 +138,17 @@ fn pager_moves_searches_and_quits() {
     assert!(r.feed(b"x\x1b[").len() == 1);
     assert_eq!(r.feed(b"B"), vec![Key::Down]);
 }
+
+#[test]
+fn help_heading_lists_its_commands_with_summaries() {
+    let (title, names) = category("networking").unwrap();
+    assert_eq!(title, "Networking");
+    assert_eq!(category("NAMES").unwrap().0, "Names and the web");
+    assert_eq!(category("names and the web").unwrap().0, "Names and the web");
+    assert!(category("nothing").is_none());
+    let out = help_category(title, names, 80, false, &|n| builtin(n).map(str::to_string));
+    assert_eq!(out[0], "NETWORKING");
+    assert!(out.iter().any(|l| l.starts_with("  ping") && l.contains("check that another computer answers")), "{out:#?}");
+    let narrow = help_category(title, names, 30, false, &|n| builtin(n).map(str::to_string));
+    assert!(narrow.iter().all(|l| l.len() <= 30), "{narrow:#?}");
+}

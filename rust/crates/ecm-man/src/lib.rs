@@ -248,7 +248,7 @@ fn bold(s: &str, ansi: bool) -> String {
 /// only this computer has).
 pub fn help_index(width: usize, ansi: bool, extra: &[String]) -> Vec<String> {
     let mut out = Vec::new();
-    wrap_into(&mut out, "Commands and topics. help <name> sums one up, man <name> shows its manual page, man -k <word> searches, man keys lists the editing keys.", 0, width);
+    wrap_into(&mut out, "Commands and topics by heading. help <heading> (help files, help radio, ...) lists a heading's commands with what each does; help <name> sums one up; man <name> shows its manual page; man -k <word> searches; man keys lists the editing keys.", 0, width);
     let mut list = |title: &str, names: &[&str]| {
         out.push(String::new());
         out.push(bold(&title.to_ascii_uppercase(), ansi));
@@ -261,6 +261,44 @@ pub fn help_index(width: usize, ansi: bool, extra: &[String]) -> Vec<String> {
         let e: Vec<&str> = extra.iter().map(String::as_str).collect();
         list("On this computer", &e);
     }
+    out
+}
+
+/// The `help` heading `name` stands for: its title ("Names and the web"),
+/// or the title's first word ("names"), any case.
+pub fn category(name: &str) -> Option<(&'static str, &'static [&'static str])> {
+    let n = name.trim().replace(['-', '_'], " ").to_ascii_lowercase();
+    CATEGORIES.iter().copied().find(|(title, _)| {
+        let t = title.to_ascii_lowercase();
+        t == n || t.split_whitespace().next() == Some(n.as_str())
+    })
+}
+
+/// `help <heading>`: every page under the heading with its summary.
+/// `pages` gives a page's text by name.
+pub fn help_category(title: &str, names: &[&str], width: usize, ansi: bool, pages: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut out = vec![bold(&title.to_ascii_uppercase(), ansi)];
+    let col = names.iter().map(|n| n.len()).max().unwrap_or(0) + 2;
+    for n in names {
+        let s = pages(n).and_then(|t| summary(&t)).unwrap_or_default();
+        if 2 + col + 24 > width {
+            // Too narrow for two columns: the summary under the name.
+            out.push(format!("  {n}"));
+            wrap_into(&mut out, &s, 4, width);
+        } else {
+            let mut rows = Vec::new();
+            wrap_into(&mut rows, &s, 0, width - 2 - col);
+            for (i, r) in rows.iter().enumerate() {
+                let name = if i == 0 { *n } else { "" };
+                out.push(format!("  {name:<col$}{r}"));
+            }
+            if rows.is_empty() {
+                out.push(format!("  {n}"));
+            }
+        }
+    }
+    out.push(String::new());
+    wrap_into(&mut out, "help <name> sums one up; man <name> has the whole page.", 0, width);
     out
 }
 

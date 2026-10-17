@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
  * {@code sleep} is stopped with Ctrl+C; a full-screen program (the pager of
  * {@code man shell}) gets Ctrl+C as its quit key instead (control: no "^C").
  *
- * <p>{@code terminal_manual}: {@code help} (headings), {@code help ping},
+ * <p>{@code terminal_manual}: {@code help} (headings), {@code help networking}
+ * (a heading's commands with summaries), {@code help ping},
  * {@code man keys} in the pager with a search and {@code q}, {@code man -k
  * dns}, {@code less} on a file. Controls: {@code man nosuchpage} and
  * {@code help nosuchpage} say there is none.
@@ -255,6 +256,13 @@ public final class TerminalScenarios {
                 .await(r -> shows(r, "^NETWORKING\\s*$"), "the Networking heading", 10_000)
                 .await(r -> shows(r, "ifconfig  ip  ping"), "with its commands", 2_000)
                 .mutate(TerminalScenarios::quitPagerIfOpen, "q, if it opened in the pager")
+                .await(r -> shows(r, LIVE_PROMPT), "back at the prompt", 10_000)
+                .note("help <heading>: that heading's commands, each with what it does")
+                .send("pc", "help networking")
+                .await(r -> shows(r, "^  ping\\s+check that another computer answers"), "ping with its summary", 10_000)
+                .mutate(r -> {
+                    if (shows(r, " help networking 1-\\d+/\\d+") == null) type(r, "q");
+                }, "q, if it opened in the pager")
                 .await(r -> shows(r, LIVE_PROMPT), "back at the prompt", 10_000)
                 .note("help <name>: what it does, how to type it")
                 .send("pc", "help ping")
