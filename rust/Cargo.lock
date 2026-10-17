@@ -1409,6 +1409,8 @@ dependencies = [
 name = "ecm-tel"
 version = "0.1.0"
 dependencies = [
+ "ecm-cell",
+ "ecm-rtp",
  "hmac",
  "sha2",
 ]

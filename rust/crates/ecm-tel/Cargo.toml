@@ -11,3 +11,7 @@ doctest = false
 [dependencies]
 sha2 = { workspace = true }
 hmac = { workspace = true }
+ecm-rtp = { workspace = true }
+
+[dev-dependencies]
+ecm-cell = { workspace = true }

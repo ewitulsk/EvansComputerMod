@@ -199,6 +199,8 @@ pub struct Core {
     pub tunnel_rejects: u64,
     /// IMS-bearer packets dropped for leaving the IMS core network.
     pub ims_policy_drops: u64,
+    /// IMS registrations the HSS holds: IMSI -> serving CSCF (from `SAR`).
+    pub(crate) ims_regs: BTreeMap<String, String>,
     last_reject_log_ms: Option<u64>,
     out: Vec<CoreOut>,
     entropy: alloc::boxed::Box<dyn Entropy + Send>,
@@ -229,6 +231,7 @@ impl Core {
             last_save_ms: 0,
             tunnel_rejects: 0,
             ims_policy_drops: 0,
+            ims_regs: BTreeMap::new(),
             last_reject_log_ms: None,
             out: Vec::new(),
             entropy,
@@ -260,6 +263,14 @@ impl Core {
             None => m.encode(),
         };
         self.out.push(CoreOut::Send(c, bytes));
+    }
+
+    pub(crate) fn random16(&mut self) -> [u8; 16] {
+        self.random::<16>()
+    }
+
+    pub(crate) fn log_line(&mut self, s: String) {
+        self.log(s);
     }
 
     fn random<const N: usize>(&mut self) -> [u8; N] {
