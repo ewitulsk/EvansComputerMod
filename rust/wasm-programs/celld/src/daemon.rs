@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use ecm_cell::air::{Plain, SysInfo};
+use ecm_cell::air::{ImsInfo, Plain, SysInfo};
 use ecm_cell::backhaul::IpConfig;
 use ecm_cell::codec::fmt_ip;
 use ecm_cell::ip::{from_kernel, to_kernel, TunFrame};
@@ -49,6 +49,26 @@ pub trait Io {
     fn save_setting(&mut self, _key: &str, _value: &str) -> Result<(), String> {
         Ok(())
     }
+    /// The IMS bearer's tun (`ims0`, docs/TELEPHONY.md): create it with this address.
+    fn ims_open(&mut self, _mac: [u8; 6], _ip: [u8; 4], _prefix: u8) -> Result<(), String> {
+        Err("this computer has no IMS tun".into())
+    }
+    fn ims_close(&mut self) {}
+    fn ims_read(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    fn ims_write(&mut self, _frame: &[u8]) {}
+    /// `ip route add <pcscf>/32 dev ims0`: the IMS core goes over the IMS bearer.
+    fn ims_route(&mut self, _pcscf: [u8; 4]) -> Result<(), String> {
+        Ok(())
+    }
+    /// The phone's computer is about to sleep (the hotbar): go idle so pages wake it.
+    fn sleeping(&mut self) -> bool {
+        false
+    }
+    /// Hand the modem its paging identity (`wake tmsi N`): while the computer
+    /// sleeps, a page for it wakes the phone. `None`: `wake off`.
+    fn wake_filter(&mut self, _tmsi: Option<u32>) {}
 }
 
 /// How the daemon was started.
@@ -116,6 +136,14 @@ pub struct Daemon {
     started_ms: u64,
     reported: Option<(u8, String, u64)>,
     phy_errors: u32,
+    /// The IMS bearer (VoLTE, SMS over IMS) when the attach gave one.
+    ims: Option<ImsInfo>,
+    ims_mac: [u8; 6],
+    ims_up: bool,
+    /// The wake filter the modem holds.
+    wake: Option<u32>,
+    /// Asked for idle because the computer goes to sleep.
+    slept: bool,
 }
 
 /// A UE event as a log line (the simulator's scenarios match these).
@@ -138,6 +166,8 @@ pub fn describe_event(e: &UeEvent) -> String {
         UeEvent::SimError => "SIM error".into(),
         UeEvent::Idle => "idle".into(),
         UeEvent::Detached => "detached".into(),
+        UeEvent::Ims(i) => format!("ims bearer {} number {}", fmt_ip(i.ip), if i.msisdn.is_empty() { "-" } else { &i.msisdn }),
+        UeEvent::Bearer { bearer, up } => format!("voice bearer {} {}", bearer.id, if *up { "up" } else { "released" }),
     }
 }
 
@@ -171,6 +201,11 @@ impl Daemon {
             started_ms: now_ms,
             reported: None,
             phy_errors: 0,
+            ims: None,
+            ims_mac: [0; 6],
+            ims_up: false,
+            wake: None,
+            slept: false,
             opts,
         }
     }
@@ -245,11 +280,37 @@ impl Daemon {
                 }
             }
         }
+        if self.ims_up {
+            let ims_ip = self.ims.as_ref().map(|i| i.ip).unwrap_or_default();
+            for _ in 0..64 {
+                let Some(frame) = io.ims_read() else { break };
+                match from_kernel(&frame, ims_ip) {
+                    TunFrame::ArpReply(r) => io.ims_write(&r),
+                    TunFrame::Ipv4(p) => {
+                        let n = p.len() as u64;
+                        if self.ue.send_ip(p.to_vec(), now) {
+                            self.tx_bytes += n;
+                            self.tx_packets += 1;
+                        }
+                    }
+                    TunFrame::Other => {}
+                }
+            }
+        }
         if now.ms >= self.next_sim_check {
             self.check_sim(io, sim, now);
         }
+        // the hotbar: the computer sleeps soon; idle now so the network pages us
+        let sleeping = io.sleeping();
+        if sleeping && !self.slept && self.ue.go_idle(now) {
+            self.slept = true;
+            io.log("going idle: the phone sleeps (a page wakes it)");
+        } else if !sleeping {
+            self.slept = false;
+        }
         self.ue.tick(now);
         self.drain(io);
+        self.sync_wake(io);
         self.report(io, now.ms);
     }
 
@@ -297,7 +358,12 @@ impl Daemon {
                     }
                 }
                 UeOut::Ip(p) => {
-                    if self.tun.is_some() {
+                    let to_ims = self.ims_up && self.ims.as_ref().is_some_and(|i| p.len() >= 20 && p[16..20] == i.ip);
+                    if to_ims {
+                        self.rx_bytes += p.len() as u64;
+                        self.rx_packets += 1;
+                        io.ims_write(&to_kernel(&p, self.ims_mac));
+                    } else if self.tun.is_some() {
                         self.rx_bytes += p.len() as u64;
                         self.rx_packets += 1;
                         io.tun_write(&to_kernel(&p, self.mac));
@@ -337,8 +403,54 @@ impl Daemon {
                 self.identity = None;
                 self.down_tun(io);
             }
+            UeEvent::Ims(info) => self.bring_up_ims(io, info),
+            UeEvent::Bearer { bearer, up } => {
+                io.log(&format!("voice bearer {} {} (udp {} <-> {}:{})", bearer.id, if up { "up" } else { "released" }, bearer.ue_port, fmt_ip(bearer.remote), bearer.remote_port));
+            }
             UeEvent::Searching | UeEvent::Resumed { .. } | UeEvent::Idle => {}
         }
+    }
+
+    /// The modem watches for pages while the phone is idle, not otherwise.
+    fn sync_wake(&mut self, io: &mut dyn Io) {
+        let st = self.ue.status();
+        let want = if st.state == "idle" && st.tmsi != 0 { Some(st.tmsi) } else { None };
+        if want != self.wake {
+            self.wake = want;
+            io.wake_filter(want);
+        }
+    }
+
+    fn bring_up_ims(&mut self, io: &mut dyn Io, info: ImsInfo) {
+        if self.ims_up && self.ims.as_ref().is_some_and(|i| i.ip == info.ip && i.prefix == info.prefix) {
+            self.ims = Some(info);
+            return;
+        }
+        if self.ims_up {
+            io.ims_close();
+            self.ims_up = false;
+        }
+        self.ims_mac = [0x02, 0xce, 0x1a, info.ip[1], info.ip[2], info.ip[3]];
+        if let Err(e) = io.ims_open(self.ims_mac, info.ip, info.prefix) {
+            io.log(&format!("ims0: can't create the interface: {e}"));
+            self.ims = Some(info);
+            return;
+        }
+        self.ims_up = true;
+        let route = match io.ims_route(info.pcscf) {
+            Ok(()) => String::new(),
+            Err(e) => format!(" (route error {e})"),
+        };
+        io.log(&format!(
+            "ims0 up {}/{}, P-CSCF {}, domain {}, number {}{}",
+            fmt_ip(info.ip),
+            info.prefix,
+            fmt_ip(info.pcscf),
+            info.domain,
+            if info.msisdn.is_empty() { "-" } else { &info.msisdn },
+            route
+        ));
+        self.ims = Some(info);
     }
 
     fn bring_up(&mut self, io: &mut dyn Io, ip: IpConfig) {
@@ -375,6 +487,12 @@ impl Daemon {
     }
 
     fn down_tun(&mut self, io: &mut dyn Io) {
+        if self.ims_up {
+            io.ims_close();
+            self.ims_up = false;
+            io.log("ims0 down");
+        }
+        self.ims = None;
         if self.tun.take().is_some() {
             io.tun_close();
             io.log(&format!("{} down", self.opts.tun));
@@ -458,6 +576,12 @@ impl Daemon {
             tx_packets: self.tx_packets,
             rx_packets: self.rx_packets,
             roaming: self.opts.config.roaming,
+            msisdn: self.ims.as_ref().map(|i| i.msisdn.clone()).unwrap_or_default(),
+            ims_ip: self.ims.as_ref().filter(|_| self.ims_up).map(|i| format!("{}/{}", fmt_ip(i.ip), i.prefix)).unwrap_or_default(),
+            pcscf: self.ims.as_ref().map(|i| fmt_ip(i.pcscf)).unwrap_or_default(),
+            ims_domain: self.ims.as_ref().map(|i| i.domain.clone()).unwrap_or_default(),
+            bearers: st.bearers as u32,
+            tmsi: st.tmsi,
             cause: self.cause.clone(),
             uptime_s: now_ms.saturating_sub(self.started_ms) / 1000,
             state,
@@ -540,6 +664,14 @@ impl Daemon {
                 }
                 "ok detaching\n".into()
             }
+            ["idle"] => {
+                if self.ue.go_idle(now) {
+                    self.drain(io);
+                    "ok idle\n".into()
+                } else {
+                    format!("error not now ({})\n", self.state())
+                }
+            }
             ["roaming", v @ ("on" | "off")] => {
                 let on = *v == "on";
                 self.opts.config.roaming = on;
@@ -548,7 +680,7 @@ impl Daemon {
                     Err(e) => format!("ok roaming {v} (not saved: {e})\n"),
                 }
             }
-            _ => format!("error unknown command '{}' (status, cells, up, down, roaming on|off)\n", line.trim()),
+            _ => format!("error unknown command '{}' (status, cells, up, down, idle, roaming on|off)\n", line.trim()),
         }
     }
 }
