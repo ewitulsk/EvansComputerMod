@@ -793,7 +793,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * for Discord and Music. The marker also records where the
      * resolvers run ({@link DnsConfig}); a change of that re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 7;
+    public static final int PROVISION_VERSION = 8;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */

@@ -30,6 +30,7 @@ class VillageAuthTest {
         for (String app : VillageAuth.APPS) {
             assertEquals(a.fingerprint() + " 100.67.0.20:7600 Tech Village\n", pins.get("var/apps/" + app + "/accounts/pins"));
         }
+        assertEquals(a.fingerprint() + " 100.67.0.20:7600 Tech Village\n", pins.get("home/.chat/accounts/pins"), "the console's chat too");
         // The ISP answers for auth and music ring-wide.
         String disco = VillageDiscovery.ispConf("100.67.0.20", 7777, null, true);
         assertTrue(disco.contains("record auth 100.67.0.20 7600 Tech Village") && disco.contains("record music 100.67.0.20 7800 Tech Village Radio"), disco);

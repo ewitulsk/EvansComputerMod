@@ -720,7 +720,7 @@ cut, the same traceroute takes the long way: 12 hops through villages 1, 10, 9, 
 </ul>
 <h2>Chat</h2>
 <p>The ring's chat server runs in the data center of village 4: 100.68.0.20 port 7777.</p>
-<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat 100.68.0.20</code>. Type to talk; /nick NAME, /who, /quit.</p>
+<p>Sign in with a Tech Village account (the realm is already trusted on village computers): <code>chat --user NAME --new</code> once, then <code>chat</code> (village computers read /etc/chat.conf) or <code>chat 100.68.0.20</code>. Type to talk; /who, /quit.</p>
 <h2>Other villages</h2>
 <ul>
 <li><a href="http://100.65.0.10/">Tech Village 1</a> (plains, AS 65001)</li>
@@ -982,7 +982,7 @@ village 1). On village 3's ISP router `show bgp ipv4 unicast summary` lists you 
 `*` (a dynamic neighbor) and 1 prefix received; any ISP's `show ip route` has
 `10.200.3.0/24`. From a PC on your LAN, `curl http://100.68.0.10/` (village 4),
 `curl http://100.65.0.10/` (village 1, across the ring) and
-`chat 100.(64+K).0.20 --nick you` work, with no NAT: your own prefix is routed.
+`chat --user you --new 100.(64+K).0.20` (an account on the ring's Auth server; your PC isn't a village computer, so chat shows the realm's fingerprint and asks once) work, with no NAT: your own prefix is routed.
 
 **What the villages accept.** The ISPs' `TAP-IN` filter keeps only your own prefixes,
 /24 or shorter, at most 20 of them: announcing a village range (`100.64.0.0/10`), a

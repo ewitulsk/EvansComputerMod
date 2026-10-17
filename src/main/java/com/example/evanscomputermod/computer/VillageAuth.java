@@ -97,6 +97,8 @@ public record VillageAuth(String publicKey, byte[] secret) {
     public Map<String, String> pinFiles(int chat) {
         Map<String, String> files = new LinkedHashMap<>();
         for (String app : APPS) files.put("var/apps/" + app + "/accounts/pins", pins(chat));
+        // The console's chat keeps its own logins (chat::account::accounts_dir, no $HOME).
+        files.put("home/.chat/accounts/pins", pins(chat));
         return files;
     }
 
