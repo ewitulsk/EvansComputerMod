@@ -23,4 +23,30 @@ public interface IComputerAccess {
      * value mapping as {@link IPeripheral#callMethod} results.
      */
     void queueEvent(String event, Object... arguments);
+
+    /**
+     * Another peripheral attached to the same computer, by its attachment
+     * name ({@code "right"}, {@code "left_bay_1"}), or null. Peripherals that
+     * move things between each other (an inventory's {@code push_items}) find
+     * their partner this way.
+     */
+    @org.jetbrains.annotations.Nullable
+    default IPeripheral getAvailablePeripheral(String name) {
+        return null;
+    }
+
+    /**
+     * Mount a folder into the computer's filesystem as {@code base} (or
+     * {@code base2}, {@code base3} ... if that is taken), the way a Disk
+     * Drive mounts its floppy as {@code disk/}. Returns the name it got, or
+     * null if this computer can't mount folders. Unmount before detaching.
+     */
+    @org.jetbrains.annotations.Nullable
+    default String mount(String base, java.nio.file.Path root, boolean readOnly) {
+        return null;
+    }
+
+    /** Take a folder mounted with {@link #mount} out again. */
+    default void unmount(String name) {
+    }
 }

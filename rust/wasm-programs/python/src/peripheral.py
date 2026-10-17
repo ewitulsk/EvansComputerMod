@@ -42,7 +42,9 @@ def is_present(name):
 
 
 def get_type(name):
-    """Type of the peripheral attached as `name`, or None."""
+    """Type of the peripheral attached as `name` (or of a wrapped one), or None."""
+    if isinstance(name, Peripheral):
+        return name.type
     for n, t in _peripheral.list():
         if n == name:
             return t
@@ -120,14 +122,20 @@ def find_all(type):
     return out
 
 
-def find(type):
-    """First attached peripheral of `type`, or None."""
+def find(type, filter=None):
+    """First attached peripheral of `type` (passing `filter(name, peripheral)`,
+    if given), or None."""
     for n, t in _peripheral.list():
         if t == type:
             p = wrap(n)
-            if p is not None:
+            if p is not None and (filter is None or filter(n, p)):
                 return p
     return None
+
+
+def get_name(peripheral):
+    """The attachment name of a wrapped peripheral."""
+    return peripheral.name
 
 
 def pull_event(filter=None, timeout=None):
@@ -135,8 +143,6 @@ def pull_event(filter=None, timeout=None):
     (event, attachment, *args). Other events are discarded while waiting.
     `timeout` in seconds; None waits forever, 0 only checks. Returns None
     on timeout."""
-    if timeout is None:
-        ms = -1
-    else:
-        ms = min(max(0, int(timeout * 1000)), 2147483647)
-    return _peripheral.wait_event(filter, ms)
+    # The program's one event queue (events.pull reads it too).
+    import _console
+    return _console.pull_quiet(filter, timeout)

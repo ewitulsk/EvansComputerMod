@@ -131,6 +131,15 @@ public final class ComputerHost implements IComputerHost {
         //?}
     }
 
+    /** Folders mounted into this computer (floppies in Disk Drives), kept as long as the computer. */
+    private final StorageMounts storageMounts = new StorageMounts();
+
+    @Override
+    public StorageMounts getStorageMounts() {
+        return storageMounts;
+    }
+
+    @Override
     public UUID getComputerId() {
         return id;
     }

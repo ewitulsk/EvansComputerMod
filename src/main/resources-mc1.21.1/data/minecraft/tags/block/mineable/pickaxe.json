@@ -30,6 +30,7 @@
     "evanscomputermod:mmwave_antenna",
     "evanscomputermod:charging_dock",
     "evanscomputermod:card_reader",
+    "evanscomputermod:disk_drive",
     "evanscomputermod:card_printer",
     "evanscomputermod:nfc_reader"
   ]

@@ -117,6 +117,16 @@ mouse_capture_stop      = { params = [],      results = [] }
 mouse_capture_is_active = { params = [],      results = ["i32"] }
 mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll. buttons bit 7 (0x80) = the event is a touch on the attached Screen wall (Tier 3), in the Screen's pixels; capture also starts when only such a wall shows graphics" }
 
+# --- console (the Terminal's text console) ----------------------------------
+# What console programs (Python, Lua, CC-style programs) need besides stdin and
+# stdout. Rust wrappers: ecm_host_abi::console; the event queue on top of them
+# is crates/ecm-console.
+[imports.console]
+key_capture_start = { params = [],      results = ["i32"], doc = "1 if the program now gets the Terminal's raw keys (while the console, not the GUI, is shown); 0 if this computer has no Terminal keyboard. Ends when the program exits" }
+key_poll          = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 4-byte key was written: u16 USB HID usage, u8 mods (shift 1, ctrl 2, alt 4, super 8), u8 kind (1 pressed, 2 repeat, 3 released, 4 a typed character: its byte in the low byte of the u16, in order with the keys); 0 if none" }
+world_time        = { params = ["i32"], results = ["i32"], doc = "(out) 0 and the computer's world day time in ticks (i64, not wrapped at a day); -4 when the computer isn't in a world" }
+computer_number   = { params = [],      results = ["i32"], doc = "this computer's number (>= 0: small, unique in the world, kept for the computer's life); -1 if the host has none" }
+
 # --- wireless controllers ------------------------------------------------------
 # No dedicated imports: a connected Wireless Xbox Controller is a peripheral
 # (type "xbox_controller", attached as controller_1..controller_4 = player

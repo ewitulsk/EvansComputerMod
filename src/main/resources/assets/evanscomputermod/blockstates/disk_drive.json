@@ -1,0 +1,34 @@
+{
+  "variants": {
+    "disk=false,facing=north": {
+      "model": "evanscomputermod:block/disk_drive"
+    },
+    "disk=true,facing=north": {
+      "model": "evanscomputermod:block/disk_drive_disk"
+    },
+    "disk=false,facing=east": {
+      "model": "evanscomputermod:block/disk_drive",
+      "y": 90
+    },
+    "disk=true,facing=east": {
+      "model": "evanscomputermod:block/disk_drive_disk",
+      "y": 90
+    },
+    "disk=false,facing=south": {
+      "model": "evanscomputermod:block/disk_drive",
+      "y": 180
+    },
+    "disk=true,facing=south": {
+      "model": "evanscomputermod:block/disk_drive_disk",
+      "y": 180
+    },
+    "disk=false,facing=west": {
+      "model": "evanscomputermod:block/disk_drive",
+      "y": 270
+    },
+    "disk=true,facing=west": {
+      "model": "evanscomputermod:block/disk_drive_disk",
+      "y": 270
+    }
+  }
+}
