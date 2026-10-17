@@ -64,6 +64,22 @@ every ISP router answers discovery for it ring-wide.
   in `/etc/chat.conf` (village computers), plus the ones the player added by address
   on the **+** page or that were saved from earlier sessions. A backend that fails is
   retried every 15 s. The first search asks for the `network` permission.
+- **Accounts.** Each backend greets with the realm it trusts (its own with `--auth local`,
+  or a shared Auth server). Discord keeps its own logins and pinned realms in its data
+  folder (`$ECM_APP_DATA/accounts`, one login per realm key; nothing is shared with other
+  apps). A backend whose realm is pinned and has a saved login signs in by itself (the
+  refresh token gets a token for that backend, `HELLO <token> <proof>`), so a second
+  backend of the same Auth server needs no second sign-in. Otherwise the backend shows a
+  red button on the rail and **Sign in to <backend>** in the channel list, which open the
+  shared sign-in screen (`ecm_apps_ui::signin`): on first contact the realm's name,
+  address and key fingerprint, then *Sign in* (username, password) or *No account yet?
+  Create one* (username, optional display name, the password twice). The password is
+  turned into a key for that realm and never sent. A realm whose name or address matches
+  a pin but whose key changed shows *The identity of <name> has changed. This could be
+  someone pretending to be it.* with both fingerprints and no way to sign in: only
+  Settings' **Forget realm** (removing the old pin by hand) lets the new key in, as a
+  first contact. Signing in blocks for the key derivation, so the window says
+  *Signing in ...* first.
 - **Seamless backends.** The rail on the left lists the servers the player joined on
   every backend at once (two letters each; the Discord logo on top goes back to the
   server list). Which backend hosts a server only shows in its subtitle and when
@@ -77,22 +93,25 @@ every ISP router answers discovery for it ring-wide.
   **+ Channel** / **+ Voice** (text channel names become Discord-style: `Build Plans`
   → `build-plans`), and *Delete server*; others see *Leave server*.
 - **A text channel:** messages grouped by author, history on opening (the last 50),
-  the composer (`Message #name`, Enter or Send; `/nick NAME` changes the nickname on
-  every backend). A message from someone else while the window isn't on screen posts
+  the composer (`Message #name`, Enter or Send; `/nick NAME` sets your nickname on the
+  open server's backend, `/nick` alone goes back to your display name). A message from someone else while the window isn't on screen posts
   a notification, "<nick> in #channel (Server)".
 - **Members** (wide windows: always on the right; phones: the Members button): online
   first.
-- **Settings** (the button by your name): *My Account* with your username. Save (or
-  Enter) renames you on every backend, like `/nick`; the page lists what each connected
-  backend calls you (one adds a number if the name is taken there).
+- **Settings** (the button by your name, or under the channel list): *My Accounts*, one
+  card per backend: the realm it uses (name and short fingerprint), *Signed in as
+  <display> (@username)*, the nickname on that backend (Save), **Sign out** (revokes the
+  refresh token at the realm and forgets the login; the backends of that realm ask
+  again) and **Forget realm** (removes the pin and its login: the hand removal a changed
+  key requires).
 - **Sizes:** compact (phones) one page at a time (servers and channels, or a channel,
   or members); medium and wide side by side, in Discord's dark colours.
 
 `app.toml`: permissions `network`, `notifications`, `microphone`,
 `peripherals:speaker`; background refresh and the `audio` background mode; hotkeys
-1 Send, 2 Mute, 3 Hang up. The nickname, the backends and the open server are saved
-in the app's data folder. The nickname defaults to `/etc/chat.conf`'s, else
-`pc-xxxx` from the computer's MAC.
+1 Send, 2 Mute, 3 Hang up. The backends and the open server are saved in the app's
+data folder (`settings`), the logins and pins in `accounts/`. Names come from the
+accounts (display name, or a per-backend nickname).
 
 ## Voice channels
 

@@ -11,8 +11,19 @@
 //!
 //! On a loudspeaker the app is half duplex, like a speakerphone: while it plays
 //! others it doesn't send its microphone, or they would hear themselves back.
+//!
+//! Accounts: every backend greets with the realm it trusts. The driver signs in there
+//! with the app's own saved logins (`ecm_auth::AccountStore` in
+//! `$ECM_APP_DATA/accounts`, one login per realm key, pinned realms): silently when
+//! the realm is pinned and a login is saved (a refresh token gets the backend's
+//! token), else it shows the shared sign-in screen for that backend
+//! (`ecm_apps_ui::signin`: first contact, the pinned form, or the changed-key warning,
+//! which can only be passed with Settings' Forget realm). Realm calls block (the key
+//! derivation takes a moment), so the window is redrawn with "Signing in ..." first.
 
-use crate::model::{Link, Model, Origin};
+use crate::model::{Account, AccountRequest, Auth, Link, Model, Origin, Page};
+use ecm_apps_ui::signin::{Action, SignInScreen};
+use ecm_auth::{AccountStore, AuthError, Files, PinCheck};
 use crate::view;
 use ecm_discord::proto::Event;
 use ecm_discord::voice::{Mixer, Packet, Sender, KEEPALIVE_MS, RATE};
@@ -32,13 +43,11 @@ pub trait Net {
     /// What has arrived since the last call (never blocks); `Err` once it closed.
     fn recv(&mut self, h: i32) -> Result<Vec<u8>, String>;
     fn close(&mut self, h: i32);
+    /// A connection to the realm (Auth server) at `host:port`, for the sign-in handshake.
+    fn auth_stream(&mut self, host: &str) -> Result<Box<dyn ecm_auth::Stream>, String>;
     /// Discord backends on the network (docs/DISCOVERY.md); blocks for the search.
     fn discover(&mut self) -> Vec<ecm_disco::Found> {
         Vec::new()
-    }
-    /// A nickname when none is set (the program: from the computer's MAC).
-    fn default_nick(&mut self) -> String {
-        "guest".into()
     }
     /// A clock in milliseconds.
     fn now_ms(&mut self) -> u64;
@@ -99,6 +108,8 @@ pub struct DiscordApp<N: Net, A: Audio> {
     pub window: u32,
     /// Where the settings live (`ECM_APP_DATA`); None = not saved.
     data_dir: Option<String>,
+    /// The app's own logins and pinned realms (`<data>/accounts`; in memory without a data folder).
+    pub accounts: AccountStore<Box<dyn Files>>,
     saved: String,
     /// Connection handle per backend (same index as `model.backends`).
     handles: Vec<Option<i32>>,
@@ -145,6 +156,10 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         let hang = model.clone();
         app.hotkey(3, "Hang up", move |_| hang.borrow_mut().leave_voice());
         let saved_text = model.borrow().settings_text();
+        let files: Box<dyn Files> = match &data_dir {
+            Some(dir) => Box::new(ecm_auth::host::DirFiles::new(&format!("{dir}/accounts"))),
+            None => Box::new(ecm_auth::MemFiles::default()),
+        };
         Ok(DiscordApp {
             app,
             model,
@@ -152,6 +167,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             audio,
             window,
             data_dir,
+            accounts: AccountStore::new(files),
             saved: saved_text,
             handles: Vec::new(),
             inbufs: Vec::new(),
@@ -169,7 +185,8 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         let wait = {
             let m = self.model.borrow();
             let pending = m.search_wanted
-                || m.backends.iter().any(|b| !b.outbox.is_empty() || b.link == Link::Idle)
+                || m.backends.iter().any(|b| !b.outbox.is_empty() || b.link == Link::Idle || (b.up() && b.auth == Auth::Ready))
+                || !m.account_requests.is_empty()
                 || m.voice.is_some() != self.call.is_some();
             if pending {
                 0
@@ -215,14 +232,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         if shown && !self.model.borrow().searching && now.saturating_sub(self.last_search) >= RESEARCH_MS && self.last_search != 0 {
             self.model.borrow_mut().search();
         }
-        // A nickname from the computer's MAC when none is set (once the window is up and drawn: reading
-        // the network interfaces may wait for the network permission dialog, and the player should see
-        // Discord behind it).
-        if shown && self.model.borrow().nick.is_empty() {
-            self.redraw();
-            let n = self.net.default_nick();
-            self.model.borrow_mut().nick = n;
-        }
+
         if self.model.borrow().search_wanted && shown {
             self.model.borrow_mut().search_wanted = false;
             self.redraw();
@@ -233,6 +243,12 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         }
         if shown {
             changed |= self.connect_one(now);
+        }
+        changed |= self.exchange();
+        changed |= self.screen_actions();
+        changed |= self.account_requests();
+        if shown {
+            changed |= self.authenticate();
         }
         changed |= self.exchange();
         changed |= self.voice(now);
@@ -326,6 +342,216 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
                     if self.net.send(h, &line).is_err() {
                         break;
                     }
+                }
+            }
+        }
+        changed
+    }
+
+    // ------------------------------------------------------------------ accounts
+
+    /// Close backend `i`'s connection and connect again at once (after a sign-out or a
+    /// forgotten realm, so it signs in afresh).
+    fn reconnect(&mut self, i: usize) {
+        if let Some(h) = self.handles.get_mut(i).and_then(Option::take) {
+            self.net.close(h);
+        }
+        let mut m = self.model.borrow_mut();
+        m.on_down(i, "signing in again");
+        if let Some(b) = m.backends.get_mut(i) {
+            b.link = Link::Idle;
+            b.screen = None;
+            b.account = None;
+        }
+    }
+
+    /// Give up on backend `i` for now (retried later), saying why.
+    fn drop_backend(&mut self, i: usize, why: &str) {
+        if let Some(h) = self.handles.get_mut(i).and_then(Option::take) {
+            self.net.close(h);
+        }
+        self.model.borrow_mut().on_down(i, why);
+    }
+
+    fn stream(&mut self, host: &str) -> Result<Box<dyn ecm_auth::Stream>, AuthError> {
+        self.net.auth_stream(host).map_err(AuthError::Network)
+    }
+
+    /// A token for backend `i` from the saved login of its realm, then `HELLO`.
+    fn token_and_hello(&mut self, i: usize) -> Result<(), AuthError> {
+        let (fp, backend_fp, greeting) = {
+            let m = self.model.borrow();
+            let b = &m.backends[i];
+            (b.realm_fp().unwrap_or_default(), b.greeting.backend_fp.clone(), b.greeting.clone())
+        };
+        let login = self.accounts.login(&fp).ok_or_else(|| AuthError::NotSignedIn(fp.clone()))?;
+        let stream = self.stream(&login.host)?;
+        let (token, _) = self.accounts.token(stream, &fp, &backend_fp)?;
+        let login = self.accounts.login(&fp).unwrap_or(login);
+        let line = greeting.sign_in_line(&token, &login.session_key(), false);
+        let account = Account { realm: login.realm_name.clone(), realm_fp: fp, username: login.username.clone(), display: login.display_name.clone() };
+        self.model.borrow_mut().hello(i, line, account);
+        Ok(())
+    }
+
+    /// Sign in to the first backend whose greeting arrived: silently with a saved login,
+    /// else the sign-in screen.
+    fn authenticate(&mut self) -> bool {
+        let next = self.model.borrow().backends.iter().position(|b| b.up() && b.auth == Auth::Ready);
+        let Some(i) = next else { return false };
+        let (realm, backend_host, bname, refused) = {
+            let mut m = self.model.borrow_mut();
+            let b = &mut m.backends[i];
+            b.auth = Auth::Working;
+            let r = (b.greeting.realm.clone(), b.host.clone(), b.name.clone(), b.refused.take());
+            m.notice = Some(format!("Signing in to {} ...", r.2));
+            r
+        };
+        let Some(realm) = realm else { return false };
+        let Some(host) = ecm_discord::proto::realm_host(&realm, &backend_host) else {
+            self.drop_backend(i, &format!("{bname} doesn't say where its accounts are"));
+            return true;
+        };
+        self.redraw();
+        let mut why: Option<AuthError> = refused.map(AuthError::Server);
+        if why.is_none() && self.accounts.login(&realm.fp).is_some() {
+            match self.token_and_hello(i) {
+                Ok(()) => {
+                    self.model.borrow_mut().notice = None;
+                    return true;
+                }
+                Err(e @ (AuthError::Network(_) | AuthError::Timeout | AuthError::Closed)) => {
+                    self.drop_backend(i, &format!("its Auth server: {e}"));
+                    return true;
+                }
+                Err(e) => why = Some(e),
+            }
+        }
+        self.model.borrow_mut().notice = None;
+        // No usable login: the sign-in screen, after checking who answers at the realm's address.
+        let screen = match why {
+            Some(AuthError::RealmChanged { old_fp, name, host: pinned_host, new_fp }) => {
+                SignInScreen::new(&realm.name, &host, &new_fp, &PinCheck::Changed { old_fp, name, host: pinned_host })
+            }
+            why => {
+                let found = self.stream(&host).and_then(|s| self.accounts.fingerprint(s, &host));
+                match found {
+                    Ok((info, _)) if info.realm_fp != realm.fp => {
+                        self.drop_backend(i, &format!("the Auth server at {host} is not the realm {bname} trusts"));
+                        return true;
+                    }
+                    Ok((info, check)) => {
+                        let mut s = SignInScreen::new(&info.realm_name, &host, &info.realm_fp, &check);
+                        if let Some(e) = why.filter(|e| !matches!(e, AuthError::NotSignedIn(_))) {
+                            s.failed(&e);
+                        }
+                        s
+                    }
+                    Err(AuthError::RealmChanged { old_fp, name, host: pinned_host, new_fp }) => {
+                        SignInScreen::new(&realm.name, &host, &new_fp, &PinCheck::Changed { old_fp, name, host: pinned_host })
+                    }
+                    Err(e) => {
+                        self.drop_backend(i, &format!("its Auth server: {e}"));
+                        return true;
+                    }
+                }
+            }
+        };
+        let mut m = self.model.borrow_mut();
+        m.show_sign_in(i, screen);
+        // Nothing else to look at yet: open the screen.
+        if m.guild.is_none() && m.page == Page::Servers {
+            m.open_sign_in(i);
+        }
+        true
+    }
+
+    /// What the player did on a sign-in screen.
+    fn screen_actions(&mut self) -> bool {
+        let mut changed = false;
+        let n = self.model.borrow().backends.len();
+        for i in 0..n {
+            let Some(screen) = self.model.borrow().backends[i].screen.clone() else { continue };
+            let action = screen.borrow_mut().take_action();
+            let Some(action) = action else { continue };
+            changed = true;
+            match action {
+                Action::Cancel => {
+                    let mut m = self.model.borrow_mut();
+                    if m.page == Page::SignIn(i) {
+                        m.page = Page::Servers;
+                    }
+                }
+                Action::ForgetPin(fp) => {
+                    let _ = self.accounts.remove_pin(&fp);
+                    self.reconnect_realm(&fp);
+                }
+                a @ (Action::SignIn { .. } | Action::SignUp { .. }) => {
+                    // The screen says "Signing in ..." before the key derivation blocks.
+                    self.redraw();
+                    let host = screen.borrow().host.clone();
+                    let r = self.stream(&host).and_then(|s| match &a {
+                        Action::SignUp { user, display, pass } => self.accounts.sign_up(s, &host, user, pass, Some(display)),
+                        Action::SignIn { user, pass } => self.accounts.sign_in(s, &host, user, pass),
+                        _ => unreachable!(),
+                    });
+                    match r {
+                        Ok(l) => {
+                            screen.borrow_mut().succeeded(&l.username, &l.display_name);
+                            // Every backend of this realm signs in with it now (silently).
+                            let mut m = self.model.borrow_mut();
+                            for b in m.backends.iter_mut() {
+                                if b.realm_fp().as_deref() == Some(l.realm_fp.as_str()) && matches!(b.auth, Auth::NeedsSignIn | Auth::Ready) {
+                                    b.auth = Auth::Ready;
+                                    b.refused = None;
+                                }
+                            }
+                        }
+                        Err(e) => screen.borrow_mut().failed(&e),
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// Backends to sign in afresh after realm `fp`'s pin or login went: those trusting
+    /// it, and those whose changed-key warning names it as the old key.
+    fn reconnect_realm(&mut self, fp: &str) {
+        let hit: Vec<usize> = {
+            let m = self.model.borrow();
+            (0..m.backends.len())
+                .filter(|&i| {
+                    let b = &m.backends[i];
+                    let old = b.screen.as_ref().is_some_and(|s| matches!(&s.borrow().stage, ecm_apps_ui::signin::Stage::Changed { old_fp, .. } if old_fp == fp));
+                    b.realm_fp().as_deref() == Some(fp) || old
+                })
+                .collect()
+        };
+        for i in hit {
+            self.reconnect(i);
+        }
+    }
+
+    /// Settings' Sign out and Forget realm.
+    fn account_requests(&mut self) -> bool {
+        let reqs = std::mem::take(&mut self.model.borrow_mut().account_requests);
+        let changed = !reqs.is_empty();
+        for r in reqs {
+            match r {
+                AccountRequest::SignOut(fp) => {
+                    let stream = self.accounts.login(&fp).and_then(|l| self.net.auth_stream(&l.host).ok());
+                    let r = self.accounts.logout(stream, &fp);
+                    self.model.borrow_mut().notice = Some(match r {
+                        Ok(()) => "Signed out".into(),
+                        Err(e) => format!("Signed out here ({e})"),
+                    });
+                    self.reconnect_realm(&fp);
+                }
+                AccountRequest::ForgetRealm(fp) => {
+                    let _ = self.accounts.remove_pin(&fp);
+                    self.model.borrow_mut().notice = Some(format!("Forgot the key {}", ecm_auth::short_fingerprint(&fp)));
+                    self.reconnect_realm(&fp);
                 }
             }
         }

@@ -18,7 +18,7 @@
 
 use crate::widgets::RED;
 use ecm_auth::{display_fingerprint, AuthError, PinCheck};
-use ecm_ui::element::{button, column, label, row, spacer, tabs, text_field, Element};
+use ecm_ui::element::{button, column, label, row, spacer, text_field, Element};
 use ecm_ui_proto::Font;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -65,6 +65,9 @@ pub struct SignInScreen {
     pub stage: Stage,
     pub mode: Mode,
     pub error: Option<String>,
+    /// The username and display name typed so far (each screen keeps its own).
+    pub user: String,
+    pub display: String,
     /// Where this app lets the player remove a pin (shown in the changed-key warning).
     pub forget_hint: String,
     action: Option<Action>,
@@ -85,6 +88,8 @@ impl SignInScreen {
             stage,
             mode: Mode::SignIn,
             error: None,
+            user: String::new(),
+            display: String::new(),
             forget_hint: "Settings > Accounts in this app (Forget)".into(),
             action: None,
         }
@@ -195,7 +200,7 @@ fn identity(s: &SignInScreen) -> Element {
         .child(label(format!("Key {}", display_fingerprint(&s.fp))).font(Font::Mono).size(8).id("fingerprint"));
     if !s.pinned {
         c = c.child(
-            label("First time here: check that this key is the one the owner of this server gives out. It is remembered after you sign in.")
+            label("First time here: compare this key with the one its owner gives out.")
                 .style("caption")
                 .id("first_contact"),
         );
@@ -246,25 +251,31 @@ pub fn view(s: &S) -> Element {
         Stage::Form | Stage::Busy => {
             let busy = st.stage == Stage::Busy;
             let up = st.mode == Mode::SignUp;
-            let m = s.clone();
-            col = col.child(identity(&st)).child(
-                tabs(["Sign in", "Create account"]).id("mode").selected(up as usize).on_select(move |cx, _| {
-                    let mode = if cx.selected("mode") == Some(1) { Mode::SignUp } else { Mode::SignIn };
-                    m.borrow_mut().set_mode(mode);
-                }),
-            );
-            col = col.child(text_field().id("user").placeholder("Username").enabled(!busy));
+            col = col.child(identity(&st)).child(label(if up { "Create an account" } else { "Sign in with your account" }).style("title").id("form_title"));
+            // The other form, right under the title (in reach on a small screen without scrolling).
+            let sw = s.clone();
+            let (id, text, to) = if up { ("to_signin", "I already have an account", Mode::SignIn) } else { ("to_signup", "No account yet? Create one", Mode::SignUp) };
+            col = col.child(row().child(button(text).id(id).style("flat").enabled(!busy).on_click(move |_, _| sw.borrow_mut().set_mode(to))));
+
+            let (u, d) = (s.clone(), s.clone());
+            col = col.child(text_field().id("user").placeholder("Username").text(st.user.clone()).enabled(!busy).on_change(move |cx, _| {
+                u.borrow_mut().user = cx.text("user");
+            }));
             if up {
-                col = col.child(text_field().id("display").placeholder("Display name (optional)").enabled(!busy));
+                col = col.child(text_field().id("display").placeholder("Display name (optional)").text(st.display.clone()).enabled(!busy).on_change(
+                    move |cx, _| {
+                        d.borrow_mut().display = cx.text("display");
+                    },
+                ));
             }
             let submit = {
                 let s = s.clone();
                 move |cx: &mut ecm_ui::Ctx, _: &ecm_ui::UiEvent| {
                     let (u, d, p, p2) = (cx.text("user"), cx.text("display"), cx.text("pass"), cx.text("pass2"));
-                    if s.borrow_mut().submit(&u, &d, &p, &p2) {
-                        cx.set_text("pass", "");
-                        cx.set_text("pass2", "");
-                    }
+                    // The passwords are cleared either way (a refused form is typed again).
+                    s.borrow_mut().submit(&u, &d, &p, &p2);
+                    cx.set_text("pass", "");
+                    cx.set_text("pass2", "");
                 }
             };
             col = col.child(text_field().id("pass").placeholder("Password").password(true).enabled(!busy).on_submit(submit.clone()));

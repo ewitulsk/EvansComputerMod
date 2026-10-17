@@ -99,19 +99,9 @@ impl Net for SocketNet {
         ecm_disco::sys::search(ecm_disco::types::DISCORD, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
     }
 
-    fn default_nick(&mut self) -> String {
-        for i in 0..ecm_host_abi::net_config::iface_count() {
-            if let Some(info) = ecm_host_abi::net_config::iface_info(i) {
-                if let Some(mac) = client::json_field(&info, "mac") {
-                    if !mac.is_empty() && mac != "00:00:00:00:00:00" {
-                        return client::nick_from_mac(mac);
-                    }
-                }
-            }
-        }
-        "guest".into()
+    fn auth_stream(&mut self, host: &str) -> Result<Box<dyn ecm_auth::Stream>, String> {
+        ecm_auth::host::connect(host).map_err(|e| e.to_string())
     }
-
     fn now_ms(&mut self) -> u64 {
         self.started.elapsed().as_millis() as u64 + 1
     }

@@ -198,6 +198,18 @@ pub trait Files {
     fn remove(&mut self, name: &str);
 }
 
+impl<F: Files + ?Sized> Files for Box<F> {
+    fn read(&self, name: &str) -> Option<String> {
+        (**self).read(name)
+    }
+    fn write(&mut self, name: &str, text: &str) -> Result<(), AuthError> {
+        (**self).write(name, text)
+    }
+    fn remove(&mut self, name: &str) {
+        (**self).remove(name)
+    }
+}
+
 /// Files in memory (tests, and callers that persist some other way).
 #[derive(Debug, Clone, Default)]
 pub struct MemFiles(pub BTreeMap<String, String>);
