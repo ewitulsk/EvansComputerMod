@@ -149,6 +149,9 @@ members = [
     "wasm-programs/smscd",
     "wasm-programs/mmscd",
     "wasm-programs/mrfd",
+    "wasm-programs/telephonyd",
+    "wasm-programs/tel",
+    "wasm-programs/sms",
 ]
 resolver = "2"
 

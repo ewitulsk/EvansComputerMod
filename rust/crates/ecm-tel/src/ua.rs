@@ -227,6 +227,9 @@ pub struct Ua {
     msisdn: String,
     calls: BTreeMap<u32, UaCall>,
     next_call: u32,
+    /// Carrier settings from the registration: the MMSC and visual voicemail URLs.
+    pub mmsc_url: String,
+    pub vvm_url: String,
     next_port: u16,
     next_mr: u8,
     next_sms: u32,
@@ -260,6 +263,8 @@ impl Ua {
             msisdn: String::new(),
             calls: BTreeMap::new(),
             next_call: 1,
+            mmsc_url: String::new(),
+            vvm_url: String::new(),
             next_port,
             next_mr: 1,
             next_sms: 1,
@@ -419,6 +424,15 @@ impl Ua {
                 let pau = m.headers().p_associated_uri().ok().unwrap_or_default();
                 if let Some(n) = pau.iter().find_map(|u| uri_number(&u.uri)) {
                     self.msisdn = n;
+                }
+                if let Some(svc) = m.headers().get("P-ECM-Services") {
+                    for part in svc.split(';').map(str::trim) {
+                        if let Some(u) = part.strip_prefix("mmsc=") {
+                            self.mmsc_url = u.to_string();
+                        } else if let Some(u) = part.strip_prefix("vvm=") {
+                            self.vvm_url = u.to_string();
+                        }
+                    }
                 }
                 let exp = m.headers().expires().ok().flatten().unwrap_or(self.cfg.expires).max(60);
                 self.reg_until = now + exp as u64 * 1000;

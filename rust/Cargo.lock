@@ -4023,6 +4023,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sms"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-tel",
+]
+
+[[package]]
 name = "smscd"
 version = "0.1.0"
 dependencies = [
@@ -4241,6 +4249,28 @@ version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
  "ecm-wifi",
+]
+
+[[package]]
+name = "tel"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-tel",
+]
+
+[[package]]
+name = "telephonyd"
+version = "0.1.0"
+dependencies = [
+ "celld",
+ "ecm-audio",
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-rtp",
+ "ecm-tel",
+ "ecm-tel-net",
 ]
 
 [[package]]
