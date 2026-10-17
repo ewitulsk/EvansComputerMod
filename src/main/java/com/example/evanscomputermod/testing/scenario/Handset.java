@@ -40,6 +40,8 @@ final class Handset {
     String memo = "";
     /** The last shell line typed on the Terminal ({@link TelephonyScenarios#run}). */
     String typed = "";
+    /** When a line was last typed by a step that retypes it. */
+    long typedAt;
 
     Handset(String name, ScenarioPlayer other) {
         this.name = name;
