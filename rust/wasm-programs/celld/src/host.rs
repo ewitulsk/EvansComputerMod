@@ -276,6 +276,22 @@ impl Io for HostIo {
         self.asleep
     }
 
+    fn wakelock(&mut self, ms: u64) {
+        if !self.phone {
+            return;
+        }
+        // the platform's wake lock (PLATFORM_API.md): per pid, capped at apps.wakelockMaxMs
+        if let Ok(mut f) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uictl") {
+            if f.write_all(format!("wakelock {ms}").as_bytes()).is_ok() {
+                let mut answer = String::new();
+                let _ = f.read_to_string(&mut answer);
+                if answer.trim() != "ok" {
+                    self.log.line(&format!("wakelock {ms}: {}", answer.trim()));
+                }
+            }
+        }
+    }
+
     fn wake_filter(&mut self, tmsi: Option<u32>) {
         let line = match tmsi {
             Some(t) => format!("wake tmsi {t}"),
