@@ -45,7 +45,8 @@ KEYS
         Loop on or off.
 
     Esc or Backspace
-        Back to the library.
+        Back to the library. At the Terminal block Esc closes the
+        screen: press Shift+Esc or Backspace.
 
     Hotkeys 1, 2, 3
         On an ePhone held in hand: play/pause, back 10 s, forward 10 s.

@@ -51,7 +51,8 @@ KEYS
     Enter, Backspace, Tab, Esc, arrows, Home, End, PageUp, PageDown,
     Insert, Delete, F1-F12
         Sent as the usual xterm keys, with Shift, Alt and Ctrl as the
-        modifier parameter (Ctrl+Left is ESC[1;5D, a word left).
+        modifier parameter (Ctrl+Left is ESC[1;5D, a word left). At the
+        Terminal block, Esc closes the screen: Shift+Esc sends Esc.
 
 MOUSE
     Drag with the left button to select text; double click selects a

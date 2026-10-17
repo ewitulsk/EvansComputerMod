@@ -61,8 +61,8 @@ HISTORY
     Ctrl+R
         Search backwards: type part of an old command and the newest
         line containing it is shown. Ctrl+R again finds an older one.
-        Enter runs it; Left, Right, Home or End keep it to edit; Esc or
-        Ctrl+G puts your line back.
+        Enter runs it; Left, Right, Home or End keep it to edit; Esc
+        (Shift+Esc at the Terminal block) or Ctrl+G puts your line back.
 
     !!  !N  !-N  !text
         Typed in a line, these are replaced before it runs (and the
@@ -93,9 +93,13 @@ PROGRAMS
         Always stops the foreground program and returns to the prompt.
 
     Esc
-        A key like any other: programs get it (edit uses it to leave a
-        question), and no program exits on it. At the Terminal block,
-        Shift+Esc closes the screen.
+        At the Terminal block, Esc closes the screen, on the console and
+        on the GUI; the computer keeps running. To send Esc to a program
+        (edit uses it to leave a question, GUI apps to close a popup),
+        press Shift+Esc: the program gets a plain Esc and the screen
+        stays open. Ctrl+Esc and Alt+Esc go to the computer as they are
+        (Ctrl+Esc opens the desktop's launcher). No program exits on Esc;
+        Ctrl+C does that.
 
 COPY AND PASTE
     At the Terminal block, drag with the mouse to select text (double
