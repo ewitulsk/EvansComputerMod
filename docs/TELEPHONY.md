@@ -105,6 +105,7 @@ A pocketed phone sleeps (EPHONE.md). To still ring:
 - **The UE goes idle.** When `/dev/uictl phone` says the phone is asleep, celld sends `IdleRequest`. The site drops its data context but keeps the subscriber paged by its TMSI. celld then tells the modem `wake tmsi N` on its framed control.
 - **Paging wakes the computer.** The core pages the phone when downlink data arrives (an `INVITE`, a text). The modem's wake filter (`FramedRadio`) sees a `Paging` frame (0x09, a count, then big-endian u32 TMSIs) listing its TMSI. It calls `Host.page()` → `IModuleHost.wakeForPage` → `PhoneHost.pageWake`, which wakes the phone's computer for 5 s (`wakeFor`).
 - **The network wakes the daemon.** celld resumes, the site re-establishes the context, and the queued packet arrives. telephonyd's sockets are wake sockets (`SO_ECM_WAKE`, #85), so the arriving packet wakes it.
+- **Idle again.** A pocketed phone's session can come back up: a page woke it, a call ended, or telephonyd sent something. celld then holds its own wake lock (`wakelock 3000`, renewed every second) until the network has been quiet for 1.5 s and the session is idle again. It releases the lock only after the modem's wake filter is armed, so the next call is paged too (`tel_call_asleep` makes three calls to a phone that stays in the pocket).
 - **Staying awake.** While a call rings or is up, telephonyd holds the wake lock (`/dev/uictl wakelock 10000`, renewed every 5 s, `wakelock 0` at the end, #85). The call keeps running in the hotbar or a pocket. App process groups stay duty-cycled under a wake lock, so call audio lives in telephonyd, not in the Phone app.
 - **Ringing.** telephonyd rings (`uictl ring 1 <who>`), launches `dev.ecm.dialer --incoming <id>` (a running dialer is only raised and reacts to the `incoming` event), and the holder's HUD says "Incoming call: <who>" every second.
 
@@ -278,6 +279,5 @@ telephonyd itself reads and writes the files a client names only under `/home/` 
 
 - telephonyd's MMS sends and fetches and its visual-voicemail requests are blocking HTTP inside its main loop (up to 30 s). A call in progress stalls meanwhile.
 - **Display pipeline (#86):** call audio is live: a speaker drain that carries the `phone` role goes out at once with `SpeakerAudioPacket.FLAG_LIVE`, not on a video's playout delay (`tel_call` checks it while a video plays). telephonyd still writes its 20 ms frames straight into the mixer; its RTP timestamps are not mapped to the shared clock.
-- **A pocketed phone after a call:** celld goes idle when the phone is pocketed (the computer stays up 800 ms for it). After a page has woken it and the call has ended, celld does not go idle again before the computer sleeps, so a second call to the same pocketed phone isn't paged until it is taken out and pocketed again.
 - **CDRs** say `route=direct` for calls across the border too.
 - No emergency calls, no roaming, no landlines, and no billing beyond CDRs.

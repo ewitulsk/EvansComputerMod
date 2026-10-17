@@ -66,6 +66,8 @@ pub trait Io {
     fn sleeping(&mut self) -> bool {
         false
     }
+    /// Hold the phone's computer awake for `ms` (`/dev/uictl wakelock <ms>`; 0 releases).
+    fn wakelock(&mut self, _ms: u64) {}
     /// Hand the modem its paging identity (`wake tmsi N`): while the computer
     /// sleeps, a page for it wakes the phone. `None`: `wake off`.
     fn wake_filter(&mut self, _tmsi: Option<u32>) {}
@@ -114,6 +116,12 @@ const TX_LEAD_US: u64 = 5000;
 const REPORT_MS: u64 = 5000;
 /// Cells are listed this long after their last beacon.
 const HEARD_MS: u64 = 10_000;
+/// Quiet time before a sleeping phone's resumed session goes idle again (ms).
+const IDLE_QUIET_MS: u64 = 1500;
+/// Each renewal of celld's wake lock while asleep and connected (ms; renewed at half).
+const WAKELOCK_MS: u64 = 3000;
+/// How often celld renews that lock (ms of its own clock).
+const WAKELOCK_RENEW_MS: u64 = 1000;
 
 pub struct Daemon {
     ue: Ue,
@@ -144,6 +152,13 @@ pub struct Daemon {
     wake: Option<u32>,
     /// Asked for idle because the computer goes to sleep.
     slept: bool,
+    /// Packets so far and when the count last moved (going idle again after a page, above).
+    last_packets: u64,
+    last_traffic_ms: u64,
+    next_idle_try: u64,
+    /// Our wake lock while asleep and connected (above).
+    locked: bool,
+    lock_renew_at: u64,
 }
 
 /// A UE event as a log line (the simulator's scenarios match these).
@@ -206,6 +221,11 @@ impl Daemon {
             ims_up: false,
             wake: None,
             slept: false,
+            last_packets: 0,
+            last_traffic_ms: 0,
+            next_idle_try: 0,
+            locked: false,
+            lock_renew_at: 0,
             opts,
         }
     }
@@ -306,17 +326,62 @@ impl Daemon {
         if now.ms >= self.next_sim_check {
             self.check_sim(io, sim, now);
         }
-        // the hotbar: the computer sleeps soon; idle now so the network pages us
+        // the hotbar: the computer sleeps soon; idle now so the network pages us. A page wakes
+        // the session again (an incoming call, a text); once the network has been quiet for
+        // IDLE_QUIET_MS go idle again, or the next call wouldn't be paged. A call's voice bearer
+        // keeps the session up (go_idle refuses while one is set up).
         let sleeping = io.sleeping();
-        if sleeping && !self.slept && self.ue.go_idle(now) {
-            self.slept = true;
-            io.log("going idle: the phone sleeps (a page wakes it)");
+        let packets = self.tx_packets + self.rx_packets;
+        if packets != self.last_packets {
+            self.last_packets = packets;
+            self.last_traffic_ms = now.ms;
+        }
+        let connected = self.ue.status().state == "connected";
+        if sleeping && !self.slept {
+            if self.ue.go_idle(now) {
+                self.slept = true;
+                self.next_idle_try = now.ms + IDLE_QUIET_MS;
+                io.log("going idle: the phone sleeps (a page wakes it)");
+            }
+        } else if sleeping
+            && connected
+            && now.ms >= self.next_idle_try
+            && now.ms.saturating_sub(self.last_traffic_ms) >= IDLE_QUIET_MS
+        {
+            self.next_idle_try = now.ms + IDLE_QUIET_MS;
+            if self.ue.go_idle(now) {
+                io.log("idle again: quiet since the session resumed");
+            }
         } else if !sleeping {
             self.slept = false;
+        }
+        // A sleeping phone whose session is up (traffic resumed it, a page woke it, a call) can't
+        // see its downlink while its computer is frozen: the modem wakes it only for a page. Hold
+        // the computer awake until the session is idle again (a call's voice bearer keeps it up,
+        // and telephonyd holds its own lock for the call).
+        if sleeping && connected && now.ms >= self.lock_renew_at {
+            if !self.locked {
+                io.log("asleep with the session up: holding the computer awake until idle");
+            }
+            io.wakelock(WAKELOCK_MS);
+            self.lock_renew_at = now.ms + WAKELOCK_RENEW_MS;
+            self.locked = true;
         }
         self.ue.tick(now);
         self.drain(io);
         self.sync_wake(io);
+        // Let the computer sleep again only now, with the modem's wake filter armed for the idle
+        // session (released before sync_wake, it could freeze in between and miss its pages).
+        if self.locked {
+            let st = self.ue.status().state;
+            let armed = st != "idle" || self.wake.is_some();
+            if armed && !(sleeping && st == "connected") {
+                io.wakelock(0);
+                self.locked = false;
+                self.lock_renew_at = 0;
+                io.log(&format!("wake lock released ({st})"));
+            }
+        }
         self.report(io, now.ms);
     }
 

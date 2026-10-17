@@ -656,7 +656,7 @@ public final class TelephonyScenarios {
             PhoneHost ph = h.host(r);
             PhoneUi u = h.ui(r);
             if (ph == null || ph.state() != PhoneState.ASLEEP) return "Bea's phone is " + (ph == null ? "-" : ph.state());
-            return u != null && u.ringingWho() != null ? null : "Bea's phone doesn't ring\ncelld.log:\n" + h.log(r, "var/log/celld.log", 800)
+            return u != null && u.ringingWho() != null ? null : "Bea's phone doesn't ring; wake locks " + h.computer(r).wakeLockHolders() + ", asleep " + h.computer(r).isAsleep() + "\ncelld.log:\n" + h.log(r, "var/log/celld.log", 800)
                     + "\ntelephonyd.log:\n" + h.log(r, "var/log/telephonyd.log", 800);
         }, "paged: Bea's phone wakes in her pocket and rings", 25_000);
         b.mutate(r -> hand(r, BEA).phoneToHand(r), "Bea takes the phone out (main hand)");
@@ -665,7 +665,47 @@ public final class TelephonyScenarios {
         b.await(r -> inCall(r, BEA), "Bea is in the call", 10_000);
         run(b, ANN, "tel calls", "active", null, "Ann's tel calls: active", 10_000);
         run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
-        b.timeLimit(120_000);
+        b.note("A second call: Bea's phone back in her pocket. Once the network has been quiet a few seconds celld goes idle"
+                + " again, so the next call is paged too (control for a phone that stayed connected after the first page)");
+        b.mutate(r -> {
+            Handset h = hand(r, BEA);
+            h.movePhone(r, 9);
+            h.inv(r).selected = 0;
+        }, "Bea: the phone back into her pocket");
+        b.await(r -> {
+            PhoneHost h = hand(r, BEA).host(r);
+            return h != null && h.state() == PhoneState.ASLEEP ? null : "Bea's phone is " + (h == null ? "-" : h.state());
+        }, "Bea's phone is asleep again", 5_000);
+        b.await(r -> {
+            // the first idle was before the first call; a second one is this pocketing's
+            String log = hand(r, BEA).log(r, "var/log/celld.log", 1_000_000);
+            int n = log.split("going idle|idle again", -1).length - 1;
+            return n >= 2 ? null : n + " idle line(s) in celld.log (end):\n" + log.substring(Math.max(0, log.length() - 600));
+        }, "celld goes idle again (quiet since the call)", 20_000);
+        run(b, ANN, r -> "tel dial " + local(hand(r, BEA).number), "tel dial <Bea>", "tel: calling", "^tel: (?!calling)", "Ann: tel dial Bea again", 10_000);
+        b.await(r -> {
+            Handset h = hand(r, BEA);
+            PhoneHost ph = h.host(r);
+            PhoneUi u = h.ui(r);
+            if (ph == null || ph.state() != PhoneState.ASLEEP) return "Bea's phone is " + (ph == null ? "-" : ph.state());
+            return u != null && u.ringingWho() != null ? null : "Bea's phone doesn't ring; wake locks " + h.computer(r).wakeLockHolders() + ", asleep " + h.computer(r).isAsleep() + "\ncelld.log:\n" + h.log(r, "var/log/celld.log", 2500) + "\ntelephonyd.log:\n" + h.log(r, "var/log/telephonyd.log", 1500);
+        }, "paged again: the pocketed phone rings for the second call", 25_000);
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.note("The phone never left the pocket this time: the page woke the session, and once it has been quiet celld goes idle"
+                + " by itself, so a third call is paged as well");
+        b.await(r -> hand(r, BEA).log(r, "var/log/celld.log", 1_000_000).contains("idle again") ? null
+                        : "celld.log (end):\n" + hand(r, BEA).log(r, "var/log/celld.log", 600),
+                "celld: idle again, quiet since the page", 20_000);
+        run(b, ANN, r -> "tel dial " + local(hand(r, BEA).number), "tel dial <Bea>", "tel: calling", "^tel: (?!calling)", "Ann: tel dial Bea a third time", 10_000);
+        b.await(r -> {
+            Handset h = hand(r, BEA);
+            PhoneHost ph = h.host(r);
+            PhoneUi u = h.ui(r);
+            if (ph == null || ph.state() != PhoneState.ASLEEP) return "Bea's phone is " + (ph == null ? "-" : ph.state());
+            return u != null && u.ringingWho() != null ? null : "Bea's phone doesn't ring; wake locks " + h.computer(r).wakeLockHolders() + ", asleep " + h.computer(r).isAsleep() + "\ncelld.log:\n" + h.log(r, "var/log/celld.log", 2500) + "\ntelephonyd.log:\n" + h.log(r, "var/log/telephonyd.log", 1500);
+        }, "paged a third time: still in the pocket, it rings", 25_000);
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.timeLimit(180_000);
         return b.build();
     }
 
