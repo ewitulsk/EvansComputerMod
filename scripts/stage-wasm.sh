@@ -15,25 +15,26 @@ export PATH="$HOME/.cargo/bin:/c/Users/$USERNAME/.cargo/bin:$PATH"
 echo "Building kernel (terminal_os.wasm)..."
 (cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
-# lua's C sources (Lua 5.2) need wasi-sdk's clang and sysroot: WASI_SDK_PATH, or
-# wasi-sdk unpacked in one of the usual places. Without it lua is skipped, loudly.
+# lua's C sources (Lua 5.2) and the browser's (QuickJS) need wasi-sdk's clang and
+# sysroot: WASI_SDK_PATH, or wasi-sdk unpacked in one of the usual places. Without
+# it lua and browser are skipped, loudly.
 if [ -z "$WASI_SDK_PATH" ]; then
-    for d in /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk"; do
+    for d in /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk" /c/wasi-sdk-*; do
         if [ -x "$d/bin/clang" ] || [ -x "$d/bin/clang.exe" ]; then export WASI_SDK_PATH="$d"; break; fi
     done
 fi
 if [ -n "$WASI_SDK_PATH" ]; then
     export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
 else
-    echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua will NOT be built"
-    rm -f rust/target/wasm32-wasip1/release/lua.wasm
+    echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua and browser will NOT be built"
+    rm -f rust/target/wasm32-wasip1/release/lua.wasm rust/target/wasm32-wasip1/release/browser.wasm
 fi
 
 echo "Building WASI programs..."
 PKGS=()
 for dir in rust/wasm-programs/*/; do
     prog="$(basename "$dir")"
-    [ "$prog" = lua ] && [ -z "$WASI_SDK_PATH" ] && continue
+    { [ "$prog" = lua ] || [ "$prog" = browser ]; } && [ -z "$WASI_SDK_PATH" ] && continue
     PKGS+=("-p" "$prog")
 done
 # A failed build must stop here: staging would otherwise ship whatever stale
@@ -59,6 +60,16 @@ for dir in rust/wasm-programs/*/; do
     else
         echo "warning: no output for $prog ($f)"
         missing=$((missing + 1))
+    fi
+done
+
+# Interactive GUI apps must compile before they run (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES,
+# 2 MiB): a bigger module starts interpreted and stays so while open, too slow to type into.
+for app in browser; do
+    f="wasm-bin/$app.wasm"
+    if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 2097152 ]; then
+        echo "error: $f is $(wc -c < "$f") bytes, over the 2 MiB compile-before-run limit (see the size profile in rust/Cargo.toml)"
+        exit 1
     fi
 done
 

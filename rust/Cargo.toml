@@ -25,6 +25,8 @@ members = [
     "crates/ecm-vte",
     "crates/ecm-apps",
     "crates/ecm-apps-ui",
+    "crates/ecm-web",
+    "crates/ecm-js",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -126,6 +128,7 @@ members = [
     "wasm-programs/ianad",
     "wasm-programs/domain",
     "wasm-programs/whois",
+    "wasm-programs/browser",
 ]
 resolver = "2"
 
@@ -149,6 +152,8 @@ ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
 ecm-apps = { path = "crates/ecm-apps" }
+ecm-web = { path = "crates/ecm-web" }
+ecm-js = { path = "crates/ecm-js" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -183,4 +188,29 @@ opt-level = 2
 # The kernel is loaded into every computer: optimise it for size. (This used
 # to sit in the kernel's own Cargo.toml, where Cargo silently ignores it.)
 [profile.release.package.terminal-os]
+opt-level = "s"
+
+# The Browser (with QuickJS) must stay under the runtime's 2 MiB compile-before-run limit
+# (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES): a bigger module starts interpreted, and an open
+# Browser stays interpreted, far too slow for typing into a page.
+[profile.release.package.browser]
+opt-level = "s"
+strip = "symbols"
+
+[profile.release.package.ecm-web]
+opt-level = "s"
+
+[profile.release.package.ecm-js]
+opt-level = "s"
+
+[profile.release.package.rquickjs-core]
+opt-level = "s"
+
+[profile.release.package.rquickjs-sys]
+opt-level = "s"
+
+[profile.release.package.ecm-ui]
+opt-level = "s"
+
+[profile.release.package.miniz_oxide]
 opt-level = "s"

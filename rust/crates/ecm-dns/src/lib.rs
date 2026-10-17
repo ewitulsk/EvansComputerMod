@@ -19,6 +19,7 @@ pub mod conf;
 pub mod iana;
 pub mod name;
 pub mod registrar;
+pub mod registrar_web;
 pub mod registry;
 pub mod resolver;
 pub mod server;

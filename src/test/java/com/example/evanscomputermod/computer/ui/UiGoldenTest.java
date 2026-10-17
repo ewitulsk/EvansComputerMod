@@ -58,7 +58,10 @@ public class UiGoldenTest {
             // Chat (dev.ecm.chat, record_chat_sessions in chatapp): compact on a phone display, medium, wide.
             "chat_compact", "chat_medium", "chat_wide",
             // Cellular v2 operator apps (record_cell_sessions in ecm-cell-ui): Cell Site and Carrier Console at three sizes.
-            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide"};
+            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide",
+            // The Browser (dev.ecm.browser, record_browser_sessions in browser): the styled sample site on a phone and
+            // at medium (flexbox, @media), a Tech Village site unstyled in the theme colours at wide.
+            "browser_compact", "browser_medium", "browser_wide", "browser_forms"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

@@ -21,7 +21,9 @@ import java.util.function.Function;
  * Video Player ({@code dev.ecm.video}, program {@code videoplayer}, permissions
  * {@code files:documents} and {@code peripherals:speaker}, {@code open_with} the
  * video types; only where a video backend, the server-side {@code evanscomputermod-ffmpeg}
- * sidecar, is installed, and removed again when it no longer is).
+ * sidecar, is installed, and removed again when it no longer is) and the Browser
+ * ({@code dev.ecm.browser}, program {@code browser}, permissions {@code network} and
+ * {@code files:documents}).
  *
  * <p>Some system apps belong to a service and are installed only on computers that
  * run it ({@link App#requires}): the Cellular v2 operator apps (docs/gui/CELLULAR_V2.md,
@@ -137,6 +139,11 @@ public final class SystemApps {
             new App(VIDEO_PLAYER, "Video Player", "videoplayer",
                     "Play videos from your documents with sound: seek, skip, loop. Opens .mp4, .mkv, .webm and more.",
                     List.of("files:documents", "peripherals:speaker"), VIDEO_TYPES, "/evanscomputermod/apps/video.png"),
+            // The Browser (docs/gui/BROWSER.md): web pages over the network (http://) and from the
+            // documents folder (file://), on the desktop and the ePhone alike.
+            new App("dev.ecm.browser", "Browser", "browser",
+                    "Browse web pages on the network: the Tech Village sites, pages you write and serve with httpd.",
+                    List.of("network", "files:documents"), List.of(), "/evanscomputermod/apps/browser.png"),
             // Cellular v2: on the computers that run the service.
             new App("dev.ecm.cellsite", "Cell Site", "cellsite",
                     "This computer's cell site: radio, core link, phones and their signal, settings.",
