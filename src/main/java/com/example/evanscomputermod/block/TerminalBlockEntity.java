@@ -790,6 +790,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             }
 
             @Override
+            public int getRedstoneOutput(int absoluteSide) {
+                return TerminalBlockEntity.this.getRedstoneOutput(absoluteSide);
+            }
+
+            @Override
             public Direction relativeToAbsolute(int relativeSide) {
                 Direction facing = getBlockState().getValue(TerminalBlock.FACING);
                 return switch (relativeSide) {

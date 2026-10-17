@@ -7,7 +7,8 @@ Where CC and standard Lua differ, CC wins:
   os.clock()    seconds since the program started, not CPU time
   print(...)    through the term (word-wrapped, current colours); returns lines printed
   io.write(...) through the term too; io.stdout:write stays raw
-Added: sleep, write, printError, read, os.pullEvent(Raw), os.queueEvent,
+Also fs, textutils, redstone (rs) and parallel (Lua only). Added: sleep,
+write, printError, read, os.pullEvent(Raw), os.queueEvent,
 os.startTimer, os.cancelTimer, os.setAlarm, os.cancelAlarm, os.day, os.epoch,
 os.getComputerID/computerID, os.getComputerLabel/computerLabel,
 os.setComputerLabel, os.sleep, os.version, _HOST. Our os.exit stays.
@@ -20,16 +21,26 @@ local term, events, computer = lazy("term"), lazy("events"), lazy("computer")
 
 _HOST = "EvansComputerMod (Lua 5.2)"
 
+-- `rs` is `redstone`, loaded on first use like the other modules.
+package.preload.rs = function() return require("redstone") end
+
 -- ---------------------------------------------------------------- os
 
 local std_time = os.time
 
+-- Inside parallel's functions, waiting is a yield: the others keep running.
+local function in_parallel()
+  local p = package.loaded.parallel
+  return p ~= nil and p._inside()
+end
+
 function os.pullEventRaw(filter)
+  if in_parallel() then return coroutine.yield(filter) end
   return events().pull(filter)
 end
 
 function os.pullEvent(filter)
-  local ev = table.pack(events().pull(filter))
+  local ev = table.pack(os.pullEventRaw(filter))
   if ev[1] == "terminate" then error("Terminated", 0) end
   return table.unpack(ev, 1, ev.n)
 end
@@ -57,7 +68,14 @@ function os.version() return "CraftOS 1.9" end
 
 -- ---------------------------------------------------------------- globals
 
-function sleep(seconds) events().sleep(seconds) end
+function sleep(seconds)
+  if in_parallel() then
+    local id = os.startTimer(seconds or 0)
+    repeat local _, t = os.pullEvent("timer") until t == id
+    return
+  end
+  events().sleep(seconds)
+end
 os.sleep = sleep
 
 --- Write text wrapped at word boundaries; returns the number of lines started.

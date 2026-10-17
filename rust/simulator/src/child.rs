@@ -1089,6 +1089,7 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     // --- redstone: no world in the simulator ---
     l.func_wrap(E, "redstone_set_output", |_c: C<'_>, _s: i32, _p: i32| -> i32 { 0 })?;
     l.func_wrap(E, "redstone_get_input", |_c: C<'_>, _s: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "redstone_get_output", |_c: C<'_>, _s: i32| -> i32 { 0 })?;
     l.func_wrap(E, "redstone_get_all_input", |mut c: C<'_>, buf: i32| -> i32 {
         wr(&mut c, buf, &[0u8; 24]);
         0

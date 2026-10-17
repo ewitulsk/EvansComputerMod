@@ -17,6 +17,13 @@ pub trait Host: Sources {
     /// The computer's label, if it has one.
     fn label(&mut self) -> Option<String>;
     fn set_label(&mut self, label: Option<&str>);
+    /// The folder holding the computer's files ("/" on a computer).
+    fn root(&self) -> std::path::PathBuf;
+    /// Redstone power coming in on a side (shell's side numbers), 0-15.
+    fn redstone_input(&mut self, side: i32) -> i32;
+    /// The power the computer puts out on a side, 0-15.
+    fn redstone_output(&mut self, side: i32) -> i32;
+    fn set_redstone_output(&mut self, side: i32, power: i32);
 }
 
 pub struct Session {
@@ -33,6 +40,7 @@ impl Session {
     pub fn new(term: Term, mut host: Box<dyn Host>) -> Session {
         let mut events = Events::default();
         events.uptime(&mut *host); // the clock starts with the program
+        events.watch_redstone(&mut *host);
         Session { term, events, host }
     }
 
@@ -105,6 +113,11 @@ impl Session {
         Ok(clock::day(&self.now(), l))
     }
 
+    /// The computer's files, for `fs`.
+    pub fn files(&self) -> crate::fs::Files {
+        crate::fs::Files::new(self.host.root())
+    }
+
     pub fn epoch(&mut self, locale: Option<&str>) -> Result<i64, String> {
         let l = Locale::parse(locale)?;
         Ok(clock::epoch(&self.now(), l))
@@ -149,6 +162,10 @@ pub mod host {
             ecm_host_abi::console::stdin_nonblocking(false);
             n
         }
+        fn redstone_inputs(&mut self) -> Option<[i32; 6]> {
+            let mut buf = [0i32; 6];
+            (ecm_host_abi::redstone::get_all_input(&mut buf) == 0).then_some(buf)
+        }
         fn wait(&mut self, timeout_ms: i32) -> Option<Vec<Value>> {
             if self.has_peripherals {
                 match peripheral::wait_event(None, timeout_ms) {
@@ -183,6 +200,18 @@ pub mod host {
             let b = ecm_host_abi::fs::read_file_bytes(LABEL_FILE)?;
             let s = String::from_utf8_lossy(&b).trim_end_matches(['\n', '\r']).to_string();
             (!s.is_empty()).then_some(s)
+        }
+        fn root(&self) -> std::path::PathBuf {
+            std::path::PathBuf::from("/")
+        }
+        fn redstone_input(&mut self, side: i32) -> i32 {
+            ecm_host_abi::redstone::get_input(side)
+        }
+        fn redstone_output(&mut self, side: i32) -> i32 {
+            ecm_host_abi::redstone::get_output(side)
+        }
+        fn set_redstone_output(&mut self, side: i32, power: i32) {
+            ecm_host_abi::redstone::set_output(side, power);
         }
         fn set_label(&mut self, label: Option<&str>) {
             match label.filter(|l| !l.is_empty()) {
@@ -226,6 +255,10 @@ pub mod fake {
         pub out: Vec<u8>,
         pub id: Option<i32>,
         pub label: Option<String>,
+        /// The computer's files (None: the system's temporary folder).
+        pub root: Option<std::path::PathBuf>,
+        pub redstone_in: [i32; 6],
+        pub redstone_out: [i32; 6],
     }
 
     /// Shared with the test, which scripts and inspects it.
@@ -254,6 +287,9 @@ pub mod fake {
             let n = b.len().min(buf.len());
             buf[..n].copy_from_slice(&b[..n]);
             n
+        }
+        fn redstone_inputs(&mut self) -> Option<[i32; 6]> {
+            Some(self.0.borrow().redstone_in)
         }
         fn wait(&mut self, timeout_ms: i32) -> Option<Vec<Value>> {
             let mut s = self.0.borrow_mut();
@@ -286,6 +322,20 @@ pub mod fake {
         }
         fn set_label(&mut self, label: Option<&str>) {
             self.0.borrow_mut().label = label.filter(|l| !l.is_empty()).map(str::to_string);
+        }
+        fn root(&self) -> std::path::PathBuf {
+            self.0.borrow().root.clone().unwrap_or_else(std::env::temp_dir)
+        }
+        fn redstone_input(&mut self, side: i32) -> i32 {
+            self.0.borrow().redstone_in.get(side as usize).copied().unwrap_or(0)
+        }
+        fn redstone_output(&mut self, side: i32) -> i32 {
+            self.0.borrow().redstone_out.get(side as usize).copied().unwrap_or(0)
+        }
+        fn set_redstone_output(&mut self, side: i32, power: i32) {
+            if let Some(o) = self.0.borrow_mut().redstone_out.get_mut(side as usize) {
+                *o = power.clamp(0, 15);
+            }
         }
     }
 

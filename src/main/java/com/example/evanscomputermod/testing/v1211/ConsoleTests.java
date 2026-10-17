@@ -28,5 +28,17 @@ public final class ConsoleTests {
     public static void console_python(GameTestHelper h) {
         TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("console_python"), true);
     }
+
+    /** Phase 2: a CC program with fs, textutils, a lever (redstone event), parallel blinking a lamp. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cc_world")
+    public static void cc_world(GameTestHelper h) {
+        TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("cc_world"), true);
+    }
+
+    /** Phase 2 from Python: fs, textutils, the lever and the lamp. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".python_world")
+    public static void console_world(GameTestHelper h) {
+        TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("console_world"), true);
+    }
 }
 //?}

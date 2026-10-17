@@ -663,6 +663,12 @@ public class WasiFunctions {
             return retI32(childBridge.redstoneGetInput((int) args[0]));
         });
 
+        addEnv(sink, "redstone_get_output", I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            if (!allowed(state, "peripherals:redstone")) return retI32(0);
+            return retI32(childBridge.redstoneGetOutput((int) args[0]));
+        });
+
         addEnv(sink, "redstone_get_all_input", I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
             if (!allowed(state, "peripherals:redstone")) return retI32(EACCES);

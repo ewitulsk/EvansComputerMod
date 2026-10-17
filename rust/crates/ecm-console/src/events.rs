@@ -38,6 +38,10 @@ pub trait Sources {
     /// The next peripheral event as [name, args...], waiting up to
     /// `timeout_ms` (0 = don't wait); sleeps the timeout when there is none.
     fn wait(&mut self, timeout_ms: i32) -> Option<Vec<Value>>;
+    /// The six redstone inputs (shell's side order), None without redstone.
+    fn redstone_inputs(&mut self) -> Option<[i32; 6]> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,6 +80,8 @@ pub struct Events {
     held: Vec<u8>,
     held_since: f64,
     started_ms: Option<f64>,
+    /// The redstone inputs last seen, for "redstone" events.
+    redstone: Option<[i32; 6]>,
 }
 
 impl Default for Events {
@@ -92,6 +98,7 @@ impl Default for Events {
             held: Vec::new(),
             held_since: 0.0,
             started_ms: None,
+            redstone: None,
         }
     }
 }
@@ -102,6 +109,12 @@ impl Events {
         let now = src.now_ms();
         let start = *self.started_ms.get_or_insert(now);
         ((now - start) / 1000.0).max(0.0)
+    }
+
+    /// Remember the redstone inputs now, so a change before the program
+    /// first waits for events still makes a "redstone" event.
+    pub fn watch_redstone(&mut self, src: &mut dyn Sources) {
+        self.redstone = src.redstone_inputs();
     }
 
     /// Take keys and typed characters into the queue from now on.
@@ -206,6 +219,16 @@ impl Events {
                     Input::KeyUp(k) => Event::new("key_up", vec![Value::Int(k as i64)]),
                     Input::Char(c) => Event::new("char", vec![Value::Bytes(vec![c])]),
                 });
+            }
+        }
+        // A "redstone" event when any input changed since the last look (or
+        // since the program started, see watch_redstone).
+        if self.input || self.redstone.is_some() {
+            if let Some(now_in) = src.redstone_inputs() {
+                if self.redstone.is_some_and(|before| before != now_in) {
+                    self.queue.push_back(Event::new("redstone", vec![]));
+                }
+                self.redstone = Some(now_in);
             }
         }
         let now = src.now_ms();
@@ -438,6 +461,30 @@ pub(crate) mod tests {
         let e = ev.pull(&mut src, None, None).unwrap();
         assert_eq!(e, Event::new("key", vec![Value::Int(keys::ENTER as i64), Value::Bool(false)]));
         assert!(src.now >= HOLD_MS, "it waited for raw keys first ({} ms)", src.now);
+    }
+
+    #[test]
+    fn a_changed_redstone_input_is_an_event() {
+        struct Rs(Fake, [i32; 6]);
+        impl Sources for Rs {
+            fn now_ms(&mut self) -> f64 { self.0.now_ms() }
+            fn day_ticks(&mut self) -> Option<i64> { None }
+            fn capture_keys(&mut self) -> bool { false }
+            fn raw_key(&mut self) -> Option<RawKey> { None }
+            fn read_stdin(&mut self, _: &mut [u8]) -> usize { 0 }
+            fn wait(&mut self, ms: i32) -> Option<Vec<Value>> {
+                let r = self.0.wait(ms);
+                if self.0.now >= 200.0 { self.1[4] = 15; } // a lever on the left, at 200 ms
+                r
+            }
+            fn redstone_inputs(&mut self) -> Option<[i32; 6]> { Some(self.1) }
+        }
+        let mut src = Rs(Fake::default(), [0; 6]);
+        let mut ev = Events::default();
+        ev.want_input(&mut src);
+        assert_eq!(ev.pull(&mut src, None, Some(0.1)), None, "nothing changed yet");
+        assert_eq!(ev.pull(&mut src, None, None).unwrap().name, "redstone");
+        assert!(src.0.now >= 200.0);
     }
 
     #[test]

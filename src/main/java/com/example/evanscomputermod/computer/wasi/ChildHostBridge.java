@@ -35,6 +35,11 @@ public class ChildHostBridge {
         return parent.bridgeRedstoneGetInput(side);
     }
 
+    /** The power this computer puts out on a relative side (0-5): 0-15. */
+    public int redstoneGetOutput(int side) {
+        return parent.bridgeRedstoneGetOutput(side);
+    }
+
     /** Read all 6 sides' redstone input power into the given array (length 6). */
     public int redstoneGetAllInput(int[] out) {
         return parent.bridgeRedstoneGetAllInput(out);

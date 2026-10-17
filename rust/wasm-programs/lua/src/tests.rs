@@ -749,6 +749,159 @@ assert(_HOST and os.version() == "CraftOS 1.9")
 "#);
 }
 
+// ---------------------------------------------------------------- CC phase 2 (fs, textutils, rs, parallel, peripheral names)
+
+/// A console whose files are in a fresh temporary folder.
+fn console_with_files(name: &str) -> (Fake, PathBuf) {
+    let fake = Fake::default();
+    let d = tmpdir(name);
+    fake.0.borrow_mut().root = Some(d.clone());
+    (fake, d)
+}
+
+#[test]
+fn cc_fs_and_file_handles() {
+    let (fake, d) = console_with_files("ccfs");
+    let l = console_lua(&fake);
+    run(&l, r##"
+assert(fs.combine("a", "b/../c", "/d") == "a/c/d" and fs.getName("/x/y.lua") == "y.lua" and fs.getDir("x/y") == "x")
+fs.makeDir("/data/old")
+local h = assert(fs.open("data/log.txt", "w"))
+h.writeLine("one") h.write("two") h.write(3) h.close()
+assert(not pcall(h.write, "x"), "a closed handle")
+h = fs.open("/data/log.txt", "a") h.writeLine("") h.writeLine("four") h.close()
+h = fs.open("data/log.txt", "r")
+L1, L2 = h.readLine(), h.readLine(true)
+REST = h.readAll()
+h.close()
+local b = fs.open("data/bin", "wb") b.write(65) b.write("BC") b.close()
+b = fs.open("data/bin", "rb") B1 = b.read() B2 = b.read(2) b.seek("set", 0) B3 = b.read() b.close()
+LIST = table.concat(fs.list("data"), ",")
+SIZE = fs.getSize("data/log.txt")
+ATTR = fs.attributes("data")
+fs.copy("data", "backup")
+FIND = table.concat(fs.find("backup/*.txt"), ",")
+fs.move("backup/bin", "moved")
+OK1, E1 = pcall(fs.list, "nope")
+OK2, E2 = pcall(fs.copy, "data", "backup")
+N3, E3 = fs.open("nope.txt", "r")
+N4, E4 = fs.open("../x", "w")
+fs.delete("backup")
+GONE = not fs.exists("backup") and fs.exists("moved") and fs.isDir("data") and not fs.isDir("moved")
+FREE, DRIVE = fs.getFreeSpace("/"), fs.getDrive("data")
+"##);
+    assert_eq!((get::<String>(&l, "L1"), get::<String>(&l, "L2")), ("one".into(), "two3\n".into()));
+    assert_eq!(get::<String>(&l, "REST"), "four\n");
+    assert_eq!((get::<i64>(&l, "B1"), get::<String>(&l, "B2"), get::<i64>(&l, "B3")), (65, "BC".into(), 65));
+    assert_eq!(get::<String>(&l, "LIST"), "bin,log.txt,old");
+    assert_eq!(get::<i64>(&l, "SIZE"), 14);
+    assert!(get::<bool>(&l, "ATTR.isDir"));
+    assert_eq!(get::<String>(&l, "FIND"), "backup/log.txt");
+    assert!(get::<String>(&l, "E1").ends_with("/nope: No such file"), "{}", get::<String>(&l, "E1"));
+    assert!(get::<String>(&l, "E2").ends_with("/backup: File exists"));
+    assert!(get::<mlua::Value>(&l, "N3").is_nil() && get::<String>(&l, "E3") == "/nope.txt: No such file");
+    assert_eq!(get::<String>(&l, "E4"), "/../x: Invalid Path");
+    assert!(get::<bool>(&l, "GONE"));
+    assert_eq!((get::<String>(&l, "FREE"), get::<String>(&l, "DRIVE")), ("unlimited".into(), "hdd".into()));
+    assert!(d.join("moved").is_file(), "the files are real files under the computer's root");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn cc_textutils_round_trips_and_formats() {
+    let l = lua();
+    run(&l, r##"
+local t = {"a", 2, name = "x", nested = {true}}
+S = textutils.serialize(t)
+C = textutils.serialise(t, {compact = true})
+local back = textutils.unserialize(S)
+assert(back[1] == "a" and back[2] == 2 and back.name == "x" and back.nested[1] == true)
+assert(textutils.unserialize("os.exit()") == nil, "only literals")
+local r = {} r.me = r
+OK, E = pcall(textutils.serialize, r)
+OKF, EF = pcall(textutils.serialize, {f = print})
+J = textutils.serializeJSON({list = {1, 2}, empty = {}, arr = textutils.empty_json_array, s = "q\""})
+local j = textutils.unserializeJSON('{"a": [1, {"b": null}], "c": "\\u00e9"}')
+assert(j.a[1] == 1 and j.c == "\195\169")
+T12, T24 = textutils.formatTime(13.5), textutils.formatTime(13.5, true)
+U = textutils.urlEncode("a b&c")
+"##);
+    assert_eq!(get::<String>(&l, "S"), "{\n  \"a\",\n  2,\n  name = \"x\",\n  nested = {\n    true,\n  },\n}");
+    assert_eq!(get::<String>(&l, "C"), "{\"a\",2,name=\"x\",nested={true,},}");
+    assert!(!get::<bool>(&l, "OK") && get::<String>(&l, "E").contains("Cannot serialize table with recursive entries"));
+    assert!(!get::<bool>(&l, "OKF") && get::<String>(&l, "EF").contains("Cannot serialize type function"));
+    assert_eq!(get::<String>(&l, "J"), r#"{"arr":[],"empty":{},"list":[1,2],"s":"q\""}"#);
+    assert_eq!((get::<String>(&l, "T12"), get::<String>(&l, "T24")), ("1:30 PM".into(), "13:30".into()));
+    assert_eq!(get::<String>(&l, "U"), "a+b%26c");
+}
+
+#[test]
+fn cc_redstone_by_side_name() {
+    let fake = Fake::default();
+    fake.0.borrow_mut().redstone_in[4] = 9; // left
+    let l = console_lua(&fake);
+    run(&l, r##"
+rs.setOutput("top", true)
+redstone.setAnalogueOutput("back", 7)
+IN, ANALOG, OFF = rs.getInput("left"), rs.getAnalogInput("left"), rs.getInput("right")
+OUT, AOUT = rs.getOutput("top"), rs.getAnalogOutput("back")
+SIDES = table.concat(rs.getSides(), ",")
+BAD = pcall(rs.getInput, "up")
+BADP = pcall(rs.setAnalogOutput, "top", 16)
+assert(rs == redstone and rs.getBundledInput("left") == 0)
+"##);
+    assert!(get::<bool>(&l, "IN") && !get::<bool>(&l, "OFF") && get::<i64>(&l, "ANALOG") == 9);
+    assert!(get::<bool>(&l, "OUT") && get::<i64>(&l, "AOUT") == 7);
+    assert_eq!(get::<String>(&l, "SIDES"), "top,bottom,left,right,front,back");
+    assert!(!get::<bool>(&l, "BAD") && !get::<bool>(&l, "BADP"));
+    assert_eq!(fake.0.borrow().redstone_out, [0, 15, 0, 7, 0, 0], "top is side 1, back side 3");
+}
+
+#[test]
+fn cc_parallel_runs_functions_side_by_side() {
+    let fake = Fake::default();
+    type_at(&fake, 120.0, b"k");
+    let l = console_lua(&fake);
+    run(&l, r##"
+log = {}
+local function add(s) log[#log + 1] = s end
+-- A sleeper and a key waiter: the key comes at 120 ms, the sleep ends at 300 ms.
+ANY = parallel.waitForAny(
+  function() sleep(0.3) add("slept") end,
+  function() local _, c = os.pullEvent("char") add("char " .. c) end)
+-- waitForAll: both finish; a queued event reaches the one waiting for it.
+parallel.waitForAll(
+  function() local _, v = os.pullEvent("ping") add("ping " .. v) end,
+  function() sleep(0.05) os.queueEvent("ping", 7) add("queued") end)
+OK, E = pcall(parallel.waitForAny, function() error("boom", 0) end, function() sleep(1) end)
+"##);
+    let log: Vec<String> = get::<Table>(&l, "log").sequence_values::<String>().map(Result::unwrap).collect();
+    assert_eq!(log, ["char k", "queued", "ping 7"]);
+    assert_eq!(get::<i64>(&l, "ANY"), 2, "the key waiter finished first");
+    assert!(!get::<bool>(&l, "OK") && get::<String>(&l, "E") == "boom");
+}
+
+#[test]
+fn cc_peripheral_names() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r##"
+package.loaded._peripheral = {
+  list = function() return {{"left", "chest"}, {"right", "chest"}, {"top", "speaker"}} end,
+  methods = function(n) return true, (n == "top" and "speaker" or "chest"), {"size"} end,
+  call = function(n, m) return true, n == "left" and 27 or 54 end,
+}
+local a, b = peripheral.find("chest")
+NAMES = a.name .. "," .. b.name
+BIG = peripheral.find("chest", function(name, p) return p.size() > 30 end).name
+assert(peripheral.getName(a) == "left" and peripheral.getType(b) == "chest" and peripheral.getType("top") == "speaker")
+assert(#peripheral.getNames() == 3 and peripheral.isPresent("top") and peripheral.getMethods("left")[1] == "size")
+assert(peripheral.find("nothing") == nil)
+"##);
+    assert_eq!(get::<String>(&l, "NAMES"), "left,right");
+    assert_eq!(get::<String>(&l, "BIG"), "right");
+}
+
 // ---------------------------------------------------------------- cards
 
 /// A `_peripheral` with one of each card device (a Card Reader/Writer, an NFC
@@ -1124,6 +1277,8 @@ const NOT_IN_LUA: &[(&str, &str)] = &[
     ("radio.IqSink", "made by radio.iq_sink()"),
     ("radio.FramesSink", "made by radio.frames()"),
     ("radio.Framed", "made by radio.framed()"),
+    // fs: a handle is a table of functions.
+    ("fs.Handle", "fs.open returns the handle table"),
     // ui: handlers get a plain event table.
     ("ui.Event", "handlers receive {kind, value, widget}"),
 ];
@@ -1166,7 +1321,7 @@ fn lua_offers_every_python_module_and_name() {
     for (name, file) in [("peripheral", "peripheral.py"), ("sensors", "sensors.py"), ("controller", "controller.py"),
         ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py"),
         ("term", "term.py"), ("events", "events.py"), ("computer", "computer.py"), ("colors", "colors.py"),
-        ("keys", "keys.py")]
+        ("keys", "keys.py"), ("fs", "fs.py"), ("textutils", "textutils.py"), ("redstone", "redstone.py")]
     {
         let module: Table = l.load(format!("return require('{name}')")).eval().unwrap();
         for n in python_names(&read(file)) {

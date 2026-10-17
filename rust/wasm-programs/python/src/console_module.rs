@@ -23,6 +23,9 @@ pub const EVENTS_PY: &str = include_str!("events.py");
 pub const COMPUTER_PY: &str = include_str!("computer.py");
 pub const COLORS_PY: &str = include_str!("colors.py");
 pub const KEYS_PY: &str = include_str!("keys.py");
+pub const FS_PY: &str = include_str!("fs.py");
+pub const TEXTUTILS_PY: &str = include_str!("textutils.py");
+pub const REDSTONE_PY: &str = include_str!("redstone.py");
 
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
@@ -129,6 +132,164 @@ pub mod console_native {
     #[pyattr]
     fn _keys_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(KEYS_PY).into()
+    }
+    #[pyattr]
+    fn _fs_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(FS_PY).into()
+    }
+    #[pyattr]
+    fn _textutils_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(TEXTUTILS_PY).into()
+    }
+    #[pyattr]
+    fn _redstone_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(REDSTONE_PY).into()
+    }
+
+    // --- fs (paths from the computer's root) ---
+
+    fn io_err(vm: &VirtualMachine, e: String) -> rustpython_vm::builtins::PyBaseExceptionRef {
+        vm.new_os_error(e)
+    }
+
+    fn str_list(names: Vec<String>, vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_list(names.into_iter().map(|n| vm.ctx.new_str(n).into()).collect()).into()
+    }
+
+    #[pyfunction]
+    fn fs_list(path: String, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let names = with(|st| st.files().list(&path)).map_err(|e| io_err(vm, e))?;
+        Ok(str_list(names, vm))
+    }
+    #[pyfunction]
+    fn fs_exists(path: String) -> bool {
+        with(|st| st.files().exists(&path))
+    }
+    #[pyfunction]
+    fn fs_is_dir(path: String) -> bool {
+        with(|st| st.files().is_dir(&path))
+    }
+    #[pyfunction]
+    fn fs_is_read_only(path: String) -> bool {
+        with(|st| st.files().is_read_only(&path))
+    }
+    #[pyfunction]
+    fn fs_get_size(path: String, vm: &VirtualMachine) -> PyResult<u64> {
+        with(|st| st.files().size(&path)).map_err(|e| io_err(vm, e))
+    }
+    #[pyfunction]
+    fn fs_make_dir(path: String, vm: &VirtualMachine) -> PyResult<()> {
+        with(|st| st.files().make_dir(&path)).map_err(|e| io_err(vm, e))
+    }
+    #[pyfunction]
+    fn fs_delete(path: String, vm: &VirtualMachine) -> PyResult<()> {
+        with(|st| st.files().delete(&path)).map_err(|e| io_err(vm, e))
+    }
+    #[pyfunction]
+    fn fs_copy(from: String, to: String, vm: &VirtualMachine) -> PyResult<()> {
+        with(|st| st.files().copy(&from, &to)).map_err(|e| io_err(vm, e))
+    }
+    #[pyfunction]
+    fn fs_move(from: String, to: String, vm: &VirtualMachine) -> PyResult<()> {
+        with(|st| st.files().move_(&from, &to)).map_err(|e| io_err(vm, e))
+    }
+    #[pyfunction]
+    fn fs_find(pattern: String, vm: &VirtualMachine) -> PyObjectRef {
+        str_list(with(|st| st.files().find(&pattern)), vm)
+    }
+    #[pyfunction]
+    fn fs_get_free_space(path: String) -> Option<u64> {
+        with(|st| st.files().free_space(&path))
+    }
+    #[pyfunction]
+    fn fs_real_path(path: String, vm: &VirtualMachine) -> PyResult<String> {
+        let p = ecm_console::fs::sanitize(&path).map_err(|e| io_err(vm, e))?;
+        Ok(with(|st| st.host.root()).join(p).to_string_lossy().replace('\\', "/"))
+    }
+    #[pyfunction]
+    fn fs_attributes(path: String, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let a = with(|st| st.files().attributes(&path)).map_err(|e| io_err(vm, e))?;
+        let d = vm.ctx.new_dict();
+        d.set_item("size", vm.ctx.new_int(a.size).into(), vm)?;
+        d.set_item("is_dir", vm.ctx.new_bool(a.is_dir).into(), vm)?;
+        d.set_item("is_read_only", vm.ctx.new_bool(a.is_read_only).into(), vm)?;
+        d.set_item("created", vm.ctx.new_int(a.created).into(), vm)?;
+        d.set_item("modified", vm.ctx.new_int(a.modified).into(), vm)?;
+        Ok(d.into())
+    }
+    #[pyfunction]
+    fn fs_combine(parts: rustpython_vm::function::PosArgs<String>) -> String {
+        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+        ecm_console::fs::combine(&refs)
+    }
+    #[pyfunction]
+    fn fs_get_name(path: String) -> String {
+        ecm_console::fs::get_name(&path)
+    }
+    #[pyfunction]
+    fn fs_get_dir(path: String) -> String {
+        ecm_console::fs::get_dir(&path)
+    }
+
+    // --- textutils ---
+
+    #[pyfunction]
+    fn serialize(value: PyObjectRef, compact: bool, vm: &VirtualMachine) -> PyResult<String> {
+        let v = to_value(&value, vm, 0)?;
+        Ok(ecm_console::textutils::serialize(&v, compact))
+    }
+    #[pyfunction]
+    fn unserialize(text: String, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        match ecm_console::textutils::parse_lua(&text) {
+            Ok(v) => to_py(v, vm),
+            Err(e) => Err(vm.new_value_error(e)),
+        }
+    }
+    #[pyfunction]
+    fn serialize_json(value: PyObjectRef, unicode: bool, vm: &VirtualMachine) -> PyResult<String> {
+        let v = to_value(&value, vm, 0)?;
+        ecm_console::textutils::to_json(&v, unicode).map_err(|e| vm.new_value_error(e))
+    }
+    #[pyfunction]
+    fn unserialize_json(text: String, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        match ecm_console::textutils::parse_json(&text) {
+            Ok(v) => to_py(v, vm),
+            Err(e) => Err(vm.new_value_error(e)),
+        }
+    }
+    #[pyfunction]
+    fn format_time(t: ArgIntoFloat, twenty_four: bool) -> String {
+        ecm_console::textutils::format_time(*t, twenty_four)
+    }
+    #[pyfunction]
+    fn url_encode(s: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        let b = match s.payload::<PyBytes>() {
+            Some(b) => b.as_bytes().to_vec(),
+            None => s.str(vm)?.as_str().as_bytes().to_vec(),
+        };
+        Ok(ecm_console::textutils::url_encode(&b))
+    }
+
+    // --- redstone (CC side names) ---
+
+    fn side(name: &str, vm: &VirtualMachine) -> PyResult<i32> {
+        ecm_console::redstone::side(name).map_err(|e| vm.new_value_error(e))
+    }
+    #[pyfunction]
+    fn rs_get_input(name: String, vm: &VirtualMachine) -> PyResult<i32> {
+        let n = side(&name, vm)?;
+        Ok(with(|st| st.host.redstone_input(n)))
+    }
+    #[pyfunction]
+    fn rs_get_output(name: String, vm: &VirtualMachine) -> PyResult<i32> {
+        let n = side(&name, vm)?;
+        Ok(with(|st| st.host.redstone_output(n)))
+    }
+    #[pyfunction]
+    fn rs_set_output(name: String, power: i32, vm: &VirtualMachine) -> PyResult<()> {
+        let n = side(&name, vm)?;
+        with(|st| st.host.set_redstone_output(n, power.clamp(0, 15)));
+        Ok(())
     }
 
     // --- term ---

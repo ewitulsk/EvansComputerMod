@@ -130,10 +130,11 @@ _web_module.__file__ = '<web>'
 exec(compile(_web_native._source, '<web>', 'exec'), _web_module.__dict__)
 sys.modules['web'] = _web_module
 
-# The console modules (term, events, computer, colors, keys) ship inside the
+# The console modules (term, events, computer, colors, keys, fs, textutils,
+# redstone) ship inside the
 # native `_console` module.
 import _console as _console_native
-for _name in ('colors', 'keys', 'term', 'events', 'computer'):
+for _name in ('colors', 'keys', 'term', 'events', 'computer', 'fs', 'textutils', 'redstone'):
     _m = ModuleType(_name)
     _m.__file__ = '<' + _name + '>'
     exec(compile(getattr(_console_native, '_' + _name + '_source'), '<' + _name + '>', 'exec'), _m.__dict__)

@@ -16,7 +16,7 @@ fn run_py(fake: &Fake, code: &str) {
     });
     interp.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
-        let setup = "import sys, _console\nfor n in ('colors', 'keys', 'term', 'events', 'computer'):\n    M = type(sys)(n)\n    exec(compile(getattr(_console, '_' + n + '_source'), '<' + n + '>', 'exec'), M.__dict__)\n    sys.modules[n] = M\n";
+        let setup = "import sys, _console\nfor n in ('colors', 'keys', 'term', 'events', 'computer', 'fs', 'textutils', 'redstone'):\n    M = type(sys)(n)\n    exec(compile(getattr(_console, '_' + n + '_source'), '<' + n + '>', 'exec'), M.__dict__)\n    sys.modules[n] = M\n";
         let full = format!("{setup}{code}");
         let code_obj = vm.compile(&full, Mode::Exec, "<test>".to_owned()).expect("test script compiles");
         if let Err(e) = vm.run_code_obj(code_obj, scope) {
@@ -132,4 +132,61 @@ assert term.current() is term.native()
 assert c.lines == ["abc", " ", "defghijkl"], c.lines
 "#);
     assert_eq!(fake.output(), "", "the redirected text never reached the console");
+}
+
+#[test]
+fn python_fs_textutils_and_redstone() {
+    let fake = Fake::default();
+    let d = std::env::temp_dir().join(format!("ecm-pyfs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    {
+        let mut s = fake.0.borrow_mut();
+        s.root = Some(d.clone());
+        s.redstone_in[4] = 9;
+    }
+    run_py(&fake, r#"
+import fs, textutils, redstone
+fs.make_dir("/data")
+h = fs.open("data/log.txt", "w")
+h.write_line("one"); h.write("two"); h.close()
+h = fs.open("data/log.txt", "r")
+assert h.read_line() == "one" and h.read_line(True) == "two" and h.read_line() is None
+h.close()
+b = fs.open("data/bin", "wb"); b.write(65); b.write(b"BC"); b.close()
+b = fs.open("data/bin", "rb"); assert b.read() == 65 and b.read(2) == b"BC"; b.close()
+assert fs.list("data") == ["bin", "log.txt"] and fs.get_size("data/log.txt") == 7
+assert fs.attributes("data")["is_dir"]
+fs.copy("data", "backup")
+assert fs.find("backup/*.txt") == ["backup/log.txt"]
+try:
+    fs.list("nope")
+    raise AssertionError("no error")
+except OSError as e:
+    assert str(e).endswith("/nope: No such file"), str(e)
+assert fs.open("nope.txt", "r") == (None, "/nope.txt: No such file")
+fs.delete("backup")
+assert not fs.exists("backup") and fs.combine("a", "../b") == "b" and fs.get_free_space() == "unlimited"
+
+s = textutils.serialize({"name": "x", "list": [1, 2]})
+assert s == '{\n  list = {\n    1,\n    2,\n  },\n  name = "x",\n}', s
+assert textutils.unserialize(s) == {"name": "x", "list": [1, 2]}
+assert textutils.unserialize("os.exit()") is None
+assert textutils.serialize_json({"a": [1, 2], "e": {}}) == '{"a":[1,2],"e":{}}'
+assert textutils.unserialize_json('{"a": [1, null]}') == {"a": [1, None]}
+assert textutils.format_time(13.5) == "1:30 PM" and textutils.url_encode("a b&c") == "a+b%26c"
+
+redstone.set_output("top", True)
+redstone.set_analog_output("back", 7)
+assert redstone.get_input("left") and redstone.get_analog_input("left") == 9 and not redstone.get_input("right")
+assert redstone.get_output("top") and redstone.get_analog_output("back") == 7
+try:
+    redstone.get_input("up")
+    raise AssertionError("no error")
+except ValueError:
+    pass
+"#);
+    assert_eq!(fake.0.borrow().redstone_out, [0, 15, 0, 7, 0, 0]);
+    assert!(d.join("data/bin").is_file());
+    let _ = std::fs::remove_dir_all(&d);
 }

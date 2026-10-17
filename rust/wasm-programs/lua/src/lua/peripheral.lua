@@ -54,8 +54,9 @@ function M.is_present(name)
   return false
 end
 
---- Type of the peripheral attached as `name`, or nil.
+--- Type of the peripheral attached as `name` (or of a wrapped one), or nil.
 function M.get_type(name)
+  if type(name) == "table" then return name.type end
   for _, p in ipairs(native.list()) do
     if p[1] == name then return p[2] end
   end
@@ -118,15 +119,26 @@ function M.find_all(ty)
   return out
 end
 
---- First attached peripheral of `type`, or nil.
-function M.find(ty)
+--- The attached peripherals of `type` (each passing `filter(name, wrapped)`,
+--- if given), wrapped: the first one, then the others (as more results).
+--- nil if there are none.
+function M.find(ty, filter)
+  local found = {}
   for _, p in ipairs(native.list()) do
     if p[2] == ty then
       local w = M.wrap(p[1])
-      if w then return w end
+      if w and (filter == nil or filter(p[1], w)) then found[#found + 1] = w end
     end
   end
-  return nil
+  return table.unpack(found)
+end
+
+--- The attachment name of a wrapped peripheral.
+function M.get_name(wrapped)
+  if type(wrapped) ~= "table" or type(wrapped.name) ~= "string" then
+    error("bad argument #1 (table expected, got " .. type(wrapped) .. ")", 2)
+  end
+  return wrapped.name
 end
 
 --- Wait for the next event (named `filter`, if given) and return it as
@@ -137,5 +149,9 @@ function M.pull_event(filter, timeout)
   return require("_console").pull_quiet(filter, timeout)
 end
 M.wait_event = M.pull_event
+
+-- ComputerCraft's names.
+M.getNames, M.isPresent, M.getType, M.getMethods = M.names, M.is_present, M.get_type, M.get_methods
+M.getName = M.get_name
 
 return M

@@ -2020,6 +2020,8 @@ public class ComputerInstance implements AutoCloseable {
             Direction absoluteDir = provider.relativeToAbsolute(relativeSide);
             int absoluteSide = absoluteDir.ordinal();
 
+            // What get_output reads until the server thread has applied it.
+            redstoneOutputShadow[relativeSide] = power;
             // Schedule the redstone update on the main server thread
             if (host.getServer() != null) {
                 host.getServer().execute(() -> {
@@ -2099,6 +2101,22 @@ public class ComputerInstance implements AutoCloseable {
     public int bridgeRedstoneGetInput(int side) {
         return hostRedstoneGetInput(side);
     }
+
+    /** The power this computer puts out on a relative side (0-5), 0-15; 0 without redstone. */
+    public int bridgeRedstoneGetOutput(int side) {
+        IRedstoneProvider provider = host.getRedstoneProvider();
+        if (provider == null || side < 0 || side > 5) return 0;
+        int set = redstoneOutputShadow[side];
+        if (set >= 0) return set;
+        return provider.getRedstoneOutput(provider.relativeToAbsolute(side).ordinal());
+    }
+
+    /**
+     * The power last set on each relative side by this computer's programs
+     * (-1: not set since boot): a program reads back its own output at once,
+     * though the block applies it on the server thread a moment later.
+     */
+    private final int[] redstoneOutputShadow = {-1, -1, -1, -1, -1, -1};
 
     public int bridgeRedstoneGetAllInput(int[] out) {
         if (out == null || out.length < 6) return -1;

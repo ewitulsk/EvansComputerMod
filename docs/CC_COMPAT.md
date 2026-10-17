@@ -53,12 +53,25 @@ CC source is copied.
 - **Terminate:** Ctrl+T stops the program at once, so a program never sees a `terminate` event from the keyboard. `os.queueEvent("terminate")` works.
 - **Uptime:** `os.clock()` counts from the program's start, not the computer's.
 
+## Phase 2: files, text, redstone, parallel (done)
+
+| CC | Built on (Lua and Python) | Notes |
+|---|---|---|
+| `fs.*` (`list`, `exists`, `isDir`, `isReadOnly`, `getSize`, `getFreeSpace`, `getDrive`, `getCapacity`, `isDriveRoot`, `makeDir`, `move`, `copy`, `delete`, `combine`, `getName`, `getDir`, `find`, `attributes`, `open`) | `fs` (snake_case in both) | Paths are from the computer's root, with or without a leading `/`. Errors use CC's wording (`/x: No such file`, `/x: File exists`, `/..: Invalid Path`). `fs.open` returns CC's handles (`readLine`, `readAll`, `read`, `write`, `writeLine`, `flush`, `seek`, `close`), or `nil` plus the reason. `getFreeSpace` is `"unlimited"`. |
+| `io.open`, `io.lines` | Lua's `io` | Already root-relative: programs start with the computer's root as their working directory. |
+| `textutils.serialize` / `serialise`, `unserialize`, `serializeJSON`, `unserializeJSON`, `formatTime`, `urlEncode`, `tabulate`, `pagedTabulate`, `pagedPrint`, `slowWrite`, `slowPrint`, `empty_json_array` | `textutils` | The layout is CC's: two-space indent and a comma after every entry. `{compact = true}` gives one line. Map keys are sorted, so the output is the same every run. A table inside itself, or a function, is an error, as in CC. `unserialize` reads literals only. JSON writes 1..n tables as arrays and other tables as objects. |
+| `rs` / `redstone` (`getSides`, `getInput`, `setOutput`, `getOutput`, `getAnalogInput` / `Analogue`, `setAnalogOutput`, `getAnalogOutput`, the bundled functions) | `redstone` | Sides are named `top`, `bottom`, `front`, `back`, `left` and `right`. There are no bundled cables: bundled input reads 0 and bundled output is ignored. `getOutput` reads the computer's own output (new host function `redstone_get_output`). |
+| the `redstone` event | the event queue | Fires when any input changes, while the program is pulling events. |
+| `parallel.waitForAny`, `waitForAll` | Lua coroutines (Lua only) | Inside these functions, `os.pullEvent`, `sleep` and `read` yield, so the other functions keep running. Python has no coroutines that could run functions this way. |
+| `peripheral.getNames`, `getType`, `isPresent`, `getMethods`, `getName`, `find(type, filter)` | `peripheral` | `find` returns every match: the first as before, the rest as extra results. Python's `find` takes the filter too. |
+
+Errors from these functions are plain strings, as CC's are, so programs can match and print them.
+
 ## Later phases
 
-1. `fs` and `io` with root-relative paths, `textutils`, `parallel`, peripheral camelCase aliases, `rs` / `redstone`.
-2. Our own generic peripherals over NeoForge item, fluid and energy capabilities.
-3. A floppy Disk Drive and disks of our own, plus reading CC floppies when CC is installed.
-4. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
-5. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
+1. Our own generic peripherals over NeoForge item, fluid and energy capabilities.
+2. A floppy Disk Drive and disks of our own, plus reading CC floppies when CC is installed.
+3. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
+4. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
 
-Tests: TESTING.md, "Console programs". Scenarios: `cc_lua`, `console_python` (`ecm_console`).
+Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2).

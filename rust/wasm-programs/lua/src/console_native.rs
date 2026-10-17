@@ -25,6 +25,48 @@ fn event_values(lua: &Lua, ev: Option<Event>) -> mlua::Result<MultiValue> {
     Ok(MultiValue::from_iter(out))
 }
 
+/// A Lua value for textutils: tables in full (an empty table is a map, as
+/// in CC), with CC's errors for a table inside itself and for values that
+/// have no text form. `empty_array` is textutils.empty_json_array.
+fn text_value(v: &LuaValue, seen: &mut Vec<*const std::ffi::c_void>, empty_array: &LuaValue) -> mlua::Result<Value> {
+    Ok(match v {
+        LuaValue::Table(t) => {
+            if let LuaValue::Table(e) = empty_array {
+                if e == t {
+                    return Ok(Value::List(Vec::new()));
+                }
+            }
+            let ptr = t.to_pointer();
+            if seen.contains(&ptr) {
+                return Err(mlua::Error::runtime("Cannot serialize table with recursive entries"));
+            }
+            seen.push(ptr);
+            let mut entries = Vec::new();
+            for pair in t.pairs::<LuaValue, LuaValue>() {
+                let (k, v) = pair?;
+                entries.push((text_value(&k, seen, empty_array)?, text_value(&v, seen, empty_array)?));
+            }
+            seen.pop();
+            Value::Map(entries)
+        }
+        LuaValue::Function(_) | LuaValue::Thread(_) | LuaValue::UserData(_) | LuaValue::LightUserData(_) => {
+            return Err(mlua::Error::runtime(format!("Cannot serialize type {}", v.type_name())));
+        }
+        other => to_value(other, 0)?,
+    })
+}
+
+fn attributes_table(lua: &Lua, a: ecm_console::fs::Attributes) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("size", a.size as f64)?;
+    t.set("isDir", a.is_dir)?;
+    t.set("isReadOnly", a.is_read_only)?;
+    t.set("created", a.created as f64)?;
+    t.set("modified", a.modified as f64)?;
+    t.set("modification", a.modified as f64)?;
+    Ok(t)
+}
+
 pub fn module(lua: &Lua, session: Session) -> mlua::Result<Table> {
     let s = Rc::new(RefCell::new(session));
     let m = lua.create_table()?;
@@ -105,5 +147,78 @@ pub fn module(lua: &Lua, session: Session) -> mlua::Result<Table> {
     f!("time", |st, locale: Option<String>| st.time(locale.as_deref()).map_err(err));
     f!("day", |st, locale: Option<String>| st.day(locale.as_deref()).map_err(err));
     f!("epoch", |st, locale: Option<String>| st.epoch(locale.as_deref()).map_err(err));
+
+    // --- fs (paths from the computer's root) ---
+    f!("fs_list", |st, path: String| st.files().list(&path).map_err(err));
+    f!("fs_exists", |st, path: String| Ok(st.files().exists(&path)));
+    f!("fs_is_dir", |st, path: String| Ok(st.files().is_dir(&path)));
+    f!("fs_is_read_only", |st, path: String| Ok(st.files().is_read_only(&path)));
+    f!("fs_get_size", |st, path: String| st.files().size(&path).map(|n| n as f64).map_err(err));
+    f!("fs_make_dir", |st, path: String| st.files().make_dir(&path).map_err(err));
+    f!("fs_delete", |st, path: String| st.files().delete(&path).map_err(err));
+    f!("fs_copy", |st, (from, to): (String, String)| st.files().copy(&from, &to).map_err(err));
+    f!("fs_move", |st, (from, to): (String, String)| st.files().move_(&from, &to).map_err(err));
+    f!("fs_find", |st, pattern: String| Ok(st.files().find(&pattern)));
+    f!("fs_get_free_space", |st, path: String| Ok(st.files().free_space(&path).map(|n| n as f64)));
+    // The path to hand to io.open for a computer path (Err above the root).
+    f!("fs_real_path", |st, path: String| {
+        let p = ecm_console::fs::sanitize(&path).map_err(err)?;
+        Ok(st.host.root().join(p).to_string_lossy().replace('\\', "/"))
+    });
+    {
+        let s = s.clone();
+        m.set("fs_attributes", lua.create_function(move |lua, path: String| {
+            let a = s.borrow().files().attributes(&path).map_err(err)?;
+            attributes_table(lua, a)
+        })?)?;
+    }
+    m.set("fs_combine", lua.create_function(|_, parts: Variadic<String>| {
+        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+        Ok(ecm_console::fs::combine(&refs))
+    })?)?;
+    m.set("fs_get_name", lua.create_function(|_, p: String| Ok(ecm_console::fs::get_name(&p)))?)?;
+    m.set("fs_get_dir", lua.create_function(|_, p: String| Ok(ecm_console::fs::get_dir(&p)))?)?;
+
+    // --- textutils ---
+    m.set("serialize", lua.create_function(|_, (v, compact): (LuaValue, Option<bool>)| {
+        let v = text_value(&v, &mut Vec::new(), &LuaValue::Nil)?;
+        Ok(ecm_console::textutils::serialize(&v, compact.unwrap_or(false)))
+    })?)?;
+    m.set("unserialize", lua.create_function(|lua, text: String| {
+        match ecm_console::textutils::parse_lua(&text) {
+            Ok(v) => to_lua(lua, v),
+            Err(_) => Ok(LuaValue::Nil),
+        }
+    })?)?;
+    m.set("serialize_json", lua.create_function(|_, (v, unicode, empty_array): (LuaValue, Option<bool>, LuaValue)| {
+        let v = text_value(&v, &mut Vec::new(), &empty_array)?;
+        ecm_console::textutils::to_json(&v, unicode.unwrap_or(false)).map_err(err)
+    })?)?;
+    m.set("unserialize_json", lua.create_function(|lua, text: String| {
+        match ecm_console::textutils::parse_json(&text) {
+            Ok(v) => Ok((to_lua(lua, v)?, None)),
+            Err(e) => Ok((LuaValue::Nil, Some(e))),
+        }
+    })?)?;
+    m.set("format_time", lua.create_function(|_, (t, h24): (f64, Option<bool>)| {
+        Ok(ecm_console::textutils::format_time(t, h24.unwrap_or(false)))
+    })?)?;
+    m.set("url_encode", lua.create_function(|_, s: LuaString| Ok(ecm_console::textutils::url_encode(&s.as_bytes())))?)?;
+
+    // --- redstone (CC side names) ---
+    f!("rs_get_input", |st, side: String| {
+        let n = ecm_console::redstone::side(&side).map_err(err)?;
+        Ok(st.host.redstone_input(n))
+    });
+    f!("rs_get_output", |st, side: String| {
+        let n = ecm_console::redstone::side(&side).map_err(err)?;
+        Ok(st.host.redstone_output(n))
+    });
+    f!("rs_set_output", |st, (side, power): (String, f64)| {
+        let n = ecm_console::redstone::side(&side).map_err(err)?;
+        st.host.set_redstone_output(n, (power as i32).clamp(0, 15));
+        Ok(())
+    });
+
     Ok(m)
 }

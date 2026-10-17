@@ -39,6 +39,10 @@ pub const MODULES: &[(&str, &str)] = &[
     ("colors", include_str!("lua/colors.lua")),
     ("colours", include_str!("lua/colours.lua")),
     ("keys", include_str!("lua/keys.lua")),
+    ("fs", include_str!("lua/fs.lua")),
+    ("textutils", include_str!("lua/textutils.lua")),
+    ("redstone", include_str!("lua/redstone.lua")),
+    ("parallel", include_str!("lua/parallel.lua")),
 ];
 
 /// ComputerCraft's globals (`os.pullEvent`, `sleep`, `print` through the
@@ -87,8 +91,29 @@ pub fn register(lua: &Lua, name: &str, module: Table) -> mlua::Result<()> {
 
 /// Register the program's console (`_console`): its term, events and clocks.
 pub fn register_console(lua: &Lua, session: ecm_console::session::Session) -> mlua::Result<()> {
-    register(lua, "_console", console_native::module(lua, session)?)
+    let m = console_native::module(lua, session)?;
+    lua.load(PLAIN_ERRORS).set_name("=_console").call::<()>(m.clone())?;
+    register(lua, "_console", m)
 }
+
+/// The natives' errors as plain strings, the way ComputerCraft's functions
+/// raise them ("/x: No such file"), so programs can match and print them.
+const PLAIN_ERRORS: &str = r#"
+local m = ...
+for name, f in pairs(m) do
+  if type(f) == "function" then
+    m[name] = function(...)
+      local r = table.pack(pcall(f, ...))
+      if r[1] then return table.unpack(r, 2, r.n) end
+      local e = r[2]
+      if type(e) ~= "string" then
+        e = tostring(e):gsub("^runtime error: ", ""):gsub("\nstack traceback:.*$", "")
+      end
+      error(e, 0)
+    end
+  end
+end
+"#;
 
 /// Restore the console's colours and cursor after the program, if it drew.
 pub fn finish_console(lua: &Lua) {

@@ -42,7 +42,9 @@ def is_present(name):
 
 
 def get_type(name):
-    """Type of the peripheral attached as `name`, or None."""
+    """Type of the peripheral attached as `name` (or of a wrapped one), or None."""
+    if isinstance(name, Peripheral):
+        return name.type
     for n, t in _peripheral.list():
         if n == name:
             return t
@@ -120,14 +122,20 @@ def find_all(type):
     return out
 
 
-def find(type):
-    """First attached peripheral of `type`, or None."""
+def find(type, filter=None):
+    """First attached peripheral of `type` (passing `filter(name, peripheral)`,
+    if given), or None."""
     for n, t in _peripheral.list():
         if t == type:
             p = wrap(n)
-            if p is not None:
+            if p is not None and (filter is None or filter(n, p)):
                 return p
     return None
+
+
+def get_name(peripheral):
+    """The attachment name of a wrapped peripheral."""
+    return peripheral.name
 
 
 def pull_event(filter=None, timeout=None):

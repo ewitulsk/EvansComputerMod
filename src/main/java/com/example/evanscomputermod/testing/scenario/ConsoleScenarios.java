@@ -4,6 +4,10 @@ package com.example.evanscomputermod.testing.scenario;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.ComputerNumbers;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.RedstoneLampBlock;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,16 +40,37 @@ import java.util.regex.Pattern;
  * ({@code console_demo.py}: term, colors, events, keys, computer): drawn
  * lines, the clocks, a queued event before a timer, and keys; X is a control
  * as above.
+ *
+ * <p>{@code cc_world} (phase 2): a Redstone Lamp on top of the computer and
+ * a Lever on its left, both placed by the player. {@code cc_world.lua} saves
+ * a table with {@code textutils.serialize} through {@code fs.open}, reads it
+ * back, lists the folder, writes JSON, prints the sides and peripherals
+ * ({@code rs.getSides}, {@code peripheral.getNames}), reports the lever off,
+ * waits for {@code os.pullEvent("redstone")} (the player flips the lever:
+ * {@code LEVER true}), then blinks the lamp from one function of
+ * {@code parallel.waitForAny} while the other waits for a typed key (the
+ * player types K: the key waiter wins) and leaves the lamp on. Controls: a
+ * missing file is {@code nil, "/nope.txt: No such file"}; the lever starts
+ * off; the lamp is off before the program.
+ *
+ * <p>{@code console_world}: the same files, textutils and redstone from
+ * Python ({@code console_world.py}).
  * <pre>
- *   Terminal at (0,1,0) facing north.
+ *   Terminal at (0,1,0) facing north, Redstone Lamp at (0,2,0) on top,
+ *   stone at (-1,1,0) on its left, Lever at (-2,1,0) on the stone.
  * </pre>
  */
 public final class ConsoleScenarios {
     private static final BlockPos PC = new BlockPos(0, 1, 0);
+    private static final BlockPos LAMP = new BlockPos(0, 2, 0);
+    /** A block against the computer's left side, and the Lever on it: a lever on the computer itself
+     *  would power the computer's block, and through it the lamp. */
+    private static final BlockPos STONE = new BlockPos(-1, 1, 0);
+    private static final BlockPos LEVER = new BlockPos(-2, 1, 0);
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
-        for (Scenario s : List.of(ccLua(), python())) ALL.put(s.name, s);
+        for (Scenario s : List.of(ccLua(), python(), ccWorld(), pythonWorld())) ALL.put(s.name, s);
     }
 
     private ConsoleScenarios() {
@@ -108,6 +133,86 @@ public final class ConsoleScenarios {
                 .expect("pc", PlayerKit.PROMPT, "back at the shell")
                 .timeLimit(60_000)
                 .build();
+    }
+
+    private static Scenario ccWorld() {
+        var b = Scenario.builder("cc_world",
+                        "A CC program with files, textutils, redstone (a lever and a lamp), parallel and peripherals")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .decor(PlayerKit.decor(List.of(LAMP, STONE, LEVER), null, ConsoleScenarios::placeLampAndLever, null))
+                .note("Setup (done for you): a Redstone Lamp on top of the computer, a stone block on its left with a Lever on it")
+                .note("Type the CC program in (cc_world.lua, from Python)");
+        PlayerKit.typeBundledFile(b, "pc", "/cc_world.lua", "/evanscomputermod/scenarios/cc_world.lua");
+        return b.await(r -> lit(r) ? "the lamp is lit" : null, "control: the lamp starts off", 2_000)
+                .send("pc", "lua cc_world.lua")
+                .expect("pc", "^FILES state\\.txt true$", "fs.open wrote the file; fs.list and fs.getSize see it", "^lua: ")
+                .expect("pc", "^ROUNDTRIP base 3 2$", "textutils.serialize and unserialize round-trip the table", "^lua: ")
+                .expect("pc", "^JSON \\[\"a\",\"b\"\\]$", "textutils.serializeJSON", "^lua: ")
+                .expect("pc", "^MISSING /nope\\.txt: No such file$", "control: a missing file is nil and CC's message", "^lua: ")
+                .expect("pc", "^SIDES 6 PERIPHERALS \\d+$", "rs.getSides and peripheral.getNames", "^lua: ")
+                .expect("pc", "^LEVER false$", "control: the lever is off", "^lua: ")
+                .expect("pc", "^Flip the lever$", "it waits for a redstone event")
+                .mutate(r -> r.player().useEmpty(r.abs(LEVER), Direction.WEST, false), "flip the lever on")
+                .await(r -> leverOn(r) ? null : "the lever is off", "the lever is on", 2_000)
+                .expect("pc", "^LEVER true$", "os.pullEvent(\"redstone\") returned and rs.getInput sees it", "^lua: ")
+                .expect("pc", "^Press K$", "parallel: one function waits for a key while the other blinks the lamp")
+                .await(r -> lit(r) ? null : "the lamp is off", "the lamp blinks: on", 5_000)
+                .await(r -> lit(r) ? "the lamp is on" : null, "off", 5_000)
+                .await(r -> lit(r) ? null : "the lamp is off", "and on again", 5_000)
+                .mutate(r -> r.pressKey("pc", ScenarioPlayer.hidOf('k'), 0, "k"), "type K")
+                .expect("pc", "^WINNER 2 BLINKED true$", "the key waiter finishes first and stops the blinking", "^lua: ")
+                .expect("pc", "^LAMP true$", "rs.getOutput reads back the lamp's output", "^lua: ")
+                .await(r -> lit(r) ? null : "the lamp is off", "the lamp stays on", 5_000)
+                .expect("pc", PlayerKit.PROMPT, "back at the shell")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    private static Scenario pythonWorld() {
+        var b = Scenario.builder("console_world",
+                        "Python's fs, textutils and redstone modules: a file round trip, a lever, a lamp")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .decor(PlayerKit.decor(List.of(LAMP, STONE, LEVER), null, ConsoleScenarios::placeLampAndLever, null))
+                .note("Setup (done for you): a Redstone Lamp on top of the computer, a stone block on its left with a Lever on it")
+                .note("Type the program in (console_world.py, from Python)");
+        PlayerKit.typeBundledFile(b, "pc", "/console_world.py", "/evanscomputermod/scenarios/console_world.py");
+        return b.await(r -> lit(r) ? "the lamp is lit" : null, "control: the lamp starts off", 2_000)
+                .send("pc", "python console_world.py")
+                .expect("pc", "^PY FILES state\\.txt$", "fs.open wrote the file", "Traceback|Error")
+                .expect("pc", "^PY ROUNDTRIP base 3 2$", "textutils round-trips the dict", "Traceback|Error")
+                .expect("pc", "^PY JSON \\[\"a\",\"b\"\\]$", "textutils.serialize_json", "Traceback|Error")
+                .expect("pc", "^PY MISSING /nope\\.txt: No such file$", "control: a missing file", "Traceback|Error")
+                .expect("pc", "^PY LEVER False$", "control: the lever is off", "Traceback|Error")
+                .expect("pc", "^PY flip the lever$", "it waits for a redstone event")
+                .mutate(r -> r.player().useEmpty(r.abs(LEVER), Direction.WEST, false), "flip the lever on")
+                .expect("pc", "^PY LEVER True$", "events.pull(\"redstone\") returned and redstone.get_input sees it", "Traceback|Error")
+                .expect("pc", "^PY LAMP True$", "redstone.set_output lights the lamp", "Traceback|Error")
+                .await(r -> lit(r) ? null : "the lamp is off", "the lamp is lit", 5_000)
+                .expect("pc", PlayerKit.PROMPT, "back at the shell")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    /** The player puts a Redstone Lamp on top of the computer, a stone block against its left side and a Lever on the stone. */
+    private static void placeLampAndLever(ScenarioRun run) {
+        run.player().placeAgainst(Blocks.REDSTONE_LAMP, run.abs(LAMP), Direction.SOUTH, Direction.DOWN,
+                s -> s.is(Blocks.REDSTONE_LAMP));
+        run.player().placeAgainst(Blocks.STONE, run.abs(STONE), Direction.SOUTH, Direction.EAST,
+                s -> s.is(Blocks.STONE));
+        run.player().placeAgainst(Blocks.LEVER, run.abs(LEVER), Direction.SOUTH, Direction.EAST,
+                s -> s.is(Blocks.LEVER));
+    }
+
+    private static boolean lit(ScenarioRun run) {
+        var st = run.level().getBlockState(run.abs(LAMP));
+        return st.is(Blocks.REDSTONE_LAMP) && st.getValue(RedstoneLampBlock.LIT);
+    }
+
+    private static boolean leverOn(ScenarioRun run) {
+        var st = run.level().getBlockState(run.abs(LEVER));
+        return st.is(Blocks.LEVER) && st.getValue(LeverBlock.POWERED);
     }
 
     private static final Pattern CLOCK = Pattern.compile("CLOCK day (\\d+) hour (\\d+\\.\\d+) id (\\d+)");
