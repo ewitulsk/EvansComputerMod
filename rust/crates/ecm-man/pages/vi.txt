@@ -9,7 +9,8 @@ DESCRIPTION
     most Linux systems: the same program with the same keys, commands
     and ~/.vimrc. Use whichever name you are used to.
 
-    In a hurry: i starts typing, Esc stops, :wq Enter saves and quits,
+    In a hurry: i starts typing, Shift+Esc stops (plain Esc closes the
+    Terminal screen), :wq Enter saves and quits,
     :q! Enter quits without saving, u undoes.
 
     The shell knows a few more names for Vim. Each starts Vim under that

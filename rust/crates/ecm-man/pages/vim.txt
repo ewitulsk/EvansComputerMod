@@ -21,7 +21,8 @@ DESCRIPTION
     motion (dw, d2w, dd); change with c (cw, ci"); yank with y and put
     with p; undo with u and redo with Ctrl+R; repeat the last change
     with a dot. i, a, o and friends enter Insert mode to type text, and
-    Esc goes back to Normal mode. v, V and Ctrl+V start Visual mode to
+    Esc goes back to Normal mode (at the Terminal, Esc is Shift+Esc:
+    see KEYS). v, V and Ctrl+V start Visual mode to
     select text for an operator. A colon starts a command line: :w
     writes, :q quits, :wq does both, :q! quits without saving,
     :%s/old/new/g replaces, /text searches.
@@ -92,10 +93,11 @@ FILES
 KEYS
     The Terminal sends the keys Vim expects: the arrows, Home, End,
     PgUp, PgDn, Insert, Delete, F1 to F12, Tab, Backspace and Enter.
-    While Vim runs, plain Esc always reaches it, and Shift+Esc closes
-    the Terminal screen (Vim keeps running). Ctrl+C (Vim's interrupt
-    key: it stops a long search or tells you how to quit), Ctrl+Z and
-    the other Ctrl keys reach Vim too.
+    Esc: at the Terminal, plain Esc closes the screen (Vim keeps
+    running; right-click the Terminal to come back) and Shift+Esc sends
+    Esc to Vim: leave Insert mode with Shift+Esc (Ctrl+C leaves it
+    too). Ctrl+C (Vim's interrupt key: it stops a long search or tells
+    you how to quit), Ctrl+Z and the other Ctrl keys reach Vim.
 
     Ctrl+T is the computer's own key: it stops Vim at once, without
     saving, as it stops any program. Vim's Ctrl+T (pop the tag stack,

@@ -278,23 +278,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     @Override
-    public void programKeysChanged(boolean held) {
-        if (level instanceof net.minecraft.server.level.ServerLevel sl && getComputerId() != null) {
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(sl,
-                    new net.minecraft.world.level.ChunkPos(worldPosition.getX() >> 4, worldPosition.getZ() >> 4),
-                    new com.example.evanscomputermod.network.TerminalKeysPacket(getComputerId(), held));
-        }
-    }
-
-    /** Tell {@code player} (opening this Terminal) whether a full-screen program holds the keyboard. */
-    public void sendProgramKeys(net.minecraft.server.level.ServerPlayer player) {
-        ComputerInstance c = getComputer();
-        if (getComputerId() == null) return;
-        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
-                new com.example.evanscomputermod.network.TerminalKeysPacket(getComputerId(), c != null && c.programHoldsKeys()));
-    }
-
-    @Override
     public void markDirty() {
         setChanged();
     }

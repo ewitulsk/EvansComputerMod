@@ -11,9 +11,7 @@
 //! 0x0B    u8    cursor_shape (0=block, 1=underline, 2=bar)
 //! 0x0C    u32   dirty_counter
 //! 0x10    u32   bell_counter (the host beeps when it changes)
-//! 0x14    u8    program_keys: 1 while a full-screen program (vim) holds the
-//!               keyboard; the Terminal screen then gives it Esc
-//! 0x15..0x3F    reserved
+//! 0x14..0x3F    reserved
 //! 0x40..        cells (4 bytes each: char, attr, flags, reserved)
 //! ```
 //! Attribute byte: low nibble = fg colour, high nibble = bg colour.
@@ -40,7 +38,6 @@ const OFF_HEIGHT: usize = 0x04;
 const OFF_CURSOR_X: usize = 0x06;
 const OFF_CURSOR_Y: usize = 0x08;
 const OFF_CURSOR_VISIBLE: usize = 0x0A;
-const OFF_PROGRAM_KEYS: usize = 0x14;
 const OFF_CURSOR_SHAPE: usize = 0x0B;
 const OFF_DIRTY: usize = 0x0C;
 const OFF_BELL: usize = 0x10;
@@ -155,19 +152,6 @@ pub fn set_cursor(x: u16, y: u16, visible: bool) {
     put_u16(OFF_CURSOR_X, x);
     put_u16(OFF_CURSOR_Y, y);
     fb()[OFF_CURSOR_VISIBLE] = visible as u8;
-}
-
-/// A full-screen program holds the keyboard (or no longer does): the host's
-/// Terminal screen sends Esc to it instead of closing.
-pub fn set_program_keys(on: bool) {
-    if let Some(b) = fb().get_mut(OFF_PROGRAM_KEYS) {
-        *b = on as u8;
-    }
-}
-
-/// Is the program-keys flag set?
-pub fn program_keys() -> bool {
-    fb().get(OFF_PROGRAM_KEYS).is_some_and(|b| *b != 0)
 }
 
 /// The bell rang (BEL): the host beeps.

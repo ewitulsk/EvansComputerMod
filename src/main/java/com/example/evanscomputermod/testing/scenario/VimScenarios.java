@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
  * Vim (the real Vim 9.2, {@code rust/wasm-programs/vim}) as a player uses it
  * at a Terminal, spawnable with {@code /ecm scenario spawn <name>}; also the
  * {@code ecm_vim} GameTests. Every key is a real key press through the
- * client's input packets: Esc and Enter as the Terminal screen sends them,
+ * client's input packets: Vim's Esc is Shift+Esc (plain Esc closes the
+ * Terminal screen, man keys), Enter as the Terminal screen sends it,
  * Ctrl+letters as control characters.
  *
  * <p>{@code vim_editing}: {@code vim notes.txt}; insert three lines, then
@@ -65,7 +66,7 @@ public final class VimScenarios {
     // ------------------------------------------------------------ keys
 
     private static final int HID_ESC = 0x29;
-    private static final int CTRL = UiProto.Mods.CTRL;
+    private static final int CTRL = UiProto.Mods.CTRL, SHIFT = UiProto.Mods.SHIFT;
     /** Vim starts from a 3 MB program: the first start can take a while while it compiles. */
     private static final int START_MS = 30_000;
 
@@ -73,8 +74,13 @@ public final class VimScenarios {
         r.typeText("pc", text);
     }
 
+    /**
+     * Vim's Esc: at the Terminal, plain Esc closes the screen and Shift+Esc
+     * sends Esc to the running program (man keys), so the player presses
+     * Shift+Esc.
+     */
     private static void esc(ScenarioRun r) {
-        r.pressKey("pc", HID_ESC, 0, "\u001b");
+        r.pressKey("pc", HID_ESC, SHIFT, "\u001b");
     }
 
     private static void enter(ScenarioRun r) {
@@ -139,10 +145,7 @@ public final class VimScenarios {
                 .note("Open a new file: vim notes.txt")
                 .send("pc", "vim notes.txt")
                 .await(r -> shows(r, "\"notes\\.txt\" \\[New\\]"), "Vim shows the new file", START_MS)
-                .note("Vim holds the keyboard: the Terminal screen sends plain Esc to it (Shift+Esc closes the screen)")
-                .await(r -> r.computer("pc").programHoldsKeys() ? null : "the screen would take Esc",
-                        "Esc is Vim's key (the computer tells the player's screen)", 5_000)
-                .note("i, type three lines (Enter between them), Esc")
+                .note("i, type three lines (Enter between them), Shift+Esc (Esc for Vim)")
                 .mutate(r -> {
                     type(r, "iThe quick brown fox");
                     enter(r);
@@ -152,19 +155,19 @@ public final class VimScenarios {
                     esc(r);
                 }, "insert three lines")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .await(r -> lines(r, "The quick brown fox", "jumps over the lazy dog", "say \"hello\" twice"), "the three lines", 10_000)
                 .note("Control: Ctrl+C is Vim's key here: Vim says how to quit and keeps running")
                 .mutate(r -> ctrl(r, 'c'), "press Ctrl+C")
                 .await(r -> shows(r, "Type  :qa!  and press <Enter> to abandon all changes and exit Vim"), "Vim's own Ctrl+C message", 10_000)
                 .await(r -> absent(r, LIVE_PROMPT), "control: still in Vim, no shell prompt", 1_000)
-                .note("gg w cw slow Esc: change a word")
+                .note("gg w cw slow Shift+Esc: change a word")
                 .mutate(r -> {
                     type(r, "ggwcwslow");
                     esc(r);
-                }, "gg w cw slow Esc")
+                }, "gg w cw slow Shift+Esc")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .await(r -> lines(r, "The slow brown fox"), "the word changed", 10_000)
                 .note("j 0 d2w: delete two words")
                 .mutate(r -> type(r, "j0d2w"), "j 0 d2w")
@@ -174,25 +177,25 @@ public final class VimScenarios {
                 .await(r -> lines(r, "jumps over the lazy dog"), "undone", 10_000)
                 .mutate(r -> ctrl(r, 'r'), "Ctrl+R")
                 .await(r -> lines(r, "the lazy dog"), "redone", 10_000)
-                .note("3G f\" ci\" bye Esc: change inside the quotes; $ daw: delete the last word")
+                .note("3G f\" ci\" bye Shift+Esc: change inside the quotes; $ daw: delete the last word")
                 .mutate(r -> {
                     type(r, "3Gf\"ci\"bye");
                     esc(r);
-                }, "3G f\" ci\"bye Esc")
+                }, "3G f\" ci\"bye Shift+Esc")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .mutate(r -> type(r, "$daw"), "$ daw")
                 .await(r -> lines(r, "say \"bye\""), "text objects", 10_000)
                 .note("gg \"ayy G \"ap: yank line 1 into register a, put it at the end")
                 .mutate(r -> type(r, "gg\"ayyG\"ap"), "gg \"ayy G \"ap")
                 .await(r -> lines(r, "The slow brown fox", "the lazy dog", "say \"bye\"", "The slow brown fox"), "the line was put", 10_000)
-                .note("gg qq A! Esc j q: record a macro; 2@q plays it on the next two lines; . repeats the last change on line 4")
+                .note("gg qq A! Shift+Esc j q: record a macro; 2@q plays it on the next two lines; . repeats the last change on line 4")
                 .mutate(r -> {
                     type(r, "ggqqA!");
                     esc(r);
-                }, "gg qq A! Esc")
+                }, "gg qq A! Shift+Esc")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .mutate(r -> type(r, "jq2@q."), "j q, 2@q, .")
                 .await(r -> lines(r, "The slow brown fox!", "the lazy dog!", "say \"bye\"!", "The slow brown fox!"), "every line ends in !", 10_000)
                 .note(":%s/slow/quick/g")
@@ -216,8 +219,6 @@ public final class VimScenarios {
                 .await(r -> shows(r, "\"notes\\.txt\" \\[New\\] 3L, 53B written"), "written", 10_000)
                 .mutate(r -> ex(r, "q"), ":q")
                 .await(r -> shows(r, LIVE_PROMPT), "back at the shell", 10_000)
-                .await(r -> r.computer("pc").programHoldsKeys() ? "Vim still holds the keys" : null,
-                        "control: at the shell Esc is the screen's again", 5_000)
                 .send("pc", "cat notes.txt")
                 .expect("pc", "^THE QUICK BROWN FOX!$", "line 1")
                 .expect("pc", "^SAY \"BYE\"!$", "line 2")
@@ -266,9 +267,9 @@ public final class VimScenarios {
                     ex(r, "vsplit c.txt");
                     type(r, "inew file");
                     esc(r);
-                }, "Ctrl+W j, :vsplit c.txt, i new file Esc")
+                }, "Ctrl+W j, :vsplit c.txt, i new file Shift+Esc")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .mutate(r -> ex(r, "w"), ":w")
                 .await(r -> shows(r, "\"c\\.txt\" \\[New\\] 1L, 9B written"), "c.txt written", 10_000)
                 .await(r -> shows(r, "^new file +\\|beta"), "c.txt and b.txt side by side", 10_000)
@@ -341,7 +342,7 @@ public final class VimScenarios {
                 .mutate(r -> {
                     type(r, "q");
                     esc(r);
-                }, "q (the more-prompt), Esc")
+                }, "q (the more-prompt), Shift+Esc")
                 .note("Control: :!ls runs no shell command, it says so")
                 .mutate(r -> ex(r, "!ls"), ":!ls")
                 .await(r -> shows(r, "E9999: Shell commands are not available on this computer"), "the shell error", 10_000)
@@ -378,9 +379,9 @@ public final class VimScenarios {
                 .mutate(r -> {
                     type(r, "iresize me");
                     esc(r);
-                }, "i resize me Esc")
+                }, "i resize me Shift+Esc")
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
-                .await(VimScenarios::normalMode, "Esc took effect: Normal mode", 5_000)
+                .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .mutate(r -> ex(r, "echo &columns .. 'x' .. &lines"), ":echo &columns .. 'x' .. &lines")
                 .await(r -> shows(r, "^160x50 "), "control: Vim is 160x50 before the swap", 10_000)
                 .note("Right-click the screen with a Phosphor panel: the console becomes 80x25")

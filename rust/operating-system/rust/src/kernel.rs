@@ -5,7 +5,6 @@
 //! wants to run, and host events (input, frames, child output, socket
 //! requests) call in earlier.
 
-use crate::framebuffer;
 use crate::console::{Console, Term};
 use crate::gfx::Plane;
 use crate::gfx_test::GfxTest;
@@ -399,9 +398,6 @@ impl Kernel {
         if !replies.is_empty() && self.ui == Ui::Program {
             self.jobs.send_input(&replies);
         }
-        // A full-screen program (or one reading Ctrl+C itself) holds the
-        // keyboard: the host's Terminal screen gives it Esc too.
-        framebuffer::set_program_keys(self.ui == Ui::Program && self.con.modes().program_takes_ctrl_c());
     }
 
     /// The host installed a display panel with a different text grid: resize
@@ -686,6 +682,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framebuffer;
 
     fn row_text(y: u16) -> String {
         (0..framebuffer::width()).map(|x| framebuffer::read_cell(x, y).0 as char).collect::<String>()
@@ -750,7 +747,6 @@ mod tests {
         CHILD_OUT.with(|o| o.borrow_mut().extend_from_slice(b"\x1b[?1049h\x1b[3;7H\x1b[6n\x1b[?2048h"));
         k.on_tick(0);
         assert_eq!(input(), b"\x1b[3;7R\x1b[48;40;100;0;0t", "cursor report, then the size");
-        assert!(framebuffer::program_keys(), "a full-screen program holds the keys (the screen gives it Esc)");
         assert_eq!(k.resize_console(80, 25), (80, 25));
         assert_eq!(input(), b"\x1b[48;25;80;0;0t", "the new size after a panel swap");
         // Ctrl+C on the alternate screen is the program's key, not an interrupt.
@@ -761,7 +757,6 @@ mod tests {
         CHILD_RUNNING.with(|r| *r.borrow_mut() = false);
         k.on_tick(0);
         assert!(k.ui != Ui::Program);
-        assert!(!framebuffer::program_keys(), "back at the shell: Esc is the screen's again");
         k.resize_console(160, 50);
         assert!(input().is_empty(), "no reports after the program ended");
         FILES.with(|f| f.borrow_mut().remove("server-bin/vim.wasm"));

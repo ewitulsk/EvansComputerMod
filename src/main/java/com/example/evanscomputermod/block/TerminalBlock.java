@@ -330,7 +330,6 @@ public class TerminalBlock extends BaseEntityBlock
             // Initialize WASM when terminal is first opened
             te.initializeWasm();
             player.openMenu(te, pos);
-            if (player instanceof net.minecraft.server.level.ServerPlayer sp) te.sendProgramKeys(sp);
         }
         return InteractionResult.SUCCESS;
     }

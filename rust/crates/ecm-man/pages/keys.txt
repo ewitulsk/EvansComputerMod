@@ -95,8 +95,6 @@ PROGRAMS
     Esc
         A key like any other: programs get it (edit uses it to leave a
         question), and no program exits on it. At the Terminal block,
-        Shift+Esc closes the screen. While a full-screen program (vim,
-        man, less) holds the keyboard, plain Esc always goes to it and
         Shift+Esc closes the screen.
 
 COPY AND PASTE

@@ -39,7 +39,6 @@ together and what it needed from the computer.
 | Need | Primitive |
 | --- | --- |
 | Raw keys | Programs already get the keyboard raw from the kernel (no echo, no line editing). The shim keeps a `struct termios` for Vim's mode switches. In raw mode it maps the console's Enter (`\n`) to `\r`, as a tty without `ICRNL` would. While `ISIG` is off (or the tty isn't cooked), it sets the terminal's `?7727` mode, so Ctrl+C and Ctrl+Z stay Vim's keys even when Vim briefly leaves the alternate screen around `:!` and the hit-enter prompt. |
-| Esc at the Terminal screen | The kernel sets framebuffer header byte `0x14` (`program_keys`) while a foreground program holds the keyboard (alternate screen or `?7727`). `ComputerInstance` reads it and the Terminal block entity sends `TerminalKeysPacket` to the players nearby (and to a player opening the screen). While the flag is set, `TerminalScreen` sends plain Esc to the program and Shift+Esc closes the screen, whatever Esc does at the shell prompt. |
 | Esc vs. key sequences (`ttimeout`) | `poll()` on stdin with a timeout. `PipeFd` (a program's stdin) is now a `Pollable`, so `poll_oneoff` wakes on a key instead of only timing out (`StdinPollAndReaddirTest`). |
 | Window size and resizing | `TIOCGWINSZ` answers from `COLUMNS`/`LINES`, then from in-band resize reports. `ecm-vte` implements DEC mode `?2048` (`ESC[48;rows;cols;0;0t`, sent when set and on every resize). The kernel console passes the VTE's replies (`6n`, `18t`, `2048`) to the foreground program's stdin, as does the desktop's Terminal app (`session_write`). The shim takes the reports out of the key stream and raises `SIGWINCH` (wasi-libc's emulated signals), and Vim redraws. |
 | Escape sequences | The xterm subset `ecm-vte` draws (`man terminal`). The builtin `xterm` termcap entry carries `t_ti`/`t_te` (`?1049`) and 16 colours, since there is no terminfo. Sequences the VTE doesn't know (`ESC[>4;2m`, cursor shapes) are ignored. |
@@ -59,6 +58,8 @@ together and what it needed from the computer.
 - No clipboard registers, no mouse (the VTE has no mouse reporting), no
   `:terminal`.
 - `'redrawtime'`/search timeouts never fire (no `SIGALRM`).
+- At the Terminal, plain Esc closes the screen and Shift+Esc sends Esc to
+  Vim (man keys).
 - Keys typed within Vim's Esc timeout (`ttimeoutlen`, 100 ms with
   defaults.vim) after Esc join it, as on any terminal: Esc j is Alt+J. A
   Ctrl+C right after Esc only leaves Insert mode.
