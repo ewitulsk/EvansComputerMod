@@ -31,7 +31,6 @@ pub fn describe(permission: &str) -> PermText {
         "files:documents" => t("Read and change your documents", "Every file in /home."),
         "files:all" => t("Read and change all files", "The whole disk, except other apps' data."),
         "packages" => t("Install and manage apps", "Install, update, remove and open apps, and change their permissions."),
-        "mixer" => t("Change the volume of other apps", "The phone's or computer's Volume Mixer."),
         "background:refresh" => t("Refresh in the background", "Wake up now and then for a moment to check for news."),
         p => {
             if let Some(ty) = p.strip_prefix("peripherals:") {

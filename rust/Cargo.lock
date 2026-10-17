@@ -1176,7 +1176,9 @@ dependencies = [
 name = "discord"
 version = "0.1.0"
 dependencies = [
+ "ecm-apps-ui",
  "ecm-audio",
+ "ecm-auth",
  "ecm-chat",
  "ecm-disco",
  "ecm-discord",
