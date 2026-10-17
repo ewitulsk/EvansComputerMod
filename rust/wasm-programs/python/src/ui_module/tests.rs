@@ -472,3 +472,64 @@ assert isinstance(t0, int) and ui.now_us() >= t0
     assert_eq!((px[0].0, px[0].1.len(), px[0].2.clone()), (1, 16, vec![[0, 0, 2, 1]]));
     assert_eq!(px[1].1, vec![1u8; 16]);
 }
+
+/// Background apps from Python: background_mode() sends BackgroundMode, the
+/// answer reaches on_background_result; media_session() sends the Now Playing
+/// card and a MediaAction reaches on_media; bad modes, states and actions are
+/// refused before anything is sent.
+#[test]
+fn python_background_modes_and_media_sessions() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false)]);
+    let handle = register_mock(mock.clone());
+    let interp = interpreter();
+    interp.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+        run(vm, &scope, &format!("{SETUP}_ui.use_mock({handle})\n"));
+        run(
+            vm,
+            &scope,
+            r#"
+import ui
+log = []
+app = ui.App("dev.test.music")
+app.window("Music", ui.Label("Now playing"))
+app.on_media(lambda action, pos: log.append(("media", action, pos)))
+app.on_background_result(lambda mode, granted: log.append(("bg", mode, granted)))
+app.background_mode("audio", True)
+app.background_mode("call", on=False)
+app.media_session(title="Song", artist="Band", album="LP", state="paused", position_ms=1500, duration_ms=180000, actions=["play", "next"])
+for bad in (lambda: app.background_mode("party", True), lambda: app.media_session(state="loud"), lambda: app.media_session(actions=["louder"])):
+    try:
+        bad()
+        raise AssertionError("not refused")
+    except ValueError:
+        pass
+app.step(0)
+"#,
+        );
+        mock.push(&[
+            Message::MediaAction(ecm_ui_proto::MediaAction { action: "seek".into(), position_ms: 42000 }),
+            Message::BackgroundModeResult(ecm_ui_proto::BackgroundModeResult { mode: "audio".into(), granted: true }),
+        ]);
+        run(vm, &scope, "app.step(0)\napp.step(0)\nassert log == [('media', 'seek', 42000), ('bg', 'audio', True)], log\napp.media_session(state='none')\napp.step(0)\n_ui.use_mock(None)\n");
+    });
+    let sent = mock.sent_messages();
+    let modes: Vec<(String, bool)> = sent.iter().filter_map(|m| if let Message::BackgroundMode(b) = m { Some((b.mode.clone(), b.on)) } else { None }).collect();
+    assert_eq!(modes, vec![("audio".to_string(), true), ("call".to_string(), false)]);
+    let sessions: Vec<&ecm_ui_proto::MediaInfo> = sent.iter().filter_map(|m| if let Message::MediaSession(s) = m { Some(&s.info) } else { None }).collect();
+    assert_eq!(sessions.len(), 2, "the card, then its end");
+    let want = ecm_ui::MediaSession {
+        title: "Song".into(),
+        artist: "Band".into(),
+        album: "LP".into(),
+        art: None,
+        state: ecm_ui::MediaState::Paused,
+        position_ms: 1500,
+        duration_ms: 180000,
+        actions: vec!["play".into(), "next".into()],
+    };
+    assert_eq!(*sessions[0], want.to_wire());
+    assert_eq!(*sessions[1], ecm_ui::MediaSession::ended().to_wire());
+}

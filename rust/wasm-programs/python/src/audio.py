@@ -35,6 +35,9 @@ Settings > Sound (/etc/sound.conf), else the first speaker / microphone.
 """
 
 SOUND_CONF = "/etc/sound.conf"
+MIXER = "/dev/mixer"
+MAX_APP_PERCENT = 150
+ROLES = ("media", "voice", "phone")
 
 TONE_RATE = 8000
 _NOTES = {"C": -9, "D": -7, "E": -5, "F": -4, "G": -2, "A": 0, "B": 2}
@@ -159,6 +162,18 @@ class Speaker:
     def set_volume(self, volume):
         self.control("volume %d" % volume)
 
+    def set_role(self, role):
+        """Who this stream is for: "media" (default), "voice" (a call) or "phone"
+        (a cellular call, a ringtone). While a stream carries sound, every stream
+        with a lower role is ducked (media < voice < phone)."""
+        if role not in ROLES:
+            raise ValueError("role is media, voice or phone, not %r" % (role,))
+        self.control("role " + role)
+
+    def ducked(self):
+        """True while a louder, higher-role stream lowers this one."""
+        return self.status().get("ducked", 0) == 1
+
     def flush(self):
         """Drop whatever is queued."""
         self.control("flush")
@@ -212,6 +227,124 @@ class Speaker:
 def open(side=None):
     """The speaker attached as `side` ('left', 'top', ...), or the default / first one."""
     return Speaker(side)
+
+
+def open_speaker(side=None):
+    """The same as open(): a speaker stream of its own."""
+    return Speaker(side)
+
+
+def _meter(peak):
+    """A peak (0-32767) as a meter fill 0-100 on a dB scale from -60 dBFS
+    (round((20 * log10(peak / 32767) + 60) / 0.6), without the math module)."""
+    if peak <= 0:
+        return 0
+    for m in range(100, 0, -1):
+        if peak >= 32767 * 10 ** (((m - 0.5) * 0.6 - 60) / 20.0):
+            return m
+    return 0
+
+
+class Mixer:
+    """The Volume Mixer (/dev/mixer): every app's strip, each speaker's master
+    strip and the microphones. Made by audio.mixer()."""
+
+    DEVICE = MIXER
+
+    def strips(self):
+        """Every strip as a dict with 'kind' 'output', 'app' or 'input'."""
+        import builtins
+        with builtins.open(self.DEVICE, "rb", buffering=0) as f:
+            text = f.read().decode()
+        return parse_mixer(text)
+
+    def _send(self, cmd):
+        import builtins
+        try:
+            with builtins.open(self.DEVICE, "wb", buffering=0) as f:
+                f.write((cmd + "\n").encode())
+        except PermissionError:
+            raise PermissionError("changing the Volume Mixer needs the mixer permission")
+        except OSError as e:
+            raise ValueError("the Volume Mixer refused %r (%s)" % (cmd, e))
+
+    def set(self, target, percent):
+        """An app's volume 0-150 %, or a speaker's ('master', 'master.left') 0-100 %."""
+        percent = int(percent)
+        top = 100 if _is_master(target) else MAX_APP_PERCENT
+        if percent < 0 or percent > top:
+            raise ValueError("%s's volume is 0-%d" % ("a speaker" if top == 100 else "an app", top))
+        self._send("set %s %d" % (target, percent))
+
+    def mute(self, target, on=True):
+        """Mute (or with on=False unmute) an app or a speaker."""
+        self._send("mute %s %s" % (target, "on" if on else "off"))
+
+    def route(self, app, side):
+        """Play an app on the speaker attached as `side`; None (or '-') = the default speaker."""
+        if _is_master(app):
+            raise ValueError("route moves an app; a speaker can't be routed")
+        self._send("route %s %s" % (app, "-" if side in (None, "", "-", "default") else side))
+
+    def gain(self, input, n):
+        """A microphone's gain 0-100 by its side."""
+        n = int(n)
+        if n < 0 or n > 100:
+            raise ValueError("gain is 0-100")
+        self._send("gain %s %d" % (input, n))
+
+    def reset(self, app):
+        """Forget an app's volume, mute and route."""
+        self._send("reset %s" % app)
+
+
+def mixer():
+    """The Volume Mixer: mixer().strips(), .set(target, percent), .mute(target, on=True),
+    .route(app, side), .gain(input, n), .reset(app)."""
+    return Mixer()
+
+
+def _is_master(target):
+    return target == "master" or target.startswith("master.")
+
+
+def parse_mixer(text):
+    """/dev/mixer's text as a list of strip dicts."""
+    out = []
+    for line in text.splitlines():
+        w = line.split()
+        if len(w) < 2 or w[0] not in ("output", "app", "input"):
+            continue
+        kv = {}
+        for item in w[2:]:
+            if "=" in item:
+                k, v = item.split("=", 1)
+                kv[k] = v
+
+        def num(k, d=0):
+            try:
+                return int(kv.get(k, d))
+            except ValueError:
+                return d
+
+        def side(k):
+            v = kv.get(k, "-")
+            return None if v in ("", "-") else v
+        if w[0] == "output":
+            peak = num("peak")
+            out.append({"kind": "output", "side": w[1], "target": "master." + w[1], "volume": num("volume"),
+                        "mute": num("mute") == 1, "peak": peak, "meter": _meter(peak),
+                        "label": kv.get("label", "").replace("_", " ")})
+        elif w[0] == "app":
+            peak = num("peak")
+            out.append({"kind": "app", "app": w[1], "target": w[1], "volume": num("volume"), "mute": num("mute") == 1,
+                        "route": side("route"), "on": side("on"), "peak": peak, "meter": _meter(peak),
+                        "ducked": num("ducked") == 1, "role": kv.get("role", "media"), "streams": num("streams")})
+        else:
+            level = num("level", -99)
+            out.append({"kind": "input", "side": w[1], "target": w[1], "gain": num("gain"), "level": level,
+                        "meter": max(0, min(60, level + 60)) * 100 // 60})
+    return out
 
 
 class Microphone:

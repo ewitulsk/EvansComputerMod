@@ -261,6 +261,61 @@ assert(not ok and tostring(e):find("console mode"), tostring(e))
 
 // ---------------------------------------------------------------- radio
 
+/// Background apps from Lua, the same calls as Python: background_mode() sends
+/// BackgroundMode, the answer reaches on_background_result; media_session{...}
+/// sends the Now Playing card and a MediaAction reaches on_media; bad modes,
+/// states and actions are refused.
+#[test]
+fn lua_background_modes_and_media_sessions() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false)]);
+    let handle = ui_native::register_mock(mock.clone());
+    let l = lua();
+    set(&l, "MOCK", handle);
+    run(
+        &l,
+        r#"
+_ui = require("_ui")
+_ui.use_mock(MOCK)
+log = {}
+app = ui.App("dev.test.music")
+app:window("Music", ui.Label("Now playing"))
+app:on_media(function(action, pos) log[#log + 1] = "media:" .. action .. ":" .. pos end)
+app:on_background_result(function(mode, granted) log[#log + 1] = "bg:" .. mode .. ":" .. tostring(granted) end)
+app:background_mode("audio", true)
+app:background_mode("call", false)
+app:media_session{title = "Song", artist = "Band", album = "LP", state = "paused", position_ms = 1500, duration_ms = 180000, actions = {"play", "next"}}
+assert(not pcall(app.background_mode, app, "party", true))
+assert(not pcall(app.media_session, app, {state = "loud"}))
+assert(not pcall(app.media_session, app, {actions = {"louder"}}))
+app:step(0)
+"#,
+    );
+    mock.push(&[
+        Message::MediaAction(ecm_ui_proto::MediaAction { action: "seek".into(), position_ms: 42000 }),
+        Message::BackgroundModeResult(ecm_ui_proto::BackgroundModeResult { mode: "audio".into(), granted: true }),
+    ]);
+    run(&l, "app:step(0)\napp:step(0)\nassert(#log == 2 and log[1] == 'media:seek:42000' and log[2] == 'bg:audio:true', table.concat(log, ','))\napp:media_session{state = 'none'}\napp:step(0)\n_ui.use_mock(nil)\n");
+    let sent = mock.sent_messages();
+    let modes: Vec<(String, bool)> = sent.iter().filter_map(|m| if let Message::BackgroundMode(b) = m { Some((b.mode.clone(), b.on)) } else { None }).collect();
+    assert_eq!(modes, vec![("audio".to_string(), true), ("call".to_string(), false)]);
+    let sessions: Vec<&ecm_ui_proto::MediaInfo> = sent.iter().filter_map(|m| if let Message::MediaSession(s) = m { Some(&s.info) } else { None }).collect();
+    assert_eq!(sessions.len(), 2, "the card, then its end");
+    let want = ecm_ui::MediaSession {
+        title: "Song".into(),
+        artist: "Band".into(),
+        album: "LP".into(),
+        art: None,
+        state: ecm_ui::MediaState::Paused,
+        position_ms: 1500,
+        duration_ms: 180000,
+        actions: vec!["play".into(), "next".into()],
+    };
+    assert_eq!(*sessions[0], want.to_wire());
+    assert_eq!(*sessions[1], ecm_ui::MediaSession::ended().to_wire());
+}
+
 fn goertzel(x: &[f32], f: f64, fs: f64) -> f64 {
     let w = std::f64::consts::TAU * f / fs;
     let (mut re, mut im) = (0.0, 0.0);
@@ -538,6 +593,64 @@ assert(s.rate == 8000 and s.buffered_ms == 40 and s.underruns == 0)
     assert!(pcm.iter().all(|&b| b == 128 || b == 78 || b == 178), "{pcm:?}");
     let ctl = std::fs::read_to_string(d.join("audioctl")).unwrap();
     assert_eq!(ctl, "channels 1\n", "each control command is its own write");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The Volume Mixer from Lua, the same calls as Python's audio.mixer(): strips()
+/// parses /dev/mixer, each call writes one command line, bad values are refused
+/// before the device; the speaker's set_role / ducked go through /dev/audioctl.
+#[test]
+fn lua_mixer_reads_strips_and_writes_commands() {
+    let d = tmpdir("mixer");
+    std::fs::write(
+        d.join("mixer"),
+        "output left volume=100 mute=0 peak=32767 label=ePhone_speaker\n\
+         app dev.ecm.music volume=80 mute=1 route=right on=left peak=1036 ducked=1 role=media streams=1\n\
+         input top gain=50 level=-30\n",
+    )
+    .unwrap();
+    std::fs::write(d.join("audioctl"), "rate 48000\nrole media\nducked 1\n").unwrap();
+    let l = lua();
+    set(&l, "DIR", p(&d));
+    run(
+        &l,
+        r#"
+local real_open = io.open
+io.open = function(path, mode) return real_open((path:gsub("^/dev/", DIR .. "/"):gsub("^/etc/", DIR .. "/")), mode) end
+local function last()
+  local f = real_open(DIR .. "/mixer", "rb") local t = f:read("*a") f:close() return t
+end
+local m = audio.mixer()
+local s = m:strips()
+assert(#s == 3 and s[1].kind == "output" and s[2].kind == "app" and s[3].kind == "input")
+local o, a, i = s[1], s[2], s[3]
+assert(o.side == "left" and o.target == "master.left" and o.volume == 100 and o.label == "ePhone speaker" and o.meter == 100 and o.mute == false)
+assert(a.app == "dev.ecm.music" and a.volume == 80 and a.mute and a.route == "right" and a.on == "left")
+assert(a.ducked and a.role == "media" and a.streams == 1 and a.meter >= 49 and a.meter <= 51, a.meter)
+assert(i.side == "top" and i.gain == 50 and i.level == -30 and i.meter == 50)
+m:set("dev.ecm.music", 150) assert(last() == "set dev.ecm.music 150\n", last())
+m:set("master.left", 70) assert(last() == "set master.left 70\n")
+m:mute("dev.ecm.music") assert(last() == "mute dev.ecm.music on\n")
+m:mute("master", false) assert(last() == "mute master off\n")
+m:route("dev.ecm.music", "right") assert(last() == "route dev.ecm.music right\n")
+m:route("dev.ecm.music", nil) assert(last() == "route dev.ecm.music -\n")
+m:gain("top", 60) assert(last() == "gain top 60\n")
+m:reset("dev.ecm.music") assert(last() == "reset dev.ecm.music\n")
+assert(not pcall(m.set, m, "dev.ecm.music", 151))
+assert(not pcall(m.set, m, "master", 101))
+assert(not pcall(m.gain, m, "top", -1))
+assert(not pcall(m.route, m, "master", "left"))
+assert(last() == "reset dev.ecm.music\n", "a refused value is not written")
+local spk = audio.open_speaker()
+assert(spk:ducked())
+spk:set_role("voice")
+assert(not pcall(spk.set_role, spk, "loud"))
+spk:close()
+local f = real_open(DIR .. "/audioctl", "rb") local ctl = f:read("*a") f:close()
+assert(ctl == "role voice\n", ctl)
+assert(audio.MAX_APP_PERCENT == 150 and audio.ROLES[2] == "voice")
+"#,
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -944,6 +1057,7 @@ const NOT_IN_LUA: &[(&str, &str)] = &[
     ("controller.Controller", "made by controller.find()/all()"),
     ("audio.Speaker", "made by audio.open()"),
     ("audio.Microphone", "made by audio.open_mic()"),
+    ("audio.Mixer", "made by audio.mixer()"),
     // cards: the applet objects hang off reader:card(); a session off nfc:session().
     ("cards.Card", "made by Reader:card()"),
     ("cards.Stripe", "card.stripe of Reader:card()"),

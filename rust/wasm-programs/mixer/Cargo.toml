@@ -1,0 +1,19 @@
+[package]
+name = "mixer"
+version = "0.1.0"
+edition = "2021"
+
+# The table, the meters and the argument checks live in the library so they are
+# tested on the host (`cargo test -p mixer`); the binary does the I/O.
+[lib]
+name = "mixer"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "mixer"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-audio = { workspace = true }

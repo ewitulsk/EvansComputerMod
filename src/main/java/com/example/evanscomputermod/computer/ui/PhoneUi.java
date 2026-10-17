@@ -254,7 +254,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
      * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps)
      * and its Files (the documents folder).
      */
-    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth"),
+    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth", "mixer"),
             "dev.ecm.files", List.of("files:documents"));
 
     @Nullable

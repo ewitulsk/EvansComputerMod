@@ -27,7 +27,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
     ("Cards", &["cards", "cardtool"]),
-    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "player", "video", "videoplayer", "gfx"]),
+    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "mixer", "player", "video", "videoplayer", "gfx"]),
 ];
 
 /// A built-in page's text.

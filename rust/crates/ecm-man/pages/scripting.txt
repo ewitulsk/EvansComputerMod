@@ -61,6 +61,8 @@ NET
       tcp_connect(host, port)    a connection handle
       tcp_listen(port) tcp_accept(listener)
       tcp_send(conn, data) tcp_recv(conn, max) tcp_close(conn)
+      set_wake(conn, True)       data on it wakes the app while it is
+                                 suspended (needs background:refresh)
       http_get(url) http_post(url, body)   status, body, headers
 
 PERIPHERAL
@@ -92,14 +94,22 @@ CONTROLLER
     dpad_left dpad_right. Axes: lx ly rx ry (-1 to 1), lt rt (0 to 1).
 
 AUDIO
-      open(side)                 a Speaker next to the computer
+      open(side) open_speaker(side)   a stream on a Speaker
       spk.tone(freq, seconds)    a beep (square wave by default)
       spk.notes("C4 E4 G4", s)   a tune; "-" is a rest
       spk.set_format(rate, bits, channels) spk.write(pcm)
       spk.set_volume(v) spk.status() spk.close()
+      spk.set_role(r)            "media", "voice" (a call) or "phone":
+                                 a louder role ducks lower ones
+      spk.ducked()               True while a call lowers it
       open_mic(side)             a microphone: mic.read(), mic.record(s),
                                  mic.level(), mic.set_format, set_gain
       peak_db(pcm) save_wav(path, pcm) default_device("input")
+      m = mixer()                the Volume Mixer (see mixer)
+      m.strips()                 dicts: kind output, app or input
+      m.set(target, percent)     app 0-150, "master" / "master.left"
+      m.mute(target, on) m.route(app, side) m.gain(input, n)
+      m.reset(app)
 
 RADIO
       open(name)                 an SDR; sdr.tune(freq, rate)
@@ -122,6 +132,10 @@ UI
       app.notify(title, body) app.hotkey(slot, label, fn)
       app.on_suspend(fn) app.restore()   keep state on a phone
       app.pick_file() app.copy(text) app.paste() app.open(path)
+      app.background_mode(mode, on)   keep running hidden ("audio",
+                                 "call", ...); on_background_result(fn)
+      app.media_session(title=, artist=, state=, actions=)  Now Playing
+      app.on_media(fn)           fn(action, position_ms): play, pause...
       load(file.ui.json, handlers)   a Visual Programmer layout
       app.canvas(w, h, format)   a Canvas with its own pixels:
                                  put(pixels, damage), commit_at(pts_us),

@@ -785,6 +785,8 @@ class App:
         self._on_frame = None
         self._on_close = None
         self._on_message = None
+        self._on_media = None
+        self._on_background = None
 
     def restore(self):
         """The dict saved by on_suspend in the previous run ({} if none)."""
@@ -885,6 +887,29 @@ class App:
     def background_done(self):
         _ui.send(self._h, "BackgroundDone", {})
 
+    def background_mode(self, mode, on=True):
+        """Keep running while hidden for a mode declared in app.toml ("audio", "call",
+        "radio", "transfer", "navigation"); on=False stops it. The answer comes to
+        on_background_result(fn)."""
+        _ui.background_mode(self._h, mode, bool(on))
+
+    def media_session(self, title="", artist="", album="", state="playing", position_ms=0,
+                      duration_ms=0, actions=("play", "pause")):
+        """What is playing, for the Now Playing card (state "playing", "paused",
+        "buffering"; "none" ends it). actions: "play", "pause", "next", "previous",
+        "seek"; presses come to on_media(fn)."""
+        _ui.media_session(self._h, {"title": title, "artist": artist, "album": album, "state": state,
+                                    "position_ms": int(position_ms), "duration_ms": int(duration_ms),
+                                    "actions": list(actions)})
+
+    def on_media(self, fn):
+        """fn(action, position_ms) for a Now Playing control (play, pause, next, previous, seek)."""
+        self._on_media = fn
+
+    def on_background_result(self, fn):
+        """fn(mode, granted): whether the app may keep running for a background mode."""
+        self._on_background = fn
+
     def quit(self):
         _ui.quit(self._h)
 
@@ -931,6 +956,12 @@ class App:
                 self.close_window(ev[1])
                 if not self._windows:
                     _ui.quit(self._h)
+        elif kind == "media":
+            if self._on_media:
+                self._on_media(ev[1], ev[2])
+        elif kind == "background":
+            if self._on_background:
+                self._on_background(ev[1], ev[2])
         elif kind == "message":
             if self._on_message:
                 self._on_message(ev[1], ev[2])

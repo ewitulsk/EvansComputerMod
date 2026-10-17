@@ -936,6 +936,25 @@ end
 
 function App:background_done() native.send(self._h, "BackgroundDone", {}) end
 
+--- Keep running while hidden for a mode declared in app.toml ("audio", "call", "radio",
+--- "transfer", "navigation"); on = false stops it. The answer comes to on_background_result(fn).
+function App:background_mode(mode, on) native.background_mode(self._h, mode, on ~= false) end
+
+--- What is playing, for the Now Playing card: media_session{title=, artist=, album=,
+--- state= "playing" | "paused" | "buffering" | "none" (ends it), position_ms=, duration_ms=,
+--- actions= {"play", "pause", "next", "previous", "seek"}}; presses come to on_media(fn).
+function App:media_session(o)
+  o = o or {}
+  native.media_session(self._h, { title = o.title or "", artist = o.artist or "", album = o.album or "",
+    state = o.state or "playing", position_ms = math.floor(o.position_ms or 0), duration_ms = math.floor(o.duration_ms or 0),
+    actions = list_copy(o.actions or { "play", "pause" }) })
+end
+
+--- fn(action, position_ms) for a Now Playing control (play, pause, next, previous, seek).
+function App:on_media(fn) self._on_media = fn end
+--- fn(mode, granted): whether the app may keep running for a background mode.
+function App:on_background_result(fn) self._on_background = fn end
+
 function App:quit() native.quit(self._h) end
 
 function App:_sync()
@@ -978,6 +997,10 @@ function App:_dispatch(ev)
       self:close_window(ev[2])
       if next(self._windows) == nil then native.quit(self._h) end
     end
+  elseif kind == "media" then
+    if self._on_media then self._on_media(ev[2], ev[3]) end
+  elseif kind == "background" then
+    if self._on_background then self._on_background(ev[2], ev[3]) end
   elseif kind == "message" then
     if self._on_message then self._on_message(ev[2], ev[3]) end
   end

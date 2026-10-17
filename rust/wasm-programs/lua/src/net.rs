@@ -350,6 +350,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         }
         Ok(c)
     })?)?;
+    // A wake socket: data arriving on it while the app is suspended wakes the app at
+    // once (needs background:refresh). net.set_wake(conn, true); false turns it off.
+    m.set("set_wake", lua.create_function(|_, (conn, on): (i32, Option<bool>)| {
+        let rc = ecm_host_abi::socket::set_wake(conn, on.unwrap_or(true));
+        if rc != 0 {
+            return Err(err(format!("set_wake failed on connection {conn} (error {rc})")));
+        }
+        Ok(())
+    })?)?;
     m.set("tcp_listen", lua.create_function(|_, port: u16| {
         let l = net_ipc::tcp_listen(port);
         if l < 0 {

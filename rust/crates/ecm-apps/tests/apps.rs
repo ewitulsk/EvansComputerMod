@@ -142,11 +142,16 @@ struct Desk {
 
 impl Desk {
     fn new(args: &[&str], root: &PathBuf, w: i32, h: i32) -> (Desk, Vec<Message>) {
+        Desk::with_host(args, root, w, h, desktop::FakeHost::default())
+    }
+
+    /// With an app manager and a mixer (`FakeHost`).
+    fn with_host(args: &[&str], root: &PathBuf, w: i32, h: i32, host: desktop::FakeHost) -> (Desk, Vec<Message>) {
         let m = mock("desktop", w, h);
         let sys = MockSys::new(root);
         sys.state.borrow_mut().clock = Some((9, 41));
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let d = Desktop::new(Box::new(m.clone()), Box::new(sys.clone()), &args).unwrap();
+        let d = Desktop::with_host(Box::new(m.clone()), Box::new(sys.clone()), Box::new(host), &args).unwrap();
         let mut desk = Desk { d, m, sys, t: Texts::default() };
         // The compositor configures layer surfaces when they are made.
         let (tb, wp) = {
@@ -462,6 +467,202 @@ fn compact_displays_maximize_windows() {
     let p = places(&out);
     assert_eq!((p[&1].0, p[&1].1, p[&1].2), (0, TITLE_H, 320));
     assert!(p[&1].4 & proto::window_states::MAXIMIZED != 0);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn app_modes(pid: u32, app: &str, modes: &[&str]) -> Message {
+    Message::AppModes(proto::AppModes { pid, app_id: app.into(), modes: modes.iter().map(|m| m.to_string()).collect() })
+}
+
+fn surface_created(msgs: &[Message]) -> Option<proto::SurfaceCreate> {
+    msgs.iter().find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+}
+
+/// The tray: closing the window of an app with an active background mode hides it to the
+/// tray (the app keeps running); its icon shows it again; right-click > Quit closes it.
+/// Controls: without a mode the close button closes the window; after the mode ends a
+/// hidden window still has its icon until it is gone.
+#[test]
+fn desktop_tray_hides_apps_with_a_background_mode_and_quits_them() {
+    let root = temp_root("tray");
+    std::fs::create_dir_all(root.join("apps/dev.ecm.discord")).unwrap();
+    std::fs::write(root.join("apps/dev.ecm.discord/app.toml"), "name = \"Discord\"\n").unwrap();
+    let (mut desk, _) = Desk::new(&[], &root, 640, 400);
+    desk.open(1, 2, "dev.ecm.discord", "Discord");
+    desk.open(3, 4, "terminal", "Terminal");
+    let tb = desk.d.state.borrow().taskbar;
+    let fs = desk.surface_titled("frame:1");
+    let close = hit(&desk.d.app, fs, "close");
+    // Control: a terminal without a mode closes.
+    let fs3 = desk.surface_titled("frame:3");
+    let close3 = hit(&desk.d.app, fs3, "close");
+    let out = desk.step(click(fs3, close3));
+    assert!(out.iter().any(|m| matches!(m, Message::CloseWindow(c) if c.window == 3)));
+    desk.step(vec![Message::WindowClosed(proto::WindowClosed { window: 3 })]);
+
+    // Discord joins a call: an icon in the tray.
+    desk.step(vec![app_modes(41, "dev.ecm.discord", &["call"])]);
+    assert_eq!(desk.d.state.borrow().close_action(1), desktop::CloseAction::HideToTray);
+    let icon = hit(&desk.d.app, tb, "tray:dev.ecm.discord");
+    // The title bar's close hides it instead: no CloseWindow, both window and frame hidden, no taskbar button.
+    let out = desk.step(click(fs, close));
+    assert!(!out.iter().any(|m| matches!(m, Message::CloseWindow(_))), "{out:?}");
+    assert!(out.iter().any(|m| matches!(m, Message::SetVisible(v) if v.window == 1 && !v.visible)));
+    assert!(out.iter().any(|m| matches!(m, Message::SetVisible(v) if v.window == 2 && !v.visible)));
+    assert!(desk.d.state.borrow().win(1).unwrap().hidden);
+    assert!(desk.d.app.core.window(tb).unwrap().hit_id_of("task1").is_none(), "not in the taskbar");
+    // A click on its icon shows it again.
+    let out = desk.step(click(tb, icon));
+    assert!(out.iter().any(|m| matches!(m, Message::SetVisible(v) if v.window == 1 && v.visible)));
+    assert!(out.iter().any(|m| matches!(m, Message::FocusWindow(f) if f.window == 1)));
+    // Alt+F4 hides it too.
+    let out = desk.step(vec![Message::Chord(proto::Chord { id: desktop::CHORD_CLOSE })]);
+    assert!(!out.iter().any(|m| matches!(m, Message::CloseWindow(_))));
+    assert!(desk.d.state.borrow().win(1).unwrap().hidden);
+    // The call ends: the hidden window keeps its icon (no dot).
+    desk.step(vec![app_modes(41, "dev.ecm.discord", &[])]);
+    let entries = desk.d.state.borrow().tray_entries();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].modes.is_empty() && entries[0].hidden == vec![1]);
+    // Right-click > Quit: CloseWindow on its windows.
+    let icon = hit(&desk.d.app, tb, "tray:dev.ecm.discord");
+    let out = desk.step(vec![pointer(tb, proto::PointerKind::Down, 5, 5, icon, proto::Button::Right), pointer(tb, proto::PointerKind::Up, 5, 5, icon, proto::Button::Right)]);
+    let menu = surface_created(&out).expect("tray menu");
+    assert_eq!((menu.role, menu.parent), (proto::SurfaceRole::Popup, tb));
+    assert!(menu.y < 0, "above the taskbar");
+    desk.step(vec![configure(menu.surface, 1, menu.w, menu.h, 0)]);
+    assert!(desk.t.has(menu.surface, "Open") && desk.t.has(menu.surface, "Quit"));
+    let quit = desk.d.app.core.window(menu.surface).unwrap().hit_id_of_row("tray_menu", 1).unwrap();
+    let out = desk.step(click(menu.surface, quit));
+    assert!(out.iter().any(|m| matches!(m, Message::CloseWindow(c) if c.window == 1)), "{out:?}");
+    desk.step(vec![Message::WindowClosed(proto::WindowClosed { window: 1 })]);
+    assert!(desk.d.state.borrow().tray_entries().is_empty(), "gone with its window");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// At its first start the desktop relaunches the apps of the last session (once each, not
+/// the ones --launch starts anyway); after a crash (--restart) it doesn't.
+#[test]
+fn desktop_relaunches_the_last_session_except_after_a_restart() {
+    let root = temp_root("lastsession");
+    let host = desktop::FakeHost::default();
+    host.state.borrow_mut().session = vec!["dev.ecm.music".into(), "dev.ecm.discord".into()];
+    let (_desk, all) = Desk::with_host(&["--launch", "dev.ecm.music"], &root, 640, 400, host.clone());
+    let launched: Vec<String> = all.iter().filter_map(|m| if let Message::Launch(l) = m { Some(l.app_id.clone()) } else { None }).collect();
+    assert_eq!(launched, vec!["dev.ecm.music".to_string(), "dev.ecm.discord".to_string()]);
+    let (_desk, all) = Desk::with_host(&["--restart"], &root, 640, 400, host);
+    assert!(!all.iter().any(|m| matches!(m, Message::Launch(_))), "a restarted shell keeps what is open");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The tray's speaker opens the Volume Mixer popup: Now Playing (its buttons send
+/// MediaControl), a master strip per speaker, app strips (ducked badge, 0-150 %, mute,
+/// route picker with two speakers) and the microphone; changes go to the mixer.
+/// Controls: no mixer, no speaker icon; one speaker, no route picker.
+#[test]
+fn desktop_mixer_popup_controls_the_mixer_and_now_playing() {
+    use ecm_audio::mixer::strips;
+    let root = temp_root("deskmix");
+    let (mut desk, _) = Desk::new(&[], &root, 640, 400);
+    let tb = desk.d.state.borrow().taskbar;
+    assert!(desk.d.app.core.window(tb).unwrap().hit_id_of("tray:mixer").is_none(), "no mixer, no speaker");
+    let two = "output left volume=100 mute=0 peak=20000 label=Speaker\n\
+               output right volume=60 mute=0 peak=0 label=AirPods\n\
+               app dev.ecm.music volume=80 mute=0 route=- on=left peak=5000 ducked=1 role=media streams=1\n\
+               input top gain=50 level=-30\n";
+    desk.sys.state.borrow_mut().mixer = Some(strips(two));
+    desk.sys.state.borrow_mut().now += 2500;
+    desk.step(vec![]);
+    let spk = hit(&desk.d.app, tb, "tray:mixer");
+    desk.step(vec![Message::MediaSessionChanged(proto::MediaSessionChanged {
+        pid: 30,
+        app_id: "dev.ecm.music".into(),
+        info: proto::MediaInfo {
+            title: "Sweden".into(),
+            artist: "C418".into(),
+            album: String::new(),
+            art_w: 0,
+            art_h: 0,
+            art_rgba: Vec::new(),
+            state: proto::MediaState::Playing,
+            position_ms: 30_000,
+            duration_ms: 215_000,
+            actions: vec!["play".into(), "pause".into(), "next".into()],
+        },
+    })]);
+    let out = desk.step(click(tb, spk));
+    let pop = surface_created(&out).expect("mixer popup");
+    assert_eq!((pop.role, pop.parent), (proto::SurfaceRole::Popup, tb));
+    assert!(pop.y < 0 && pop.x + pop.w <= 640, "above the taskbar, on the right");
+    desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
+    for want in ["Now Playing", "Sweden - C418", "0:30 / 3:35", "Volume Mixer", "Speaker", "AirPods", "dev.ecm.music", "ducked", "80%", "Microphone", "50%", "Default"] {
+        assert!(desk.t.has(pop.surface, want), "{want}: {:?}", desk.t.of(pop.surface));
+    }
+    let log = |d: &Desk| d.sys.state.borrow().log.clone();
+    // Now Playing: pause.
+    let pause = hit(&desk.d.app, pop.surface, "np30:play");
+    let out = desk.step(click(pop.surface, pause));
+    assert!(out.iter().any(|m| matches!(m, Message::MediaControl(c) if c.pid == 30 && c.action == "pause")), "{out:?}");
+    // The app's slider to the end: 150 %.
+    let vol = hit(&desk.d.app, pop.surface, "vol:app:dev.ecm.music");
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Down, 10_000, 5, vol, proto::Button::Left)]);
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Up, 10_000, 5, vol, proto::Button::Left)]);
+    assert!(log(&desk).contains(&"mixer set dev.ecm.music 150".to_string()), "{:?}", log(&desk));
+    assert!(desk.t.has(pop.surface, "150%"));
+    // Mute, a speaker's master, the microphone gain.
+    let mute = hit(&desk.d.app, pop.surface, "mute:app:dev.ecm.music");
+    desk.step(click(pop.surface, mute));
+    assert!(log(&desk).contains(&"mixer mute dev.ecm.music toggle".to_string()), "{:?}", log(&desk));
+    let master = hit(&desk.d.app, pop.surface, "vol:out:right");
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Down, -10_000, 5, master, proto::Button::Left)]);
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Up, -10_000, 5, master, proto::Button::Left)]);
+    assert!(log(&desk).contains(&"mixer set master.right 0".to_string()), "{:?}", log(&desk));
+    let gain = hit(&desk.d.app, pop.surface, "gain:top");
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Down, 10_000, 5, gain, proto::Button::Left)]);
+    desk.step(vec![pointer(pop.surface, proto::PointerKind::Up, 10_000, 5, gain, proto::Button::Left)]);
+    assert!(log(&desk).contains(&"mixer gain top 100".to_string()), "{:?}", log(&desk));
+    // The route picker: AirPods.
+    let route = hit(&desk.d.app, pop.surface, "route:dev.ecm.music");
+    let out = desk.step(click(pop.surface, route));
+    let menu = surface_created(&out).expect("route menu");
+    desk.step(vec![configure(menu.surface, 1, menu.w, menu.h, 0)]);
+    assert!(desk.t.has(menu.surface, "AirPods"));
+    let row = desk.d.app.core.window(menu.surface).unwrap().hit_id_of_row("popup_menu", 2).unwrap();
+    desk.step(click(menu.surface, row));
+    assert!(log(&desk).contains(&"mixer route dev.ecm.music right".to_string()), "{:?}", log(&desk));
+    // The speaker icon again closes it.
+    let out = desk.step(click(tb, spk));
+    assert!(out.iter().any(|m| matches!(m, Message::SurfaceDestroy(d) if d.surface == pop.surface)));
+    // Control: one speaker, no route picker.
+    let one = "output left volume=100 mute=0 peak=0 label=Speaker\napp aplay volume=100 mute=0 route=- on=left peak=0 ducked=0 role=media streams=1\n";
+    desk.sys.state.borrow_mut().mixer = Some(strips(one));
+    let out = desk.step(click(tb, spk));
+    let pop = surface_created(&out).expect("mixer popup again");
+    desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
+    assert!(desk.d.app.core.window(pop.surface).unwrap().hit_id_of("route:aplay").is_none());
+    assert!(desk.t.has(pop.surface, "aplay"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A background mode's first-time prompt on the desktop: "Keep <App> running in the
+/// background for calls?", Allow / Don't allow, remembered without a checkbox.
+#[test]
+fn desktop_background_prompt_asks_to_keep_the_app_running() {
+    let root = temp_root("bgprompt");
+    std::fs::create_dir_all(root.join("apps/dev.ecm.discord")).unwrap();
+    std::fs::write(root.join("apps/dev.ecm.discord/app.toml"), "name = \"Discord\"\n").unwrap();
+    let (mut desk, _) = Desk::new(&[], &root, 640, 400);
+    let out = desk.step(vec![Message::PermissionPrompt(proto::PermissionPrompt { req: 8, app_id: "dev.ecm.discord".into(), permission: "background:call".into() })]);
+    let pr = surface_created(&out).expect("prompt");
+    desk.step(vec![configure(pr.surface, 1, pr.w, pr.h, 0)]);
+    assert!(desk.t.of(pr.surface).join(" ").contains("Keep Discord running in the background for calls?"), "{:?}", desk.t.of(pr.surface));
+    assert!(desk.t.has(pr.surface, "Don't allow"));
+    assert!(desk.d.app.core.window(pr.surface).unwrap().hit_id_of("remember").is_none(), "always remembered");
+    let deny = hit(&desk.d.app, pr.surface, "deny");
+    let out = desk.step(click(pr.surface, deny));
+    assert!(out.iter().any(|m| matches!(m, Message::AnswerPermission(a) if a.req == 8 && !a.allow && a.remember)));
+    assert_eq!(desktop::prompt_question("Music", "background:transfer"), "Keep Music running in the background for downloads?");
+    assert_eq!(desktop::prompt_question("Notes", "network"), "Allow Notes to use network?");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -831,6 +1032,103 @@ fn settings_sound_picks_default_devices_and_sets_the_gain() {
     assert_eq!(settings::meter(-30), "||||||||||..........");
     assert_eq!(settings::meter(-99), "....................");
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// Settings -> Mixer (the Volume Mixer): master strips, per-app strips with the
+/// 0-150 % slider, mute, meter, ducked badge, reset and (with two speakers) the
+/// route picker, microphone gain and level; commands go to /dev/mixer, the page
+/// follows the mixer while shown, and refusals are shown. Controls: no mixer,
+/// one speaker (no route picker), no permission.
+#[test]
+fn settings_mixer_shows_strips_and_sends_commands() {
+    use ecm_audio::mixer::strips;
+    let two = "output left volume=100 mute=0 peak=20000 label=Speaker\n\
+               output right volume=60 mute=0 peak=0 label=Speaker\n\
+               app dev.ecm.music volume=80 mute=0 route=- on=left peak=5000 ducked=1 role=media streams=1\n\
+               app dev.ecm.discord volume=100 mute=0 route=- on=left peak=9000 ducked=0 role=voice streams=1\n\
+               input top gain=50 level=-42\n";
+    let root = temp_root("mixer");
+    let m = mock("settings", 600, 400);
+    let sys = settings_sys(&root);
+    sys.state.borrow_mut().mixer = Some(strips(two));
+    let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("mixer")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 380, proto::window_states::ACTIVATED)]);
+    for want in ["Volume Mixer", "SPEAKERS", "Speaker (left)", "Speaker (right)", "APPS", "dev.ecm.music", "ducked", "dev.ecm.discord", "voice", "80%", "Plays on", "MICROPHONES", "Microphone (top)", "-42 dBFS"] {
+        assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+    }
+    let log = |sys: &MockSys| sys.state.borrow().log.clone();
+    // The app's slider goes to 150 %.
+    let vol = hit(&app, 1, "app_vol:dev.ecm.music");
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Down, 10_000, 5, vol, proto::Button::Left)]);
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Up, 10_000, 5, vol, proto::Button::Left)]);
+    assert!(log(&sys).contains(&"mixer set dev.ecm.music 150".to_string()), "{:?}", log(&sys));
+    assert!(t.has(1, "150%"), "{:?}", t.of(1));
+    // Mute, route to the right speaker, reset.
+    let mute = hit(&app, 1, "app_mute:dev.ecm.music");
+    run(&mut app, &m, &mut t, click(1, mute));
+    assert!(log(&sys).contains(&"mixer mute dev.ecm.music on".to_string()), "{:?}", log(&sys));
+    let right = hit(&app, 1, "app_route:dev.ecm.music:right");
+    run(&mut app, &m, &mut t, click(1, right));
+    assert_eq!(sys.state.borrow().mixer.as_ref().unwrap().app("dev.ecm.music").unwrap().route.as_deref(), Some("right"));
+    let reset = hit(&app, 1, "app_reset:dev.ecm.music");
+    run(&mut app, &m, &mut t, click(1, reset));
+    {
+        let st = sys.state.borrow();
+        let a = st.mixer.as_ref().unwrap().app("dev.ecm.music").unwrap().clone();
+        assert_eq!((a.volume, a.mute, a.route), (100, false, None), "reset");
+    }
+    // A speaker's master and a microphone's gain.
+    let master = hit(&app, 1, "master_vol:right");
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Down, -10_000, 5, master, proto::Button::Left)]);
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Up, -10_000, 5, master, proto::Button::Left)]);
+    assert!(log(&sys).contains(&"mixer set master.right 0".to_string()), "{:?}", log(&sys));
+    let gain = hit(&app, 1, "mic_gain:top");
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Down, 10_000, 5, gain, proto::Button::Left)]);
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Up, 10_000, 5, gain, proto::Button::Left)]);
+    assert!(log(&sys).contains(&"mixer gain top 100".to_string()), "{:?}", log(&sys));
+    // Live: an app that starts playing appears without touching anything.
+    sys.state.borrow_mut().mixer.as_mut().unwrap().apps.push(ecm_audio::mixer::AppStrip { app: "aplay".into(), volume: 100, on: Some("left".into()), peak: 12000, role: "media".into(), streams: 1, ..Default::default() });
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(t.has(1, "aplay"), "{:?}", t.of(1));
+    // Without the mixer permission the change is refused, and the page says why.
+    sys.state.borrow_mut().mixer_denied = true;
+    let mute = hit(&app, 1, "app_mute:aplay");
+    run(&mut app, &m, &mut t, click(1, mute));
+    assert!(t.has(1, "needs the mixer permission"), "{:?}", t.of(1));
+    assert!(!sys.state.borrow().mixer.as_ref().unwrap().app("aplay").unwrap().mute);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // One speaker (a phone, compact): no route picker; everything fits; Sound links here.
+    let root = temp_root("mixer-one");
+    let m = mock("settings", 300, 400);
+    let sys = settings_sys(&root);
+    sys.state.borrow_mut().mixer = Some(strips("output speaker volume=90 mute=0 peak=0 label=ePhone_speaker\napp dev.ecm.music volume=80 mute=0 route=- on=speaker peak=0 ducked=0 role=media streams=1\n"));
+    let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("sound")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 300, 400, proto::window_states::ACTIVATED)]);
+    let open = hit(&app, 1, "open_mixer");
+    run(&mut app, &m, &mut t, click(1, open));
+    assert!(t.has(1, "ePhone speaker (speaker)"), "{:?}", t.of(1));
+    let win = app.core.window(1).unwrap();
+    assert!(win.hit_id_of("app_route:dev.ecm.music:-").is_none(), "one speaker: no route picker");
+    for id in ["page", "app_vol:dev.ecm.music", "app_mute:dev.ecm.music", "app_reset:dev.ecm.music", "master_vol:speaker"] {
+        let r = win.rect_of(id).unwrap_or_else(|| panic!("{id}"));
+        assert!(r.x >= 0 && r.x + r.w <= 300, "{id}: {r:?}");
+    }
+    let mute = hit(&app, 1, "master_mute:speaker");
+    run(&mut app, &m, &mut t, click(1, mute));
+    assert!(sys.state.borrow().log.contains(&"mixer mute master on".to_string()), "{:?}", sys.state.borrow().log);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // Control: no Volume Mixer.
+    let root = temp_root("mixer-none");
+    let m = mock("settings", 600, 400);
+    let mut app = settings::app(Box::new(m.clone()), Box::new(settings_sys(&root)), Some("mixer")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 380, proto::window_states::ACTIVATED)]);
+    assert!(t.has(1, "This computer has no Volume Mixer."), "{:?}", t.of(1));
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// What celld says on a phone attached to cell 1 of cell-red (two cells heard).

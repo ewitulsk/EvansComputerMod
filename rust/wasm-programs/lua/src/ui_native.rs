@@ -47,7 +47,8 @@ fn tree(v: &Value) -> mlua::Result<ecm_ui::Element> {
 
 /// An event as a list: {"widget", window, handler, kind, value}, {"key", window,
 /// key, mods, down}, {"hotkey", slot, down}, {"suspend", deadline_ms},
-/// {"frame", window, time_ms}, {"close", window}, {"theme"}, {"message", name, json}.
+/// {"frame", window, time_ms}, {"close", window}, {"theme"}, {"media", action, position_ms},
+/// {"background", mode, granted}, {"message", name, json}.
 /// A handler that isn't a reference or a name is `false`.
 fn event_table(lua: &Lua, ev: AppEvent) -> mlua::Result<Table> {
     let s = |x: &str| -> mlua::Result<Value> { Ok(Value::String(lua.create_string(x)?)) };
@@ -113,6 +114,8 @@ fn event_table(lua: &Lua, ev: AppEvent) -> mlua::Result<Table> {
         AppEvent::Hotkey { slot, down } => vec![s("hotkey")?, i(slot as i64), Value::Boolean(down)],
         AppEvent::Suspend { deadline_ms } => vec![s("suspend")?, i(deadline_ms as i64)],
         AppEvent::Frame { window, time_ms } => vec![s("frame")?, i(window as i64), i(time_ms as i64)],
+        AppEvent::Media { action, position_ms } => vec![s("media")?, s(&action)?, i(position_ms as i64)],
+        AppEvent::BackgroundModeResult { mode, granted } => vec![s("background")?, s(&mode)?, Value::Boolean(granted)],
         AppEvent::CloseRequested { window } => vec![s("close")?, i(window as i64)],
         AppEvent::ThemeChanged => vec![s("theme")?],
         AppEvent::Message(m) => vec![s("message")?, s(m.name())?, s(&m.to_json())?],
@@ -122,6 +125,37 @@ fn event_table(lua: &Lua, ev: AppEvent) -> mlua::Result<Table> {
         t.raw_set(n + 1, v)?;
     }
     Ok(t)
+}
+
+/// The background modes an app can declare (app.toml `background.modes`), as in Python's `_ui`.
+pub const BACKGROUND_MODES: &[&str] = &["audio", "call", "radio", "transfer", "navigation"];
+
+/// A media session from its fields (`title`, `artist`, `album`, `state` playing |
+/// paused | buffering | none, `position_ms`, `duration_ms`, `actions`), as in Python's `_ui`.
+pub fn media_session_of(f: &Json) -> Result<ecm_ui::MediaSession, String> {
+    use ecm_ui::MediaState;
+    let s = |k: &str| f.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let ms = |k: &str| f.get(k).and_then(Json::as_i64).unwrap_or(0).clamp(0, u32::MAX as i64) as u32;
+    let state = match f.get("state").and_then(Json::as_str).unwrap_or("playing") {
+        "playing" => MediaState::Playing,
+        "paused" => MediaState::Paused,
+        "buffering" => MediaState::Buffering,
+        "none" | "ended" | "stopped" | "" => MediaState::None,
+        other => return Err(format!("media state is playing, paused, buffering or none, not {other:?}")),
+    };
+    if state == MediaState::None {
+        return Ok(ecm_ui::MediaSession::ended());
+    }
+    let mut actions = Vec::new();
+    if let Some(a) = f.get("actions").and_then(Json::as_array) {
+        for x in a {
+            match x.as_str() {
+                Some(n @ ("play" | "pause" | "next" | "previous" | "seek")) => actions.push(n.to_string()),
+                _ => return Err(format!("media actions are play, pause, next, previous and seek, not {}", x.to_string())),
+            }
+        }
+    }
+    Ok(ecm_ui::MediaSession { title: s("title"), artist: s("artist"), album: s("album"), art: None, state, position_ms: ms("position_ms"), duration_ms: ms("duration_ms"), actions })
 }
 
 fn add_mock(m: MockConnection) -> i64 {
@@ -239,6 +273,23 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
     m.set("request_frame", lua.create_function(|_, (h, win): (i64, u32)| {
         with_app(h, |c| c.send(proto::Message::RequestFrame(proto::RequestFrame { surface: win })))
+    })?)?;
+
+    // Start (on) or stop a background mode the app declared (audio, call, radio, transfer,
+    // navigation); the answer comes as a {"background", mode, granted} event.
+    m.set("background_mode", lua.create_function(|_, (h, mode, on): (i64, String, bool)| {
+        if !BACKGROUND_MODES.contains(&mode.as_str()) {
+            return Err(err(format!("background modes are {}, not {mode:?}", BACKGROUND_MODES.join(", "))));
+        }
+        with_app(h, |c| c.background_mode(&mode, on))
+    })?)?;
+
+    // The Now Playing card: {title, artist, album, state, position_ms, duration_ms, actions};
+    // state "none" ends the session.
+    m.set("media_session", lua.create_function(|_, (h, fields): (i64, Value)| {
+        let f = to_json(&fields, 0)?;
+        let session = media_session_of(&f).map_err(err)?;
+        with_app(h, |c| c.media_session(&session))
     })?)?;
 
     // Send a protocol message given as (name, fields): the services

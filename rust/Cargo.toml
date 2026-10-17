@@ -121,6 +121,7 @@ members = [
     "wasm-programs/antenna",
     "wasm-programs/discordd",
     "wasm-programs/authd",
+    "wasm-programs/mixer",
     "wasm-programs/musicd",
     "wasm-programs/chat",
     "wasm-programs/discord",

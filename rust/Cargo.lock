@@ -1159,7 +1159,9 @@ dependencies = [
 name = "discord"
 version = "0.1.0"
 dependencies = [
+ "ecm-apps-ui",
  "ecm-audio",
+ "ecm-auth",
  "ecm-chat",
  "ecm-disco",
  "ecm-discord",
@@ -2432,6 +2434,22 @@ name = "mousetest"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "music"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-audio",
+ "ecm-auth",
+ "ecm-disco",
+ "ecm-host-abi",
+ "ecm-music",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "musicd",
+ "pkg",
 ]
 
 [[package]]

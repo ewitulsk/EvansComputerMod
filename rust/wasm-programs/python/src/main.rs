@@ -509,6 +509,18 @@ mod net_module {
         ecm_host_abi::net_ipc::tcp_close(conn);
     }
 
+    /// Make a connection (or listener) a wake socket: data arriving on it while the
+    /// app is suspended wakes the app at once (needs `background:refresh`).
+    /// net.set_wake(conn, True); net.set_wake(conn, False) turns it off.
+    #[pyfunction]
+    fn set_wake(conn: i32, on: rustpython_vm::function::OptionalArg<bool>, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        let rc = ecm_host_abi::socket::set_wake(conn, on.unwrap_or(true));
+        if rc != 0 {
+            return Err(vm.new_os_error(format!("set_wake failed on connection {conn} (error {rc})")));
+        }
+        Ok(())
+    }
+
     /// HTTP GET request. Returns dict with 'status', 'body', 'headers'.
     /// (Simple implementation using TCP and manual HTTP/1.1)
     #[pyfunction]
