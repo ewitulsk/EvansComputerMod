@@ -1208,6 +1208,13 @@ impl Core {
         (s.ims_ip == Some(ip)).then_some(s.imsi.as_str())
     }
 
+    /// The subscriber whose session holds default-bearer (internet) address `ip`.
+    pub fn imsi_at_data(&self, ip: [u8; 4]) -> Option<&str> {
+        let id = self.by_ip.get(&ip)?;
+        let s = self.sessions.get(id)?;
+        (s.ip == ip).then_some(s.imsi.as_str())
+    }
+
     /// PCRF (Rx): a voice bearer for the phone at IMS address `ue_ip`, flow
     /// `ue_port <-> remote:remote_port`. Returns the bearer id, and whether it
     /// went to a serving site (an idle phone gets it on its next resume: no).

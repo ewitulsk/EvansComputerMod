@@ -170,7 +170,8 @@ pub fn uri_number(u: &Uri) -> Option<String> {
     if n.starts_with('+') && n.len() > 1 && n[1..].bytes().all(|b| b.is_ascii_digit()) {
         return Some(n);
     }
-    if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit() || b == b'*' || b == b'#') {
+    // service codes: digits, * and #, and a number after them (*72+12145550142)
+    if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit() || b == b'*' || b == b'#' || b == b'+') && !n[1..].starts_with('+') {
         return Some(n);
     }
     None
