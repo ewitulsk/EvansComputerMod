@@ -1,0 +1,74 @@
+NAME
+    dialer - the Phone app: make and take calls on an ePhone
+
+SYNOPSIS
+    dialer
+    dialer --number <number>
+    dialer --call <number>
+    dialer --incoming <call id>
+
+DESCRIPTION
+    Opens Phone (dev.ecm.dialer). It talks to telephonyd, the phone's
+    calling service, on its control socket (127.0.0.1:7720), so it needs
+    the phone permission, and it reads the address book that Contacts
+    keeps in /home/.contacts/contacts.vcf. It needs the GUI (start it
+    with gui); in the console use tel instead.
+
+    The header shows the phone's own number and its VoLTE registration:
+    VoLTE (registered, calls work), Registering, Registration failed or
+    No service. When telephonyd does not answer, a card says so.
+
+    Favourites: the contacts marked as favourites in Contacts. Tap one
+    to call its first number.
+
+    Recents: the call log, newest first, with the name (or the number),
+    Incoming, Outgoing or Missed, how long the call lasted and how long
+    ago it was. Missed calls are red and the tab shows how many there
+    are. Tap a call to call back.
+
+    Contacts: search by name or number; tap a contact to see its
+    numbers and tap a number to call it.
+
+    Keypad: the digits, * and #. The number is formatted as it is typed
+    and the contact it belongs to is shown under it. Delete takes off
+    the last digit; Call dials it. Call with nothing typed fills in the
+    last number called. The keyboard works too: digits, Shift+3 for #,
+    Shift+8 for *, Backspace and Enter.
+
+    Voicemail: visual voicemail from the carrier, new messages marked
+    and counted on the tab. Choose one, then Play (it is saved as
+    /tmp/vm-<id>.wav, opened with its default app and marked heard),
+    Mark heard, Call back or Delete.
+
+    A call coming in fills the screen with the caller's name and number
+    (No Caller ID when the number is hidden) and Answer, Decline and
+    Message (declines and opens Messages to the caller). Hotkey 1
+    answers and hotkey 2 declines. With a call already up (call
+    waiting) the choices are End & answer, Hold & answer and Decline.
+
+    During a call the screen shows the name and number, the time, HD for
+    a wideband call, Muted, and the codec and packet loss. Buttons: Mute,
+    Keypad (sends tones, for menus that say "press 1"), Speaker, Add
+    call (the keypad over the call; the new call puts the first on
+    hold), Hold or Resume, and with two calls Swap and Merge (a
+    conference), then End. When the last call ends the tab that was
+    open comes back.
+
+    Tapping a missed call notification opens Recents; a voicemail
+    notification opens Voicemail.
+
+OPTIONS
+    --number <number>
+        Open the keypad with this number typed in.
+    --call <number>
+        Call this number straight away.
+    --incoming <call id>
+        Show the incoming call screen for this call. telephonyd starts
+        Phone like this when a call rings in.
+
+EXAMPLES
+      dialer --call 611
+      dialer --number 2145550142
+
+SEE ALSO
+    phone, messages, contacts, cellular

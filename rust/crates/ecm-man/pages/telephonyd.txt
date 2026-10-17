@@ -1,0 +1,119 @@
+NAME
+    telephonyd - the phone's calling and texting daemon (IMS client)
+
+SYNOPSIS
+    telephonyd [--phone] [--no-mms] [--quiet]
+
+DESCRIPTION
+    The phone side of calls, texts and picture messages. telephonyd
+    runs on the phone (or a Terminal with a cellular modem) beside
+    celld. Every second it asks celld for the IMS bearer (the ims0
+    address and the carrier's P-CSCF); once it has one it registers
+    with the carrier's imsd over SIP (UDP 5060), proving the SIP
+    identity with the SIM card (IMS AKA), and learns the phone's
+    number. If the phone loses the cell it registers again when the
+    bearer comes back.
+
+    Then it places and takes VoLTE calls (HD voice when both ends
+    have it, voice on UDP ports from 40000), sends and receives texts
+    through the carrier's smscd, and sends and fetches picture
+    messages over HTTP from the carrier's mmscd (the URL comes with
+    the registration). An incoming text or call wakes a sleeping
+    phone. It keeps the messages and the call log in /var/telephony,
+    and saves received pictures and other parts under /home/Messages.
+
+    An ePhone starts telephonyd --phone by itself while celld runs.
+    On a Terminal with a modem start it yourself after celld:
+    telephonyd &, or add "telephonyd &" to /services.cfg. Only one
+    runs at a time. Apps, tel, sms and the Python / Lua phone module
+    talk to it on its control sockets; apps never touch the network
+    themselves.
+
+OPTIONS
+    --phone
+        Run as the ePhone's: report VoLTE and the number to the status
+        bar, show notifications (texts, missed calls, voicemail), open
+        the Phone app's incoming-call screen, and keep the phone awake
+        during a call.
+
+    --no-mms
+        Don't fetch picture messages (as mms = off). The carrier then
+        sends a text with a link instead.
+
+    --quiet
+        Don't print the log (it is still written).
+
+    -h, --help
+        A short usage.
+
+CONTROL SOCKETS
+    127.0.0.1, TCP 7720
+        Everything: calls, texts, the call log, voicemail. An app
+        needs the phone permission.
+
+    127.0.0.1, TCP 7726
+        Texts only (the sms permission): status, sms, mms, threads,
+        messages, read, delete, delete-thread and watch, with only
+        the message events.
+
+    One request line; the answer is ok or err <why>, body lines and
+    a line with a single dot. Text fields are percent-encoded (%20 a
+    space; - alone is empty). Requests:
+
+      status                     registration, number, counts
+      calls                      the live calls
+      dial <number> [hide]       a call (*67<n> also hides)
+      answer|hangup|decline <id>
+      hold <id> on|off, mute <id> on|off, swap, merge
+      dtmf <id> <digits>         keypad tones
+      speaker on|off
+      play <id> <wav>            a file to the far end
+      record <id> <secs> <wav>   the far end into a file
+      sms <to> <text>
+      mms <to,to...> <text|-> <file,file...|->
+      threads, messages <key> [n], read <key>
+      delete <id>, delete-thread <key>
+      log [n]                    the call log
+      voicemail, voicemail-fetch <id> <path>
+      voicemail-heard <id>, voicemail-delete <id>
+      forward all <number>, forward off
+      watch                      events, one per line
+
+    A thread's key is its other numbers, sorted, joined by commas.
+    Files given to play, record, mms and voicemail-fetch must be under
+    /home/ or /tmp/ (not /home/.contacts).
+
+FILES
+    /etc/telephonyd.toml
+        Optional settings, key = value lines:
+
+          sim = ""          # the SIM peripheral (default: the first)
+          mms = "auto"      # off: don't fetch picture messages
+          wideband = true   # false: no HD voice
+          speaker = ""      # the audio device for calls
+          mic = ""          # the microphone for calls
+          ringtone = "on"   # off: don't ring out loud
+
+    /var/telephony/messages.log, /var/telephony/calls.log
+        The messages and the call log.
+
+    /home/Messages/
+        Pictures, voice notes and cards received.
+
+    /var/log/telephonyd.log
+        The log (rotated at 64 KB).
+
+EXAMPLES
+      celld &
+      telephonyd &
+      tel
+      sms send +12145550143 hello
+
+NOTES
+    "no SIM peripheral": fit a SIM (the phone's tray or a modem's
+    slot). "control socket: ... (is telephonyd already running?)":
+    one is running already. Registered but no calls: check that the
+    carrier runs imsd and set up IMS in cored (cored ims).
+
+SEE ALSO
+    telephony, tel, sms, celld, cell, imsd, dialer, messages, contacts

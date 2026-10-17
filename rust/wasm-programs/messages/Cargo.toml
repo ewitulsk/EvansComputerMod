@@ -1,0 +1,18 @@
+[package]
+name = "messages"
+version = "0.1.0"
+edition = "2021"
+description = "Messages (dev.ecm.messages): conversations, threads with delivery status, compose with the SMS part counter, group MMS with pictures, voice notes and contact cards, over telephonyd's texts port. The app is ecm_tel_ui::messages; this is the program."
+
+[[bin]]
+name = "messages"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel-ui = { workspace = true }
+ecm-ui = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel = { workspace = true }
+ecm-audio = { workspace = true }

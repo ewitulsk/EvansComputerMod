@@ -71,7 +71,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     public static final String SHELL = "dev.ecm.phone";
     /** Apps that come with every phone: app id, the program in the server's wasm-bin that is its entry. */
     static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"},
-            {"dev.ecm.settings", "settings"}, {"dev.ecm.files", "files"}};
+            {"dev.ecm.settings", "settings"}, {"dev.ecm.files", "files"},
+            {"dev.ecm.dialer", "dialer"}, {"dev.ecm.messages", "messages"}, {"dev.ecm.contacts", "contacts"}};
     /** A celld report older than this no longer counts (the daemon reports every 5 s). */
     static final long CELL_REPORT_MS = 12_000;
     /** celld is not started again sooner than this after it exited. */
@@ -257,11 +258,15 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     }
 
     /**
-     * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps)
-     * and its Files (the documents folder).
+     * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps),
+     * its Files (the documents folder) and Phone, Messages and Contacts.
      */
     static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth", "mixer"),
-            "dev.ecm.files", List.of("files:documents"));
+            "dev.ecm.files", List.of("files:documents"),
+            // Phone, Messages and Contacts (docs/TELEPHONY.md): what they declare, so a call or a text never waits on a prompt.
+            "dev.ecm.dialer", List.of("phone", "contacts", "notifications"),
+            "dev.ecm.messages", List.of("sms", "contacts", "files:documents", "microphone", "notifications"),
+            "dev.ecm.contacts", List.of("contacts", "sms", "files:documents"));
 
     @Nullable
     private static byte[] resource(String path) throws IOException {

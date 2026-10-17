@@ -1,0 +1,17 @@
+[package]
+name = "contacts"
+version = "0.1.0"
+edition = "2021"
+description = "Contacts (dev.ecm.contacts): the phone's address book in a window. The app is ecm_tel_ui::contacts; this is the program."
+
+[[bin]]
+name = "contacts"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel-ui = { workspace = true }
+ecm-ui = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel = { workspace = true }

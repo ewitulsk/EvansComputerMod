@@ -1,0 +1,132 @@
+NAME
+    smscd - the carrier's text message centre (SMSC)
+
+SYNOPSIS
+    smscd start [--wait]
+
+    smscd stop | status | queue | log [n]
+
+    smscd config | config keys | config set <key> <value>...
+
+    smscd enable | disable
+
+DESCRIPTION
+    Stores and forwards the carrier's texts. It runs on the carrier's
+    IMS computer beside imsd and cored (SIP, UDP 5062). A phone's text
+    reaches it through imsd; smscd acknowledges it at once (the sender
+    sees Sent), stores it and delivers it to the recipient through
+    imsd, which wakes an idle phone. When the phone confirms, the
+    sender gets a report (Delivered) if it asked for one.
+
+    A recipient that is off or not registered keeps its texts here.
+    They go out as soon as imsd says the phone registered, and on a
+    back-off (30 seconds, doubling up to 10 minutes). A text expires
+    after validity minutes, and the sender gets a failure report. The
+    queue is saved after every change and reloaded at start, so a
+    restart loses nothing.
+
+    A text for another carrier's number goes out the same way: imsd's
+    border finds that carrier with ENUM and sends it there (signed
+    with the peering secret, see imsd), and that carrier's SMSC
+    stores it. A sender on the recipient's block list (the profile in
+    cored's HSS) is dropped quietly. A sender may submit at most
+    rate_per_min texts a minute; more are refused (congestion).
+
+    smscd also carries the WAP push notices mmscd sends for picture
+    messages (binary texts to port 2948), and writes one CDR line per
+    text submitted.
+
+    At start smscd asks cored's HSS (TCP 3868) for the carrier, the
+    domain and the P-CSCF address. With --wait it keeps asking until
+    cored answers (for boot); without it, it gives up after 5
+    seconds.
+
+COMMANDS
+    start [--wait]
+        Run smscd (background it: smscd start &).
+
+    stop, status, queue, log [n]
+        Ask the running smscd over its admin socket (127.0.0.1, TCP
+        7722). status: the domain, its SIP address, whether the HSS is
+        up, texts queued and submitted, the short codes programs
+        serve. queue: one line per stored text (msg id from to age
+        attempts). log: the last n lines (default 50).
+
+    config, config keys, config set <key> <value>...
+        Show /etc/smscd.toml with defaults filled in, explain the keys,
+        or change some. Restart smscd to apply.
+
+    enable, disable
+        Start (or stop starting) smscd at boot: the line
+        "smscd start --wait &" in /services.cfg.
+
+SHORT CODES
+    A text to a 5 or 6 digit number goes to a program instead of a
+    phone. The program connects to 127.0.0.1, TCP 7730 (on the smscd
+    computer) and sends lines; smscd answers each with ok or err:
+
+      register <code>             serve this code
+      reply <code> <to> <text>    answer a sender
+
+    Texts to the code arrive as lines "sms <code> <from> <text>". Text
+    fields are percent-encoded: %20 space, %0A newline, %25 percent.
+    The carrier's own balance service answers on 22225 (text BAL).
+
+CONFIG
+    /etc/smscd.toml, key = value lines.
+
+    hss = 127.0.0.1:3868
+        cored's HSS port.
+
+    hss_secret = ""
+        cored's hss_secret, when cored runs on another computer.
+
+    ip = ""
+        This computer's IMS address (default: the P-CSCF the HSS
+        names).
+
+    ims = ""
+        imsd (default ip:5060).
+
+    address = +10000000001
+        The SMSC's own number.
+
+    validity = 140
+        Minutes a text waits for an off phone (140 = 7 in-game days).
+
+    rate_per_min = 30
+        Texts a sender may submit per minute.
+
+    admin_port = 7722
+        The admin socket (127.0.0.1).
+
+    shortcode_port = 7730
+        The short-code socket for programs (127.0.0.1).
+
+FILES
+    /etc/smscd.toml
+        The settings.
+
+    /var/spool/smsc/queue
+        The stored texts.
+
+    /var/log/smscd.log
+        The log (rotated at 64 KB).
+
+    /var/log/cdr/smscd.cdr
+        One line per text submitted.
+
+EXAMPLES
+      smscd start &
+      smscd enable
+      smscd status
+      smscd queue
+      smscd config set validity 280 rate_per_min 60
+
+NOTES
+    "the HSS has no IMS set up (cored ims pool=...) and smscd.toml has
+    no ip": set up IMS in cored first. "unknown key" in the config
+    file names its line.
+
+SEE ALSO
+    telephony, imsd, mmscd, mrfd, cored, sms, messages

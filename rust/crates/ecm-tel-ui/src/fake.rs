@@ -41,6 +41,9 @@ pub struct FakeTel {
     pub next_id: u64,
     /// No telephonyd at all.
     pub down: bool,
+    /// telephonyd's clock (`status` says `now`): the times in calls, the log and messages are on it.
+    pub now_ms: u64,
+    pub speaker: bool,
 }
 
 impl FakeTel {
@@ -77,6 +80,8 @@ impl Tel for FakeTel {
                 format!("unread {}", self.threads.iter().map(|t| t.unread).sum::<u32>()),
                 format!("missed {}", self.log.iter().filter(|l| l.dir == "missed").count()),
                 format!("calls {}", self.calls.len()),
+                format!("speaker {}", self.speaker as u8),
+                format!("now {}", self.now_ms),
             ]),
             ["calls"] => ok(self.calls.iter().map(|c| c.line()).collect()),
             ["threads"] => ok(self.threads.iter().map(|t| t.line()).collect()),
@@ -100,6 +105,22 @@ impl Tel for FakeTel {
                 self.calls.retain(|c| c.id.to_string() != *i);
                 ok(vec![])
             }
+            ["hold", i, v] => {
+                if let Some(c) = self.calls.iter_mut().find(|c| c.id.to_string() == *i) {
+                    c.state = if *v == "on" { "held" } else { "active" }.into();
+                }
+                ok(vec![])
+            }
+            ["mute", i, v] => {
+                if let Some(c) = self.calls.iter_mut().find(|c| c.id.to_string() == *i) {
+                    c.muted = *v == "on";
+                }
+                ok(vec![])
+            }
+            ["speaker", v] => {
+                self.speaker = *v == "on";
+                ok(vec![])
+            }
             ["sms", to, text] => {
                 let id = self.next_id;
                 self.next_id += 1;
@@ -110,10 +131,20 @@ impl Tel for FakeTel {
                 }
                 ok(vec![format!("sms {id}")])
             }
-            ["mms", to, ..] => {
+            ["mms", to, text, files] => {
                 let id = self.next_id;
                 self.next_id += 1;
-                let _ = to;
+                let mut nums: Vec<String> = to.split(',').map(ecm_tel::ctl::dec).filter(|n| !n.is_empty() && *n != self.msisdn).collect();
+                nums.sort();
+                nums.dedup();
+                let key = nums.join(",");
+                let text = ecm_tel::ctl::dec(text);
+                let files: Vec<String> = if *files == "-" { Vec::new() } else { files.split(',').map(ecm_tel::ctl::dec).collect() };
+                let preview = if text.is_empty() { "Picture message".to_string() } else { text.clone() };
+                self.messages.entry(key.clone()).or_default().push(MsgLine { id, incoming: false, from: self.msisdn.clone(), time_ms: self.now_ms, status: "sending".into(), mms: true, text, files });
+                if !self.threads.iter().any(|t| t.key == key) {
+                    self.threads.insert(0, ThreadLine { key, unread: 0, time_ms: self.now_ms, preview });
+                }
                 ok(vec![format!("mms {id}")])
             }
             _ => ok(vec![]),

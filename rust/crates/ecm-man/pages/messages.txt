@@ -1,0 +1,67 @@
+NAME
+    messages - the Messages app: texts and picture messages
+
+SYNOPSIS
+    messages [--to number[,number]] [--thread key] [--text text]
+    messages --vcard path
+
+DESCRIPTION
+    Opens Messages (dev.ecm.messages), the phone's texting app. It
+    needs the GUI (start it with gui); in the console use sms instead.
+    It talks to telephonyd's texts-only port (127.0.0.1:7726, the sms
+    permission), so telephonyd must be running (telephonyd --phone &).
+
+    Conversations: every thread, newest first, with the name from
+    Contacts (or the number), the last message, how long ago, and how
+    many are unread. A group shows its people as Alex, Bo +1. The
+    header shows this phone's number. New starts a message.
+
+    Thread: your messages on the right, theirs on the left. Under each
+    one you sent: Sending, Sent, Delivered or Failed (in red, with
+    Retry, which sends it again). In a group the sender's name is above
+    each received message. Opening a thread marks it read. Pictures
+    show in the bubble: View opens one full screen, Save to Files copies
+    it to /home/Pictures. Voice notes have Play. Contact cards have Add
+    to Contacts. Delete (then Delete again to confirm) removes the
+    whole conversation. + starts a new message to the same people, to
+    attach something.
+
+    New message: type a name or number in To (contacts are suggested;
+    Add takes a typed number). Several people make a group. Under the
+    text a counter shows the characters and how many SMS parts it
+    takes: 160 characters fit one part, longer texts go in parts of
+    153; with characters outside the GSM alphabet (accents, symbols)
+    it is 70, then 67. Picture and .wav attach a file chosen in the
+    file picker; Record records a voice note from the microphone (Stop
+    ends it, at most 60 seconds); Contact attaches a contact card.
+    One person and only text goes as an SMS; pictures, voice notes,
+    cards or several people go as an MMS.
+
+    Tapping a message notification opens that thread with a reply box
+    at the top; the "Message not sent" notification opens the list.
+
+OPTIONS
+    --to number[,number]
+        Start a new message to these numbers.
+    --thread key
+        Open this conversation (its numbers, sorted, joined by commas).
+    --text text
+        Put this text in the new message or reply.
+    --vcard path
+        Start a new message with this contact card attached (Send in
+        Messages in Contacts does this).
+
+FILES
+    /home/Messages
+        Received pictures, voice notes and cards (kept by telephonyd).
+    /home/Messages/out
+        Voice notes recorded and cards attached here.
+    /home/Pictures
+        Where Save to Files puts pictures.
+
+EXAMPLES
+      messages --to +12145550142 --text "on my way"
+      messages --to +12145550142,+12145550143
+
+SEE ALSO
+    sms, telephonyd, telephony, contacts, dialer, phone

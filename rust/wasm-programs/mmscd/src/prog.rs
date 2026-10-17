@@ -10,6 +10,9 @@ use ecm_tel_net::smtp;
 use ecm_tel_net::sys::{self, HssClient, HttpServer, Log};
 
 const PATH: &str = "/etc/mmscd.toml";
+/// The Browser links' key (made once).
+const LINK_KEY: &str = "/var/mmscd/link.key";
+
 const KEYS: &[(&str, &str)] = &[
     ("hss", "127.0.0.1:3868"),
     ("hss_secret", ""),
@@ -33,7 +36,7 @@ const HELP: &[(&str, &str)] = &[
     ("expiry", "minutes content waits to be fetched (140 = 7 in-game days)"),
     ("peers", "other carriers' MMSCs (MM4): domain/secret, ... (the same secrets as imsd's peers)"),
     ("public_peering", "true: also MM4 from carriers that are not listed"),
-    ("mm4_port", "the SMTP port MM4 arrives on"),
+    ("mm4_port", "the SMTP port MM4 arrives on (other carriers always send to 25: change it only to test)"),
     ("admin_port", "the admin socket (127.0.0.1)"),
 ];
 
@@ -112,7 +115,15 @@ fn run(wait: bool) {
         let (d, s) = item.split_once('/').unwrap_or_else(|| fail(format!("peer '{item}': domain/secret")));
         cfg.peers.push((d.to_ascii_lowercase(), s.to_string()));
     }
-    cfg.secret = hex8(&ecm_cell_net::random::<8>());
+    // The key of the Browser links (/v/<id>?r=...): kept, so links in texts still work after a restart.
+    cfg.secret = match std::fs::read_to_string(LINK_KEY).ok().map(|s| s.trim().to_string()).filter(|s| s.len() == 16) {
+        Some(k) => k,
+        None => {
+            let k = hex8(&ecm_cell_net::random::<8>());
+            let _ = sys::write_file(LINK_KEY, k.as_bytes());
+            k
+        }
+    };
     let mut admin = AdminServer::bind(port(&c, "admin_port")).unwrap_or_else(|e| fail(format!("admin socket: {e} (is mmscd already running?)")));
     let sip = sys::udp_bind(cfg.sip_port).unwrap_or_else(|e| fail(e));
     let mut http = HttpServer::bind(cfg.http_port).unwrap_or_else(|e| fail(e));

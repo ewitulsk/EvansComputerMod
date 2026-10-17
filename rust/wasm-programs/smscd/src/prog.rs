@@ -161,7 +161,7 @@ fn run(wait: bool) {
                     for l in b.lines.push(&d).unwrap_or_default() {
                         let w: Vec<&str> = l.splitn(4, ' ').collect();
                         let r = match w.as_slice() {
-                            ["register", code] if (3..=6).contains(&code.len()) && code.bytes().all(|x| x.is_ascii_digit()) => {
+                            ["register", code] if (5..=6).contains(&code.len()) && code.bytes().all(|x| x.is_ascii_digit()) => {
                                 b.codes.push(code.to_string());
                                 log.line(&format!("short code {code} registered"));
                                 "ok".to_string()
@@ -170,7 +170,7 @@ fn run(wait: bool) {
                                 smsc.short_code_reply(code, to, &crate::dec(text), now);
                                 "ok".to_string()
                             }
-                            _ => "err register <code> | reply <code> <to> <text>".to_string(),
+                            _ => "err register <5-6 digit code> | reply <code> <to> <text>".to_string(),
                         };
                         sys::send_all(b.fd, format!("{r}\n").as_bytes());
                     }
