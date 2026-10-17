@@ -39,7 +39,7 @@ fn stdin_nonblocking(on: bool) {
     let _ = on;
 }
 
-/// Live meters: redraw twice a second until q, Esc or Ctrl+C.
+/// Live meters: redraw twice a second until q, Ctrl+C or Esc (Shift+Esc on a Terminal: plain Esc closes its screen).
 fn watch() {
     let mut out = std::io::stdout();
     // The alternate screen hands us the keys (Ctrl+C included) one by one.

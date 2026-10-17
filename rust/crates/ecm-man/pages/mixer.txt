@@ -62,7 +62,9 @@ COMMANDS
         Forget an app's volume, mute and route.
 
     watch
-        Live meters, redrawn twice a second. q, Esc or Ctrl+C quits.
+        Live meters, redrawn twice a second. q, Ctrl+C or Shift+Esc
+        quits (plain Esc closes the Terminal screen; Shift+Esc sends
+        Esc to the program).
 
     -h
         The list of commands.
