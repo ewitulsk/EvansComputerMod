@@ -799,6 +799,16 @@ fn ims_bearer_comes_with_the_attach_and_reaches_only_the_ims_core() {
     let r = core.reach("+12145550142").unwrap();
     assert_eq!((r.imsi.as_str(), r.ims_ip, r.idle), ("310150000000001", Some([10, 250, 0, 2]), false));
     assert_eq!(core.imsi_at([10, 250, 0, 2]), Some("310150000000001"));
+    // the MMSC's header enrichment knows the phone by its data address and by its IMS address (an MMS
+    // POST to an MMSC on the P-CSCF's address leaves on ims0)
+    let data_ip = w.ue_ip(0).unwrap();
+    let core = w.core.as_mut().unwrap();
+    for ip in [data_ip, ims.ip] {
+        let a = core.hss(&format!("IPD {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]), 0).unwrap();
+        assert!(a.contains("msisdn +12145550142"), "IPD {:?}: {}", ip, a);
+    }
+    assert!(core.hss("IPD 10.250.0.77", 0).is_err(), "nobody there");
+    let core = w.core.as_ref().unwrap();
     // SIP to the P-CSCF goes out; the same address towards the internet is dropped
     let used0 = core.db().subs["310150000000001"].used;
     let before = w.lan.len();

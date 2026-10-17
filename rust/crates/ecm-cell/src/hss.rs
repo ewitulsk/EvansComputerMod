@@ -19,7 +19,7 @@
 //! | `UDR <who>` | Sh user-data | `imsi msisdn label used quota cfu cfb cfnr cfnrc cw clir dnd vm block port` |
 //! | `PUR <who> <feature> <value>` | Sh profile-update | `ok` (features as `cored feature`) |
 //! | `IPR <ims-ip>` | (P-CSCF) who is at an IMS address | `imsi`, `msisdn` |
-//! | `IPD <data-ip>` | (P-GW header enrichment, for the MMSC) who is at a default-bearer address | `imsi`, `msisdn` |
+//! | `IPD <data-ip>` | (P-GW header enrichment, for the MMSC) who is at a default-bearer address, or at an IMS address (the phone's route to the P-CSCF also carries the MMSC when they share the core's address) | `imsi`, `msisdn` |
 //! | `AAR <ue-ip> <ue-port> <remote-ip> <remote-port>` | Rx auth-request: a voice bearer | `bearer <id>`, `sent 0\|1` |
 //! | `STR <ue-ip> <bearer>` | Rx session-termination | |
 //! | `NUM` | numbering and the IMS setup | `cc`, `domain`, `pcscf`, `ims_pool`, `mmsc`, `carrier`, `block <NPA-NXX>` lines |
@@ -138,7 +138,8 @@ impl Core {
             }
             ["IPD", ip] => {
                 let ip = parse_ip(ip).ok_or("bad address")?;
-                let imsi = self.imsi_at_data(ip).ok_or("no data session at that address")?.to_string();
+                // Both are addresses the core gave out, so a phone still can't send as another.
+                let imsi = self.imsi_at_data(ip).or_else(|| self.imsi_at(ip)).ok_or("no data session at that address")?.to_string();
                 let msisdn = self.db().subs[&imsi].ims.msisdn.clone();
                 Ok(format!("imsi {}\nmsisdn {}\n", imsi, dash(&msisdn)))
             }
