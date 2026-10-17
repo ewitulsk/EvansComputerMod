@@ -136,6 +136,9 @@ fn another_carrier_calls_texts_and_sends_a_picture_through_enum_and_mm4() {
     n.phones[1].ua.hangup(id, now).unwrap();
     n.pump();
     assert!(n.run_until(2000, |n| n.phones[dee].ua.calls().is_empty()));
+    // each side's CDR says the call crossed the border, and which way
+    let all: Vec<&String> = n.carriers.iter().flat_map(|c| c.cdrs.iter()).collect();
+    assert!(all.iter().any(|c| c.contains("route=border-out")) && all.iter().any(|c| c.contains("route=border-in")), "{all:?}");
     // a text
     let now = n.now;
     let sid = n.phones[dee].ua.send_sms(BO, "hello from lakeline", now).unwrap();

@@ -307,6 +307,8 @@ struct Call {
     forwards: u8,
     /// The B leg is a voicemail deposit / an announcement / a service.
     to_service: bool,
+    /// The B leg went out through the border to another carrier (the CDR's route).
+    via_peer: bool,
     answer_deadline: Option<u64>,
     started_ms: u64,
     answered_ms: Option<u64>,
@@ -1007,6 +1009,7 @@ impl Ims {
             dialled: target.clone(),
             forwards: 0,
             to_service: false,
+            via_peer: false,
             answer_deadline: None,
             started_ms: now,
             answered_ms: None,
@@ -1216,6 +1219,9 @@ impl Ims {
     }
 
     fn call_peer(&mut self, call: u64, domain: &str, border: Addr, secret: Option<String>, now: u64) {
+        if let Some(c) = self.calls.get_mut(&call) {
+            c.via_peer = true;
+        }
         let target = self.calls.get(&call).map(|c| c.target.clone()).unwrap_or_default();
         let uri = number_uri(&target, domain);
         self.start_b(call, LegKind::Peer, uri, border, &target, None, &[], Some(secret), now);
@@ -1340,7 +1346,16 @@ impl Ims {
             Outcome::Rejected => "rejected",
             Outcome::Failed => "failed",
         };
-        let via = if c.to_service { "service" } else { "direct" };
+        // a service on mrfd, out through the border to another carrier, in from one, or phone to phone
+        let via = if c.to_service {
+            "service"
+        } else if c.via_peer || c.b.as_ref().is_some_and(|b| matches!(b.kind, LegKind::Peer)) {
+            "border-out"
+        } else if matches!(c.a.kind, LegKind::Peer) {
+            "border-in"
+        } else {
+            "direct"
+        };
         self.out.push(ImsOut::Cdr(format!(
             "call start={} answer={} end={} dur={} from={} to={} dialled={} result={} route={} hidden={}",
             c.started_ms / 1000,

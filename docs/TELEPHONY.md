@@ -95,7 +95,7 @@ Requests from a phone must come from the IMS address registered for its number, 
 - **In a call.** Hold (`a=sendonly`), mute (local), swap, and merge: a `REFER` with `merge=<call-id>` moves both calls into an mrfd conference. DTMF works both ways.
 - **CDRs.** Every call ends with a line in `/var/log/cdr/imsd.cdr`:
   ```
-  call start=<s> answer=<s|-> end=<s> dur=<s> from=<n> to=<n> dialled=<what was typed> result=<answered|busy|...> route=<direct|service> hidden=<0|1>
+  call start=<s> answer=<s|-> end=<s> dur=<s> from=<n> to=<n> dialled=<what was typed> result=<answered|busy|...> route=<direct|service|border-out|border-in> hidden=<0|1>
   ```
   smscd writes `/var/log/cdr/smscd.cdr` and mmscd writes `/var/log/cdr/mmscd.cdr`. There is no billing.
 
@@ -279,5 +279,4 @@ telephonyd itself reads and writes the files a client names only under `/home/` 
 
 - telephonyd's MMS sends and fetches and its visual-voicemail requests are blocking HTTP inside its main loop (up to 30 s). A call in progress stalls meanwhile.
 - **Display pipeline (#86):** call audio is live: a speaker drain that carries the `phone` role goes out at once with `SpeakerAudioPacket.FLAG_LIVE`, not on a video's playout delay (`tel_call` checks it while a video plays). telephonyd still writes its 20 ms frames straight into the mixer; its RTP timestamps are not mapped to the shared clock.
-- **CDRs** say `route=direct` for calls across the border too.
 - No emergency calls, no roaming, no landlines, and no billing beyond CDRs.
