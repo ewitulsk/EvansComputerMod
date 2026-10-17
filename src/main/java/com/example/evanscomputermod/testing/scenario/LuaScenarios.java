@@ -65,7 +65,9 @@ public final class LuaScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     private static final BlockPos SPEAKER = new BlockPos(-1, 1, 0);
-    private static final String COUNTER_APP = "dev.lua.counter";
+    /** The compositor names a window after the app that opened it: for a program run with
+     *  {@code gui launch}, its process name ("lua"), not the id passed to {@code ui.App}. */
+    private static final String COUNTER_APP = "lua";
 
     static {
         for (Scenario s : List.of(basics(), modules(), ui())) ALL.put(s.name, s);
