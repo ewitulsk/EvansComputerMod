@@ -131,6 +131,14 @@ public final class TerminalScenarios {
 
     private static final String LIVE_PROMPT = "^/\\S* > \\s*$";
 
+    /**
+     * A command that prints nothing has run: its line followed directly by a
+     * new prompt (an expect on the prompt alone can match before it starts).
+     */
+    private static String ran(String line) {
+        return "^/\\S* > " + Pattern.quote(line) + "\\s*\\n/\\S* > \\s*$";
+    }
+
     // ------------------------------------------------------------ terminal_line_editing
 
     private static Scenario lineEditing() {
@@ -308,7 +316,7 @@ public final class TerminalScenarios {
                 .expect("pc", "^dig\\s+ask DNS servers", "dig is found")
                 .note("less: page a file")
                 .send("pc", "man -P keys > /home/keys.txt")
-                .expect("pc", PlayerKit.PROMPT, "the page is written to a file")
+                .await(r -> shows(r, ran("man -P keys > /home/keys.txt")), "the page is written to a file", 10_000)
                 .send("pc", "less /home/keys.txt")
                 .await(r -> shows(r, " keys\\.txt 1-\\d+/\\d+"), "less shows it", 10_000)
                 .mutate(r -> type(r, "q"), "press q")
@@ -329,11 +337,11 @@ public final class TerminalScenarios {
                 .expect("pc", "^cat: /home/out\\.txt: ", "cat can't find it")
                 .note("echo > file writes it instead of the screen")
                 .send("pc", "echo hello pipes > /home/out.txt")
-                .expect("pc", PlayerKit.PROMPT, "nothing printed")
+                .await(r -> shows(r, ran("echo hello pipes > /home/out.txt")), "nothing printed", 10_000)
                 .send("pc", "cat /home/out.txt")
                 .expect("pc", "^hello pipes$", "the file holds the line")
                 .send("pc", "echo second line >> /home/out.txt")
-                .expect("pc", PlayerKit.PROMPT, "nothing printed")
+                .await(r -> shows(r, ran("echo second line >> /home/out.txt")), "nothing printed", 10_000)
                 .send("pc", "cat /home/out.txt | grep sec")
                 .expect("pc", "^second line$", "grep got the file through the pipe", "^hello pipes$")
                 .send("pc", "cat /home/out.txt | wc")
@@ -380,7 +388,7 @@ public final class TerminalScenarios {
                 .send("pc", "echo status=$?")
                 .expect("pc", "^status=127$", "$? is 127 after an unknown command")
                 .send("pc", "NAME=world")
-                .expect("pc", PlayerKit.PROMPT, "set a variable")
+                .await(r -> shows(r, ran("NAME=world")), "set a variable", 10_000)
                 .send("pc", "echo hello $NAME '$NAME' [$NOTSET]")
                 .expect("pc", "^hello world \\$NAME \\[\\]$", "expanded, not in single quotes, unknown is empty")
                 .note("<command> --help shows its manual summary")
