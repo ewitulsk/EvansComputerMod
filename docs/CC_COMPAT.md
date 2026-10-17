@@ -67,11 +67,27 @@ CC source is copied.
 
 Errors from these functions are plain strings, as CC's are, so programs can match and print them.
 
+## Phase 3: any inventory, tank or battery is a peripheral (done)
+
+A block next to a computer that has no peripheral of its own, but has NeoForge's item, fluid or energy capability, now attaches as a generic peripheral. That covers a vanilla chest, a hopper or a cauldron, and any mod's machine. The block's mod needs no code. This is `computer/peripheral/generic/`, 1.21.1 only: 26.1's NeoForge has a different transfer API.
+
+| Type (the first the block has) | Methods (snake_case; Lua also takes CC's camelCase) |
+|---|---|
+| `inventory` | `size()`, `list()` (`{slot = {name, count}}`), `get_item_detail(slot)` (`name`, `count`, `displayName`, `maxCount`, `damage`/`maxDamage`, `tags`), `get_item_limit(slot)`, `push_items(to, from_slot, limit?, to_slot?)`, `pull_items(from, from_slot, limit?, to_slot?)` |
+| `fluid_storage` | `tanks()` (`{ {name, amount}, ... }`, mB), `push_fluid(to, limit?, fluid?)`, `pull_fluid(from, limit?, fluid?)` |
+| `energy_storage` | `get_energy()`, `get_energy_capacity()` (FE) |
+
+- **Mixed blocks:** a block with several capabilities gets the methods of each, under the first type it has, in the order above.
+- **Slots** are numbered from 1 in both languages, as in CC.
+- **Moving things:** `to` and `from` name another attached peripheral. Errors use CC's wording: `Target 'x' does not exist`, `Target 'x' is not an inventory`, `Slot out of range (1-27)`.
+- **CC method names in Lua:** a wrapped peripheral also has camelCase aliases, so `chest.getItemDetail` calls `get_item_detail`. `peripheral.call(name, "pushItems", ...)` maps the name the same way.
+- **Visual Programmer:** all three types are in its catalog.
+- **Not covered:** CC's other generic sources (`getItemDetail`'s NBT hash, custom generic methods from other mods). Those arrive with the CC bridge.
+
 ## Later phases
 
-1. Our own generic peripherals over NeoForge item, fluid and energy capabilities.
-2. A floppy Disk Drive and disks of our own, plus reading CC floppies when CC is installed.
-3. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
-4. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
+1. A floppy Disk Drive and disks of our own, plus reading CC floppies when CC is installed.
+2. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
+3. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
 
-Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2).
+Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2), `generic_chests` and `generic_tanks` (phase 3).
