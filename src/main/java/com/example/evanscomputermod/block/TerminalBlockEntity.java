@@ -863,6 +863,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (c.getUiManager().sceneHub().onAck(player, displayId, epoch, generation, missing, clientRecvUs)) syncToClients();
     }
 
+    @Override
+    public java.util.Map<Integer, DisplaySyncHub> syncHubs() {
+        return java.util.Map.of(DISPLAY_OWN, terminalSync, DISPLAY_ATTACHED, screenSync);
+    }
+
     /** The sync hub of one display (tests play clients through it). */
     public DisplaySyncHub getSyncHub(int displayId) {
         return displayId == DISPLAY_ATTACHED ? screenSync : terminalSync;

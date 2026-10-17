@@ -196,6 +196,19 @@ public final class DisplaySyncHub {
                      BiConsumer<UUID, TerminalDeltaPacket> send) {
         TerminalDisplay display = src.display();
         if (display == null || viewerIds.isEmpty()) return;
+        long t0 = System.nanoTime();
+        try {
+            syncPass(computerId, src, display, viewerIds, send);
+        } finally {
+            // Display work should never run on the server thread any more (Part A); count it if it does.
+            if (com.example.evanscomputermod.computer.pipeline.DisplayPump.isServerThread(Thread.currentThread())) {
+                com.example.evanscomputermod.computer.pipeline.DisplayPump.noteServerThread(System.nanoTime() - t0);
+            }
+        }
+    }
+
+    private void syncPass(UUID computerId, Source src, TerminalDisplay display, Collection<UUID> viewerIds,
+                          BiConsumer<UUID, TerminalDeltaPacket> send) {
         List<UUID> to = new ArrayList<>();
         List<TerminalDeltaPacket> out = new ArrayList<>();
         long nowMs = System.currentTimeMillis();

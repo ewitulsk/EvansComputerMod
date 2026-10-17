@@ -16,7 +16,7 @@
 
 version = 1
 # UI protocol version spoken over ui_* fds (abi/ui-protocol.toml `version`).
-ui_protocol_version = 1
+ui_protocol_version = 2
 
 # --- displays --------------------------------------------------------------
 # target: 0 = the Terminal's own screen, 1 = the attached Screen cluster.
@@ -48,6 +48,13 @@ ui_protocol_version = 1
 #                      60 Hz, alpha, touch (clicking the wall -> mouse_poll)
 # color_flags: 1 two-tone, 2 indexed8, 4 rgb565, 8 rgba, 16 alpha.
 
+# Timed presentation: a double-buffered display keeps a presentation queue.
+# gfx_present shows the back buffer now (after any frames already queued);
+# gfx_present_at queues it for a time on the program's monotonic clock, so
+# players see each frame on time even when the server or the network hitch
+# (docs/gui/DISPLAY_PIPELINE_SPEC.md part C). gfx_queue_flush drops what is
+# queued; gfx_set_hint says whether frames may be sent lossy (video).
+
 [imports.display]
 gfx_init         = { params = ["i32", "i32", "i32"],               results = ["i32"], doc = "(target, w, h) single-buffered indexed8 (or the format set with gfx_set_format first)" }
 gfx_init2        = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(target, w, h, format, flags) flags: 1 = double-buffered. Clears to 0, RGB332 palette, mode 1" }
@@ -60,6 +67,10 @@ gfx_wait_vblank  = { params = ["i32"],                             results = ["i
 gfx_set_refresh  = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, hz) -> rate granted (clamped to the server maximum)" }
 gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, tier (was padding: panel tier 1-3, 0 = no panel); u64 vblank, presented" }
 gfx_modes        = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) the modes the display's panel advertises, 48 bytes = 12 x u32 LE: tier, text_cols, text_rows, max_width, max_height, scale, refresh_hz, color_flags, flags (bit 0 touch), tone_rgb, portrait_width, portrait_height. Screen target: max = the wall's resolution, no text grid / portrait (0). -4 without a panel or wall" }
+gfx_present_at   = { params = ["i32", "i32", "i64"],               results = ["i64"], doc = "(target, flags, pts_us) queue the back buffer to be shown at pts_us (microseconds on the program's WASI monotonic clock, clock_time_get MONOTONIC). Double-buffered displays only. pts_us <= now with an empty queue shows it at once (= gfx_present). flags 1 = wait for queue space instead of failing with -11 (EAGAIN). At most 12 frames and 500 ms ahead (server config display.queueFrames / display.queueMs). -> frames queued; -11 queue full, -22 single-buffered display, -3 not the owner, -5 interrupted" }
+gfx_queue_flush  = { params = ["i32"],                             results = ["i32"], doc = "(target) drop every queued frame not yet shown (seek, pause, stop) -> frames dropped" }
+gfx_set_hint     = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, hint) how frames may travel to players: 0 auto, 1 exact (never lossy), 2 motion (video: lossy allowed)" }
+gfx_queue_state  = { params = ["i32"],                             results = ["i64"], doc = "(target) frames queued << 32 | ms the last queued frame is ahead of now; -1 unknown target. (gfx_info's former padding word is the panel tier, so the queue has its own call.)" }
 screen_query_dims       = { params = ["i32"], results = ["i32"], doc = "(out) u32 width, height of the attached Screen cluster; -1 if none" }
 screen_set_power        = { params = ["i32"], results = [],      doc = "(on) power the Screen cluster" }
 screen_set_pixel_format = { params = ["i32"], results = [],      doc = "(format) gfx_set_format(1, format)" }
@@ -69,7 +80,8 @@ screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], d
 # The host decodes video files (MP4, MKV, WebM, MOV) with FFmpeg and scales each
 # frame to the size given at open, in a display pixel format (0 indexed8 RGB332,
 # 1 rgba8888, 2 rgb565). Frames go either straight to a display
-# (video_decode_to_gfx: the program owns it, as with gfx_init) or into the
+# (video_decode_to_gfx: the program owns it, as with gfx_init; video_decode_to_back:
+# into a double-buffered display's back buffer, for gfx_present_at) or into the
 # program's memory (video_decode_frame: for apps that show it in a UI canvas).
 # Sound is off until video_audio_open; then video_read_audio gives s16le PCM
 # aligned with the video: the first byte after open or a seek is at the stream
@@ -86,6 +98,7 @@ video_open          = { params = ["i32", "i32", "i32", "i32", "i32"], results = 
 video_get_info      = { params = ["i32", "i32"], results = ["i32"], doc = "(handle, out) 32 bytes LE: u32 width, height, fps_num, fps_den; u64 frame_count, duration_ms (of the file, not the output)" }
 video_decode_to_gfx = { params = ["i32", "i32"], results = ["i64"], doc = "(handle, target) next frame onto the display -> pts ms, -1 end, -2 error" }
 video_decode_frame  = { params = ["i32", "i32", "i32"], results = ["i64"], doc = "(handle, buf, cap) next frame into buf (w*h*bytes per pixel; a smaller cap is an error) -> pts ms, -1 end, -2 error" }
+video_decode_to_back = { params = ["i32", "i32"], results = ["i64"], doc = "(handle, target) next frame into the back buffer of a double-buffered display without showing it (then gfx_present / gfx_present_at). The display must be init2'd double-buffered at the decoder's output size and format. -> pts ms, -1 end, -2 error" }
 video_seek          = { params = ["i32", "i64"], results = ["i32"], doc = "(handle, pts_ms) exact seek; audio restarts there" }
 video_audio_open    = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(handle, rate 8000..48000, channels 1|2) start decoding sound as s16le -> 0, -4 no audio stream" }
 video_read_audio    = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(handle, buf, cap) queued PCM (whole sample frames, read ahead in the file as needed) -> bytes, 0 at the end" }

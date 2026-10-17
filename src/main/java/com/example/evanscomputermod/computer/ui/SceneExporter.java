@@ -168,6 +168,12 @@ public final class SceneExporter {
         }
     }
 
+    /** The surface a scene id names, or null (a client's report about a surface that is gone). */
+    Surface surfaceOf(int sceneId) {
+        for (Map.Entry<Surface, Integer> e : ids.entrySet()) if (e.getValue() == sceneId) return e.getKey();
+        return null;
+    }
+
     // =========================================================== timed frames (protocol v2)
 
     private int sceneId(Surface s) {

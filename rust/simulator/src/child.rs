@@ -1195,6 +1195,10 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "gfx_set_refresh", |_c: C<'_>, _t: i32, _hz: i32| -> i32 { -4 })?;
     l.func_wrap(E, "gfx_info", |_c: C<'_>, _t: i32, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "gfx_modes", |_c: C<'_>, _t: i32, _o: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_present_at", |_c: C<'_>, _t: i32, _f: i32, _p: i64| -> i64 { -4 })?;
+    l.func_wrap(E, "gfx_queue_flush", |_c: C<'_>, _t: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_set_hint", |_c: C<'_>, _t: i32, _h: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_queue_state", |_c: C<'_>, _t: i32| -> i64 { -1 })?;
     l.func_wrap(E, "screen_query_dims", |_c: C<'_>, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "screen_set_power", |_c: C<'_>, _on: i32| {})?;
     l.func_wrap(E, "screen_set_pixel_format", |_c: C<'_>, _f: i32| {})?;
@@ -1209,6 +1213,7 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_seek", |_c: C<'_>, _h: i32, _p: i64| -> i32 { -1 })?;
     l.func_wrap(E, "video_close", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_decode_frame", |_c: C<'_>, _h: i32, _b: i32, _n: i32| -> i64 { -2 })?;
+    l.func_wrap(E, "video_decode_to_back", |_c: C<'_>, _h: i32, _t: i32| -> i64 { -2 })?;
     l.func_wrap(E, "video_audio_open", |_c: C<'_>, _h: i32, _r: i32, _ch: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_read_audio", |_c: C<'_>, _h: i32, _b: i32, _n: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_audio_source", |_c: C<'_>, _h: i32| -> i32 { -1 })?;

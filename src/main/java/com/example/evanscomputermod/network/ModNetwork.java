@@ -106,6 +106,18 @@ public class ModNetwork {
                 UiScenePackets.Step.STREAM_CODEC,
                 (packet, ctx) -> com.example.evanscomputermod.client.ClientUiSceneHooks.handleStep(packet, ctx)
         );
+        // Client feedback (Part F): a scroll the client already shows, for the app to confirm.
+        network.playToServer(
+                UiScrollPacket.TYPE,
+                UiScrollPacket.STREAM_CODEC,
+                UiScrollPacket::handle
+        );
+        // The server's playout cap (display.maxPlayoutMs), sent when a player joins.
+        registrar.playToClient(
+                DisplayCapsPacket.TYPE,
+                DisplayCapsPacket.STREAM_CODEC,
+                DisplayCapsPacket::handle
+        );
         network.playToServer(
                 UiScenePackets.Ack.TYPE,
                 UiScenePackets.Ack.STREAM_CODEC,

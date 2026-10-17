@@ -552,6 +552,12 @@ public final class UiManager implements CompositorHost {
         computer.requestUiSync();
     }
 
+    /** A client scrolled a scroll container of the GUI it draws (UiScrollPacket). */
+    public void scrolled(int sceneSurface, int node, int x, int y) {
+        Compositor c = compositor;
+        if (c != null) c.scrolled(sceneSurface, node, x, y);
+    }
+
     // ================================================================= app manager hooks
 
     /**

@@ -14,6 +14,12 @@
 //! * The display refreshes at [`set_refresh`] Hz. [`wait_vblank`] and
 //!   `present(.., PRESENT_WAIT_VBLANK)` sleep until the next vertical blank.
 //! * [`info`] reads the current mode and the vblank / presented counters.
+//! * Timed presentation (double-buffered displays): [`present_at`] queues the
+//!   back buffer to be shown at a time on the program's monotonic clock
+//!   ([`monotonic_us`]), so players see each frame on time even when the
+//!   server or the network hitch. [`queue_flush`] drops what is queued (seek,
+//!   pause), [`queue_state`] says how full the queue is and [`set_hint`] says
+//!   whether frames may travel lossy ([`HINT_MOTION`] for video).
 //!
 //! The older calls ([`init`], [`set_screen_pixel_format`]) still work: they
 //! are a single-buffered display.
@@ -54,6 +60,19 @@ extern "C" {
     fn gfx_set_refresh(target: i32, hz: i32) -> i32;
     fn gfx_info(target: i32, out_ptr: i32) -> i32;
     fn gfx_modes(target: i32, out_ptr: i32) -> i32;
+    fn gfx_present_at(target: i32, flags: i32, pts_us: i64) -> i64;
+    fn gfx_queue_flush(target: i32) -> i32;
+    fn gfx_set_hint(target: i32, hint: i32) -> i32;
+    fn gfx_queue_state(target: i32) -> i64;
+}
+
+// The WASI clock the host measures presentation times on. Declared with the
+// same wasm signature wasi-libc / std use for it, so the imports merge.
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "wasi_snapshot_preview1")]
+extern "C" {
+    #[link_name = "clock_time_get"]
+    fn wasi_clock_time_get(id: i32, precision: i64, time_ptr: i32) -> i32;
 }
 
 /// Pixel format codes for [`blit_rect`]. Values must match the host's
@@ -67,6 +86,17 @@ pub const FORMAT_RGB565: i32 = 2;
 pub const FLAG_DOUBLE_BUFFER: i32 = 1;
 /// [`present`] flag: wait for the next vertical blank before flipping.
 pub const PRESENT_WAIT_VBLANK: i32 = 1;
+/// [`present_at`] flag: wait for room in the queue instead of failing with
+/// [`GfxError::Again`].
+pub const PRESENT_AT_WAIT: i32 = 1;
+
+/// [`set_hint`] values: how a display's frames may travel to players.
+/// Auto: exact, lossy (JPEG) while most of the picture keeps changing.
+pub const HINT_AUTO: i32 = 0;
+/// Always exact (text, pixel art): never lossy.
+pub const HINT_EXACT: i32 = 1;
+/// Motion (video): lossy allowed whenever the frames keep changing.
+pub const HINT_MOTION: i32 = 2;
 
 /// Errors from the display calls.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -81,6 +111,10 @@ pub enum GfxError {
     NoDevice,
     /// Interrupted while waiting (the program is being killed).
     Interrupted,
+    /// The presentation queue is full ([`present_at`] without [`PRESENT_AT_WAIT`]): EAGAIN, -11.
+    Again,
+    /// The display is single-buffered, so it can't queue frames ([`present_at`]): -22.
+    SingleBuffered,
 }
 
 fn err(rc: i64) -> GfxError {
@@ -89,6 +123,8 @@ fn err(rc: i64) -> GfxError {
         -3 => GfxError::NotOwner,
         -4 => GfxError::NoDevice,
         -5 => GfxError::Interrupted,
+        -11 => GfxError::Again,
+        -22 => GfxError::SingleBuffered,
         _ => GfxError::Invalid,
     }
 }
@@ -149,6 +185,68 @@ pub fn set_palette(target: Target, first: u8, rgb: &[u8]) -> Result<(), GfxError
 pub fn present(target: Target, flags: i32) -> Result<u64, GfxError> {
     let rc = unsafe { gfx_present(target as i32, flags) };
     if rc < 0 { Err(err(rc)) } else { Ok(rc as u64) }
+}
+
+/// Queue the back buffer of a double-buffered display to be shown at
+/// `pts_us`, in microseconds on the program's monotonic clock
+/// ([`monotonic_us`]). A time that has passed, with nothing queued, shows it
+/// at once (like [`present`]). The queue holds at most 12 frames and 500 ms
+/// (server config); when it is full this fails with [`GfxError::Again`], or
+/// with [`PRESENT_AT_WAIT`] sleeps until there is room. Single-buffered
+/// displays fail with [`GfxError::SingleBuffered`]. Returns the frames queued.
+pub fn present_at(target: Target, flags: i32, pts_us: u64) -> Result<u64, GfxError> {
+    let rc = unsafe { gfx_present_at(target as i32, flags, pts_us.min(i64::MAX as u64) as i64) };
+    if rc < 0 { Err(err(rc)) } else { Ok(rc as u64) }
+}
+
+/// Drop every queued frame that isn't shown yet (seek, pause, stop).
+/// Returns how many were dropped.
+pub fn queue_flush(target: Target) -> Result<u32, GfxError> {
+    let rc = unsafe { gfx_queue_flush(target as i32) };
+    if rc < 0 { Err(err(rc as i64)) } else { Ok(rc as u32) }
+}
+
+/// How the display's frames may travel to players: [`HINT_AUTO`],
+/// [`HINT_EXACT`] or [`HINT_MOTION`].
+pub fn set_hint(target: Target, hint: i32) -> Result<(), GfxError> {
+    let rc = unsafe { gfx_set_hint(target as i32, hint) };
+    if rc < 0 { Err(err(rc as i64)) } else { Ok(()) }
+}
+
+/// The presentation queue: `(frames queued, ms the last one is ahead of
+/// now)`. `None` for an unknown display.
+pub fn queue_state(target: Target) -> Option<(u32, u32)> {
+    let rc = unsafe { gfx_queue_state(target as i32) };
+    if rc < 0 {
+        None
+    } else {
+        Some(((rc as u64 >> 32) as u32, (rc as u64 & 0xFFFF_FFFF) as u32))
+    }
+}
+
+/// The program's monotonic clock in microseconds: WASI `clock_time_get`
+/// (MONOTONIC), the clock [`present_at`] and the UI protocol's `CommitAt`
+/// times are on. (On the host, for tests: time since the first call.)
+#[cfg(target_arch = "wasm32")]
+pub fn monotonic_us() -> u64 {
+    let mut t: u64 = 0;
+    // id 1 = MONOTONIC, precision 1 us.
+    let rc = unsafe { wasi_clock_time_get(1, 1_000, &mut t as *mut u64 as i32) };
+    if rc != 0 {
+        return 0;
+    }
+    t / 1_000
+}
+
+/// The program's monotonic clock in microseconds (host build: time since the
+/// first call, from the OS's monotonic clock).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn monotonic_us() -> u64 {
+    extern crate std;
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static T0: OnceLock<Instant> = OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_micros() as u64
 }
 
 /// Sleep until the display's next vertical blank. Returns its number.

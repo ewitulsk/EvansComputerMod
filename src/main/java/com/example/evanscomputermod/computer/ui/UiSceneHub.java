@@ -422,6 +422,17 @@ public final class UiSceneHub {
      * when there is no scene, which ends everyone).
      */
     public void sync(int displayId, Collection<UUID> ids, Supplier<SceneExporter> exporter, Sink sink) {
+        long t0 = System.nanoTime();
+        try {
+            syncPass(displayId, ids, exporter, sink);
+        } finally {
+            if (com.example.evanscomputermod.computer.pipeline.DisplayPump.isServerThread(Thread.currentThread())) {
+                com.example.evanscomputermod.computer.pipeline.DisplayPump.noteServerThread(System.nanoTime() - t0);
+            }
+        }
+    }
+
+    private void syncPass(int displayId, Collection<UUID> ids, Supplier<SceneExporter> exporter, Sink sink) {
         List<Object[]> out = new ArrayList<>();
         boolean wantKeyframe = false;
         SceneExporter ex = exporter.get();

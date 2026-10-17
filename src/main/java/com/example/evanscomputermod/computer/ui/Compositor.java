@@ -917,6 +917,23 @@ public final class Compositor {
         requestTick(0);
     }
 
+    /**
+     * A client scrolled a scroll container it draws itself (Part F): the app
+     * that owns scene surface {@code sceneSurface} gets {@code Scrolled} (if
+     * it speaks version 2) and confirms with its next commit.
+     */
+    public synchronized void scrolled(int sceneSurface, int node, int x, int y) {
+        SceneExporter ex = exporter;
+        Surface s = ex == null ? null : ex.surfaceOf(sceneSurface);
+        if (s == null || s.conn.closed || s.conn.version < 2 || s.tree == null) return;
+        NodeTree.Node n = s.tree.get(node);
+        if (n == null || n.scroll == 0) return;
+        int cx = Math.max(0, Math.min(Math.max(0, n.contentW - n.w), x));
+        int cy = Math.max(0, Math.min(Math.max(0, n.contentH - n.h), y));
+        s.conn.queue(new UiProto.Scrolled(s.id, node, cx, cy));
+        drainFails();
+    }
+
     // =================================================================== timed commits (protocol v2)
 
     private static long DisplayClockNow() {

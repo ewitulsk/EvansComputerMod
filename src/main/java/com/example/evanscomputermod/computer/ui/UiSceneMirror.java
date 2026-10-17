@@ -57,6 +57,9 @@ public final class UiSceneMirror {
     private final Map<Long, Long> timedLast = new HashMap<>();
     private long timedApplied, timedDropped;
 
+    /** What this client shows before the server answers (hover, scrolls, drags, typing; Part F). */
+    private final ClientPrediction prediction = new ClientPrediction(this);
+
     private int[] frame;
     private byte[] rgba;
     private final Box.Region damage = new Box.Region();
@@ -115,6 +118,16 @@ public final class UiSceneMirror {
 
     /** Apply one STEP or KEYFRAME message at client time {@code clientNowMs}. */
     public Result apply(UiSceneCodec.Message m, long clientNowMs) {
+        // The server's values first; predictions are made again on what it says.
+        prediction.undo();
+        try {
+            return applyMessage(m, clientNowMs);
+        } finally {
+            if (ready) prediction.redo(clientNowMs);
+        }
+    }
+
+    private Result applyMessage(UiSceneCodec.Message m, long clientNowMs) {
         UiSceneCodec.Patch p = m.patch();
         if (p == null) return Result.IGNORED;
         if (p.keyframe()) {
@@ -319,6 +332,72 @@ public final class UiSceneMirror {
             if (s.tree == null || !s.mapped || scopes.getOrDefault(s, -1) != scope) continue;
             for (NodeTree.Node n : s.tree.usersOf(id)) damage.add(SceneRenderer.surfaceDamage(display, s, NodeTree.absBox(n), now));
         }
+    }
+
+    // =========================================================== client prediction (Part F)
+
+    /**
+     * A pointer event the player gave this display (device pixels; kinds as
+     * MouseInputPacket: 1 move, 2 down, 3 up, 4 scroll). Returns the scroll
+     * to report to the app when the wheel scrolled a scroll container here
+     * (the wheel then doesn't go to the server), else null.
+     */
+    public ClientPrediction.ScrollReport pointer(int kind, int x, int y, int button, int scrollDir, long clientNowMs) {
+        if (!ready || display == null) return null;
+        return prediction.pointer(kind, x, y, button, scrollDir, clientNowMs);
+    }
+
+    /** Typed text: shown in the focused text field at once. */
+    public boolean typed(String text, long clientNowMs) {
+        return ready && prediction.text(text, clientNowMs);
+    }
+
+    /** A key (HID usage) going down or up: Backspace edits the predicted text. */
+    public boolean key(int hid, boolean down, long clientNowMs) {
+        return ready && prediction.key(hid, down, clientNowMs);
+    }
+
+    /** Predictions made so far (tests, stats). */
+    public long predictions() {
+        return prediction.predictions();
+    }
+
+    /** Let predictions that waited for the server expire (once per rendered frame). */
+    void refreshPrediction(long clientNowMs) {
+        if (!ready || !prediction.active()) return;
+        prediction.undo();
+        prediction.redo(clientNowMs);
+    }
+
+    List<SceneRenderer.Item> drawItems(long now) {
+        return SceneRenderer.drawOrder(scene(), now);
+    }
+
+    int sceneIdOf(Surface s) {
+        for (Map.Entry<Integer, Surface> e : surfaces.entrySet()) if (e.getValue() == s) return e.getKey();
+        return 0;
+    }
+
+    UiWindow focusedWindow() {
+        return focused;
+    }
+
+    UiWindow window(int id) {
+        return windows.get(id);
+    }
+
+    int displayScale() {
+        return display == null ? 1 : display.scale();
+    }
+
+    void damageNode(Surface s, NodeTree.Node n) {
+        if (display == null || s == null) return;
+        long now = System.nanoTime() / 1_000_000L + clockOffset;
+        damage.add(SceneRenderer.surfaceDamage(display, s, NodeTree.absBox(n), now));
+    }
+
+    void damageAll() {
+        if (display != null) damage.add(SceneRenderer.displayBox(display));
     }
 
     // =========================================================== timed frames (protocol v2)

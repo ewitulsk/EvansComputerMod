@@ -152,6 +152,11 @@ public interface IComputerHost {
         return null;
     }
 
+    /** The tile sync hubs of this host's displays, by display id (stats). */
+    default java.util.Map<Integer, com.example.evanscomputermod.computer.DisplaySyncHub> syncHubs() {
+        return java.util.Map.of();
+    }
+
     /** {@link #markDirty()} from any thread: the host saves at its next tick. */
     default void markDirtyLater() {
         markDirty();

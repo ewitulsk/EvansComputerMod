@@ -739,6 +739,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             action = com.example.evanscomputermod.network.KeyInputPacket.UP;
         }
         if (hid == 0) return;
+        com.example.evanscomputermod.computer.ui.ClientUiScenes.key(te.getComputerId(),
+                com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, hid,
+                action != com.example.evanscomputermod.network.KeyInputPacket.UP, System.nanoTime() / 1_000_000L);
         ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(
                 te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, action, hid,
                 modifiers & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
@@ -747,6 +750,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private void sendText(String text) {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
+        com.example.evanscomputermod.computer.ui.ClientUiScenes.typed(te.getComputerId(),
+                com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text, System.nanoTime() / 1_000_000L);
         ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.text(
                 te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text));
     }
@@ -1072,6 +1077,17 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private void sendMouseEvent(byte kind, int fbX, int fbY, byte buttonCode, byte scrollDir) {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
+        // A GUI this client draws shows hover, pressed, scrolls and drags at once (Part F); a wheel
+        // over a scroll container is scrolled here and reported instead of sent.
+        var scroll = com.example.evanscomputermod.computer.ui.ClientUiScenes.pointer(te.getComputerId(),
+                com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, kind, fbX, fbY, buttonCode, scrollDir,
+                System.nanoTime() / 1_000_000L);
+        if (scroll != null) {
+            ClientPacketDistributor.sendToServer(new com.example.evanscomputermod.network.UiScrollPacket(te.getComputerId(),
+                    (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, scroll.surface(), scroll.node(),
+                    scroll.x(), scroll.y()));
+            return;
+        }
         MouseInputPacket pkt = new MouseInputPacket(
                 te.getComputerId(),
                 (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,

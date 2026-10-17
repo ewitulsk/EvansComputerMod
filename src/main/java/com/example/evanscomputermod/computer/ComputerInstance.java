@@ -275,6 +275,11 @@ public class ComputerInstance implements AutoCloseable {
      * {@link ComputerHost} a terminal hands over, so terminal-only features
      * (Screen cluster, display devices) still find their terminal.
      */
+    /** The host this computer runs in now (a block, an ePhone), or null. */
+    public IComputerHost currentHost() {
+        return attachedHost();
+    }
+
     private IComputerHost attachedHost() {
         IComputerHost h = host;
         return h instanceof ComputerHost owned && owned.attachment() != null ? owned.attachment() : h;
