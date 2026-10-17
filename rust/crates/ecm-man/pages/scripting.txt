@@ -125,6 +125,17 @@ UI
     [...] and the window updates on the next turn. Handlers get an
     event with kind, value and widget. A ui program needs the GUI.
 
+WEB
+      web.serve(port, handler)   a web server of its own (until Ctrl+C)
+      web.cgi(handler)           answer the request httpd --cgi gives
+      web.Request / Response     method, path, query, form, cookies
+      web.redirect(location)     a redirect (after a POST)
+      web.escape(text) web.parse_query(s)
+
+    A handler gets a request and returns an HTML string, a Response, or
+    None/nil for 404. Lua: local web = require("web"). See httpd and
+    browser.
+
 EXAMPLE
       import ui
       app = ui.App("dev.me.hello")

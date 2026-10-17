@@ -3,3 +3,4 @@
 
 pub mod radio_module;
 pub mod ui_module;
+pub mod web_module;

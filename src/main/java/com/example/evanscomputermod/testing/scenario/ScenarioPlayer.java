@@ -586,6 +586,30 @@ public final class ScenarioPlayer {
         return ok;
     }
 
+    /**
+     * A finger drag on a display (a phone's touch screen, a mouse with the button held): press
+     * at ({@code x0}, {@code y0}), move there in {@code steps} steps to ({@code x1}, {@code y1}),
+     * release.
+     */
+    public boolean drag(UUID computer, int display, int x0, int y0, int x1, int y1, int steps) {
+        boolean ok = MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_DOWN,
+                (short) x0, (short) y0, (byte) 1, (byte) 0, (byte) 0));
+        for (int i = 1; i <= steps; i++) {
+            int x = x0 + (x1 - x0) * i / steps, y = y0 + (y1 - y0) * i / steps;
+            ok &= MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_MOVE,
+                    (short) x, (short) y, (byte) 1, (byte) 0, (byte) 0));
+        }
+        ok &= MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_UP,
+                (short) x1, (short) y1, (byte) 0, (byte) 0, (byte) 0));
+        return ok;
+    }
+
+    /** One wheel step at a pixel ({@code dir} -1 = towards the end, as the client sends a wheel turned down). */
+    public boolean wheel(UUID computer, int display, int x, int y, int dir) {
+        return MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_SCROLL,
+                (short) x, (short) y, (byte) 0, (byte) 0, (byte) dir));
+    }
+
     /** Run a chat command as this player with cheats on (operator level), returning what it said. */
     public List<String> command(String command) {
         clearHeard();

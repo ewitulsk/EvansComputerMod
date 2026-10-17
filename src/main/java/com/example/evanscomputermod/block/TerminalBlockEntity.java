@@ -1770,10 +1770,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // Determine screen face (the FACING direction of the terminal)
         net.minecraft.core.Direction screenFace = getBlockState().getValue(TerminalBlock.FACING);
 
+        // Faces in NIC order relative to the screen (see TerminalBlock.relativeFaces)
+        net.minecraft.core.Direction[] faces = TerminalBlock.relativeFaces(screenFace);
+
         // Check which faces have InterfaceBlocks
-        java.util.Set<net.minecraft.core.Direction> occupiedByInterface = new java.util.HashSet<>();
+        java.util.Set<net.minecraft.core.Direction> occupiedByInterface = new java.util.LinkedHashSet<>();
         if (level != null) {
-            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            for (net.minecraft.core.Direction dir : faces) {
                 net.minecraft.core.BlockPos neighbor = worldPosition.relative(dir);
                 if (level.getBlockState(neighbor).getBlock() instanceof com.example.evanscomputermod.block.InterfaceBlock) {
                     occupiedByInterface.add(dir);
@@ -1782,7 +1785,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         // Built-in interfaces: one per face, EXCLUDING screen face and InterfaceBlock-occupied faces
-        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+        for (net.minecraft.core.Direction dir : faces) {
             if (dir == screenFace) continue;  // Skip screen face
             if (occupiedByInterface.contains(dir)) continue;  // Skip occupied faces
             macs.add(com.example.evanscomputermod.computer.NetworkHub.deriveMac(computerId, macs.size()));
@@ -1807,7 +1810,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
         while (!queue.isEmpty() && macs.size()<32) {
             net.minecraft.core.BlockPos pos = queue.poll();
-            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            for (net.minecraft.core.Direction dir : faces) {
                 net.minecraft.core.BlockPos facePos = pos.relative(dir);
                 if (visited.contains(facePos)) continue;
                 net.minecraft.world.level.block.Block block = level.getBlockState(facePos).getBlock();

@@ -117,6 +117,13 @@ _ui_module.__file__ = '<ui>'
 exec(compile(_ui_native._source, '<ui>', 'exec'), _ui_module.__dict__)
 sys.modules['ui'] = _ui_module
 
+# `web` (web servers and CGI scripts for the Browser) ships inside the native `_web` module.
+import _web as _web_native
+_web_module = ModuleType('web')
+_web_module.__file__ = '<web>'
+exec(compile(_web_native._source, '<web>', 'exec'), _web_module.__dict__)
+sys.modules['web'] = _web_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

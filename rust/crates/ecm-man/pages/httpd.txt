@@ -1,32 +1,44 @@
 NAME
-    httpd - a small web server for the files in a directory
+    httpd - a web server: files, virtual hosts and CGI scripts
 
 SYNOPSIS
-    httpd <port>
+    httpd <port> [dir] [--cgi <prefix>]
 
 DESCRIPTION
-    Serves the files of the current directory over HTTP on the given
-    port (80 is the usual one), one request at a time, and prints each
-    request (method and path).
+    Serves the files in dir (default: the computer's root) over HTTP/1.0
+    on port (80 is the usual one), one request at a time, and prints
+    each request (GET /style.css).
 
-    GET / returns index.html if there is one, otherwise a page listing
-    the files. GET /name returns that file: .html and .htm as web
-    pages, .json, .py, everything else as plain text. A missing file
-    is 404 Not Found.
+    / and folders return their index.html, or a list of the files.
+    Files get their Content-Type from the extension (.html .css .js .png
+    .json .py .lua, anything else as plain text). Paths with .. are
+    refused. A missing file is 404 Not Found. POST to a file (outside
+    the CGI prefix) writes the request body into it, so only serve a
+    folder you are happy to share.
 
-    POST /name writes the request body into that file (replacing it).
-    Anyone who can reach the port can change files, so only run it in
-    a directory you are happy to share.
+    Virtual hosting: when a request's Host: names a folder inside dir,
+    that folder answers it. With /srv/www/web.v4.ring/index.html,
+    http://web.v4.ring/ gets that page and other names get dir's.
 
-    httpd runs until you stop it with Ctrl+T. Start it with httpd 80 &
-    to keep the shell, or put httpd 80 & in /services.cfg.
+    httpd runs until you stop it with Ctrl+C or Ctrl+T; start it with &
+    to keep the shell, or put the line in /services.cfg.
+
+OPTIONS
+    --cgi prefix
+        Requests under prefix run the script they name: .py with python,
+        .lua with lua. The script reads the request on stdin
+        (REQUEST_METHOD, PATH_INFO, QUERY_STRING, CONTENT_TYPE,
+        CONTENT_LENGTH, REMOTE_ADDR, HTTP_HOST, HTTP_COOKIE as NAME=value
+        lines, a blank line, then the body) and prints the response:
+        optional Status:, Content-Type:, Location: and Set-Cookie: lines,
+        a blank line, then the page. A script has 10 seconds (504
+        otherwise); a missing script is 404. The web module in Python
+        and Lua (web.cgi) does both halves for you.
 
 EXAMPLES
-      mkdir /site
-      cd /site
-      httpd 80 &
+      httpd 80 /home/site &
+      httpd 80 /srv/www --cgi /cgi &
       curl http://localhost/
-      curl -d "hello" http://localhost/note.txt
 
 SEE ALSO
-    curl, ifconfig, networking
+    browser, curl, scripting, networking

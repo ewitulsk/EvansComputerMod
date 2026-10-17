@@ -21,7 +21,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Desktop and apps", &["gui", "desktop", "terminal-app", "files", "editor", "notes", "settings", "store", "pkg", "picker", "chooser", "visual"]),
     ("ePhone", &["phone-guide", "phone"]),
     ("Networking", &["networking", "ifconfig", "ip", "ping", "traceroute", "dhclient", "dhcpd", "wifi", "iw", "wpa_cli", "wpa_supplicant", "switch", "router", "tcpdump"]),
-    ("Names and the web", &["nslookup", "dig", "named", "resolvectl", "domain", "whois", "registrard", "registryd", "ianad", "httpd", "curl", "disco"]),
+    ("Names and the web", &["browser", "nslookup", "dig", "named", "resolvectl", "domain", "whois", "registrard", "registryd", "ianad", "httpd", "curl", "disco"]),
     ("Remote login and chat", &["ssh", "sshd", "ssh-keygen", "chat", "chatd", "chatapp"]),
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier", "simtool"]),

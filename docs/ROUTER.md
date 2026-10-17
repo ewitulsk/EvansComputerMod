@@ -36,10 +36,10 @@ without the presentation delay. For example:
 ```
 
 `clear` removes the placed blocks and lab leads; save your own work before
-spawning a lab because its marked footprint is cleared. All fourteen definitions
+spawning a lab because its marked footprint is cleared. All fifteen definitions
 also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
 (and `router_chat`) are available in both versions; headless reattachment,
-`router_village`, `router_player_fiber` and `router_fiber_tap` are 1.21.1-specific.
+`router_village`, `router_player_fiber`, `router_fiber_tap` and `router_ports_follow_facing` are 1.21.1-specific.
 
 | Scenario | What to test and expected result |
 |---|---|
@@ -57,6 +57,7 @@ also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
 | `router_chat` | `chatd` on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
 | `router_player_fiber` | Built by hand: a Fiber Patch Panel on two PCs' UP faces (eth1) and a run of Fiber Span between them. Ping crosses the fiber; breaking a span stops it and placing it back repairs it. Control: copper cable touching the fiber (not through a panel) is not connected. |
 | `router_fiber_tap` | Tapping a fiber, built by hand: ISP A (AS 65101) and ISP B (AS 65102) sit on patch panels at the ends of a 13-block fiber run, both with open peering on `172.30.50.0/28` like the village ISPs. You place a Fiber Patch Panel on the middle span under your router, `tcpdump -i eth0 -c 2` shows the ISPs' keepalives (`.1`/`.2`), you take `172.30.50.5/28` and peer from AS 65200 with both. Your LAN pings both ISPs' servers; on ISP B you are a `*` dynamic neighbor with 1 prefix, while your hijack of `100.81.0.128/25` and your default route are filtered. Control: break the span toward ISP A: that session times out, ISP B still works; put the span back and the session returns. |
+| `router_ports_follow_facing` | Ports are relative to the screen. An east-facing PC's back (its west face) is cabled to a server's bottom; `ifconfig eth2` on the PC and ping reaches the server. The player then breaks the PC and places it facing south, west and north; each time the Interface Probe (sneak-right-click) reads bottom eth0, top eth1, back eth2, left eth3, right eth4. Control: the screen face has no port. |
 
 Ring failure controls work in Minecraft chat, and affect the most recently
 spawned lab:
@@ -108,9 +109,12 @@ fiber.
 ## First router: LAN, DHCP and an internet-facing port
 
 Place a Terminal and use the Interface Probe to identify the ports you cabled.
-For a north-facing terminal without expansion blocks, eth0 is down, eth1 up,
-eth2 south, eth3 west and eth4 east. The screen face has no NIC. Expansion blocks
-change the enumeration: probe again after changing the hardware. The stack accepts
+Ports are numbered relative to the screen, so they stay put however the terminal
+is turned: without expansion blocks, eth0 is the bottom, eth1 the top, eth2 the
+back, eth3 the left and eth4 the right (left and right as the computer sees them,
+like peripheral sides: stand behind it facing the way the screen faces). The screen
+face has no NIC. Expansion blocks change the enumeration: probe again after
+changing the hardware. The stack accepts
 up to 32 interfaces.
 
 Cable your PCs to one LAN segment on eth0 and your upstream network to eth1.
@@ -701,7 +705,7 @@ are kept. Regenerate the five ISP and Data Center templates, pools and structure
 
 See [joining as your own AS](TECH_VILLAGE_NETWORK.md#b-your-own-as-peering-with-an-isp)
 for the exact configuration of both sides. In short: at village 3, probe a spare ISP
-port (eth5 to eth8; their faces depend on the building's rotation), cable it to your
+port (eth5 to eth8, the Interface Block's faces), cable it to your
 router's eth1, give the ISP side `172.30.3.1/30` and `neighbor 172.30.3.2 remote-as
 65200` (activated in `address-family ipv4 unicast`), and your side `172.30.3.2/30`,
 AS 65200, `neighbor 172.30.3.1 remote-as 65003` and a `network` for a LAN prefix you

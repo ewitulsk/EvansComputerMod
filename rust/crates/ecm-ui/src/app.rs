@@ -249,12 +249,26 @@ impl Core {
 
     /// A popup menu at `(x, y)` in `parent`: choosing an item calls `handler`
     /// with a `Select` event (`EventValue::Index`, `window` = the parent) and
-    /// closes the menu; a click elsewhere just closes it.
+    /// closes the menu; a click elsewhere just closes it. The menu is kept
+    /// inside the parent window (moved left or up where it would leave it).
     pub fn popup_menu<S: Into<String>>(&mut self, parent: u32, x: i32, y: i32, items: impl IntoIterator<Item = S>, handler: Handler) -> u32 {
+        self.popup_menu_placed(parent, Place::At(x, y), items, handler)
+    }
+
+    /// [`Core::popup_menu`] for a button's menu: below `anchor` (the button's
+    /// rect in `parent`), or above it when there is no room below (a button in
+    /// a phone's bottom bar).
+    pub fn popup_menu_below<S: Into<String>>(&mut self, parent: u32, anchor: window::Rect, items: impl IntoIterator<Item = S>, handler: Handler) -> u32 {
+        self.popup_menu_placed(parent, Place::Below(anchor), items, handler)
+    }
+
+    fn popup_menu_placed<S: Into<String>>(&mut self, parent: u32, place: Place, items: impl IntoIterator<Item = S>, handler: Handler) -> u32 {
         let el = menu(items).id("popup_menu").on(EventKind::Select, handler);
         let (mw, mh) = window::measure(&el, &self.theme, proto::SizeClass::Compact, 400);
         let w = mw.max(120);
         let el = el.width(w);
+        let (pw, ph) = self.window(parent).map_or((0, 0), |p| (p.width, p.height));
+        let (x, y) = fit_popup(place, w, mh, pw, ph);
         let s = self.create_popup(parent, x, y, w, mh, Content::Static(el));
         if let Some(win) = self.window_mut(s) {
             win.close_on_select = true;
@@ -734,6 +748,18 @@ impl Ctx<'_> {
         self.core.paste_into(w, id);
     }
 
+    /// A button's menu below `anchor` (its rect in this window), or above it when it doesn't fit below;
+    /// `f` gets the chosen index.
+    pub fn popup_menu_below<S: Into<String>>(&mut self, anchor: crate::window::Rect, items: impl IntoIterator<Item = S>, f: impl Fn(&mut Ctx, usize) + 'static) {
+        let w = self.window;
+        let h = Handler::Callback(Rc::new(move |cx: &mut Ctx, e: &UiEvent| {
+            if let crate::window::EventValue::Index(i) = e.value {
+                f(cx, i);
+            }
+        }));
+        self.core.popup_menu_below(w, anchor, items, h);
+    }
+
     /// A popup menu at `(x, y)` lu in this window; `f` gets the chosen index.
     pub fn popup_menu<S: Into<String>>(&mut self, x: i32, y: i32, items: impl IntoIterator<Item = S>, f: impl Fn(&mut Ctx, usize) + 'static) {
         let w = self.window;
@@ -1048,5 +1074,47 @@ impl App {
     pub fn run(&mut self) {
         while self.step(-1) {}
         let _ = self.core.flush();
+    }
+}
+
+/// Where a popup menu goes.
+#[derive(Clone, Copy, Debug)]
+enum Place {
+    At(i32, i32),
+    Below(window::Rect),
+}
+
+/// A `w` x `h` popup's position inside a `pw` x `ph` parent (0: unknown, not limited):
+/// below its anchor or else above it, then moved left/up to stay inside.
+fn fit_popup(place: Place, w: i32, h: i32, pw: i32, ph: i32) -> (i32, i32) {
+    let (x, mut y) = match place {
+        Place::At(x, y) => (x, y),
+        Place::Below(a) => (a.x, a.y + a.h),
+    };
+    if let Place::Below(a) = place {
+        if ph > 0 && y + h > ph && a.y - h >= 0 {
+            y = a.y - h;
+        }
+    }
+    let x = if pw > 0 { x.min(pw - w) } else { x };
+    let y = if ph > 0 { y.min(ph - h) } else { y };
+    (x.max(0), y.max(0))
+}
+
+#[cfg(test)]
+mod popup_fit_tests {
+    use super::*;
+
+    #[test]
+    fn menus_stay_inside_their_window() {
+        let button = window::Rect { x: 300, y: 560, w: 60, h: 30 };
+        // A button at the bottom of a 360 x 600 phone window: the menu opens above it.
+        assert_eq!(fit_popup(Place::Below(button), 140, 100, 360, 600), (220, 460));
+        // Room below: below it.
+        let top = window::Rect { x: 10, y: 10, w: 60, h: 30 };
+        assert_eq!(fit_popup(Place::Below(top), 140, 100, 360, 600), (10, 40));
+        // A point menu near the corner moves in; an unknown size leaves it.
+        assert_eq!(fit_popup(Place::At(350, 590), 140, 100, 360, 600), (220, 500));
+        assert_eq!(fit_popup(Place::At(350, 590), 140, 100, 0, 0), (350, 590));
     }
 }
