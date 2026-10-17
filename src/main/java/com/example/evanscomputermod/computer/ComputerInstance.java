@@ -64,6 +64,12 @@ public class ComputerInstance implements AutoCloseable {
     private final com.example.evanscomputermod.computer.video.VideoDecoderRegistry videoRegistry
             = new com.example.evanscomputermod.computer.video.VideoDecoderRegistry();
 
+    // The upload port (abi/child-abi.toml [imports.upload]): files from a player's real computer,
+    // through the optional evanscomputermod-upload sidecar.
+    private final com.example.evanscomputermod.computer.upload.UploadPort uploadPort
+            = new com.example.evanscomputermod.computer.upload.UploadPort(
+                    this::storagePath, this::attachedHost, () -> isPhone() ? "ePhone" : "Terminal");
+
     /** Selector for the target display of bridge video/gfx calls. */
     public static final int GFX_TARGET_TERMINAL = 0;
     public static final int GFX_TARGET_SCREEN = 1;
@@ -2257,6 +2263,33 @@ public class ComputerInstance implements AutoCloseable {
         return com.example.evanscomputermod.api.video.VideoBackends.available();
     }
 
+    /** This computer's upload port (ComputerTargets notes who is using it). */
+    public com.example.evanscomputermod.computer.upload.UploadPort uploadPort() {
+        return uploadPort;
+    }
+
+    /** {@code upload_supported}: one of UploadPort.SUPPORT_*. */
+    public int bridgeUploadSupported() {
+        return uploadPort.supported();
+    }
+
+    /** {@code upload_begin}: ask the player using this computer for a file to put in {@code dir}. */
+    public int bridgeUploadBegin(String dir) {
+        if (childAbortRequested) return -5;
+        return uploadPort.begin(callerPid(), dir);
+    }
+
+    /** {@code upload_poll}: the state of the calling program's upload. */
+    public com.example.evanscomputermod.computer.upload.UploadPort.Progress bridgeUploadPoll(int ticket) {
+        if (childAbortRequested) return new com.example.evanscomputermod.computer.upload.UploadPort.Progress(-5, 0, 0, null);
+        return uploadPort.poll(ticket, callerPid());
+    }
+
+    /** {@code upload_cancel}. */
+    public int bridgeUploadCancel(int ticket) {
+        return uploadPort.cancel(ticket, callerPid());
+    }
+
     /** Bytes in one decoded frame of {@code handle}, or -1 for an unknown handle. */
     public int bridgeVideoFrameBytes(int handle) {
         var d = videoRegistry.get(handle, callerPid());
@@ -2721,6 +2754,7 @@ public class ComputerInstance implements AutoCloseable {
         terminalDevice.release(pid);
         screenDevice.release(pid);
         videoRegistry.closeOwnedBy(pid);
+        uploadPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
         uiManager.onProcessExit(pid);
     }
@@ -3418,6 +3452,8 @@ public class ComputerInstance implements AutoCloseable {
 
         // Clear input queue
         inputQueue.clear();
+
+        uploadPort.close();
 
         // Free FFmpeg decoder state before tearing down WASM.
         try {

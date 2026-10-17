@@ -164,6 +164,27 @@ mod shell_module {
         crate::read_line_echo().unwrap_or_default()
     }
 
+    // ==================== Upload (files from the player's real computer) ====================
+
+    /// "ready", "not_installed", "no_client" (the player using the computer lacks the
+    /// add-on in their game) or "not_permitted".
+    #[pyfunction]
+    fn upload_supported() -> String {
+        crate::upload_support_name(ecm_host_abi::upload::supported()).to_string()
+    }
+
+    /// Ask the player using this computer to pick a file on their real computer;
+    /// it is copied into `dir` (default "/home"). Returns the new file's path, or
+    /// raises OSError (cancelled, too large, not installed, ...).
+    #[pyfunction]
+    fn upload(dir: OptionalArg<PyStrRef>, vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let dir = match &dir {
+            OptionalArg::Present(d) => d.as_str().to_string(),
+            OptionalArg::Missing => "/home".to_string(),
+        };
+        crate::upload_blocking(&dir).map_err(|e| vm.new_os_error(format!("upload: {e}")))
+    }
+
     // ==================== Redstone Functions ====================
 
     /// Side constants
@@ -968,6 +989,37 @@ impl PythonRepl {
 }
 
 /// Paths on the computer are relative to its root: "/etc/x" and "etc/x" are the same file.
+/// The name Python and Lua give an upload support state.
+fn upload_support_name(s: ecm_host_abi::upload::Support) -> &'static str {
+    use ecm_host_abi::upload::Support;
+    match s {
+        Support::Ready => "ready",
+        Support::NotInstalled => "not_installed",
+        Support::NoClient => "no_client",
+        Support::NotPermitted => "not_permitted",
+    }
+}
+
+/// Run one upload to the end: the new file's path, or why there is none.
+fn upload_blocking(dir: &str) -> Result<String, String> {
+    use ecm_host_abi::upload::{self, State, Support};
+    let support = upload::supported();
+    if support != Support::Ready {
+        return Err(support.message().to_string());
+    }
+    let ticket = upload::begin(dir).map_err(|e| format!("{dir}: {}", e.message()))?;
+    loop {
+        match upload::poll(ticket) {
+            State::Done(path) => return Ok(path),
+            State::Failed(e) => {
+                upload::cancel(ticket);
+                return Err(e.message().to_string());
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
 fn rel(p: &str) -> &str {
     p.trim_start_matches('/')
 }

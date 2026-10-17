@@ -1214,6 +1214,12 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_audio_source", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_supported", |_c: C<'_>| -> i32 { 0 })?;
 
+    // --- upload port: the simulator has no players (not installed) ---
+    l.func_wrap(E, "upload_supported", |_c: C<'_>| -> i32 { 0 })?;
+    l.func_wrap(E, "upload_begin", |_c: C<'_>, _p: i32, _l: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "upload_poll", |_c: C<'_>, _t: i32, _o: i32, _n: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "upload_cancel", |_c: C<'_>, _t: i32| -> i32 { -1 })?;
+
     // --- UI protocol: the simulator is always in console mode (-4) ---
     l.func_wrap(E, "ui_open", |_c: C<'_>, _role: i32, _ver: i32| -> i32 { -4 })?;
     l.func_wrap(E, "ui_send", |_c: C<'_>, _fd: i32, _b: i32, _l: i32| -> i32 { -4 })?;

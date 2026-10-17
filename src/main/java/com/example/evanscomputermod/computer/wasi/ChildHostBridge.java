@@ -144,6 +144,24 @@ public class ChildHostBridge {
         return parent.bridgeVideoSupported();
     }
 
+    // --- Upload port (files from the player's real computer; the upload sidecar) ---
+
+    public int uploadSupported() {
+        return parent.bridgeUploadSupported();
+    }
+
+    public int uploadBegin(String dir) {
+        return parent.bridgeUploadBegin(dir);
+    }
+
+    public com.example.evanscomputermod.computer.upload.UploadPort.Progress uploadPoll(int ticket) {
+        return parent.bridgeUploadPoll(ticket);
+    }
+
+    public int uploadCancel(int ticket) {
+        return parent.bridgeUploadCancel(ticket);
+    }
+
     /** Bytes in one decoded frame, -1 for an unknown handle. */
     public int videoFrameBytes(int handle) {
         return parent.bridgeVideoFrameBytes(handle);
