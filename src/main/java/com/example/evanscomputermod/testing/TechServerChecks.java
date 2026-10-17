@@ -69,7 +69,7 @@ public final class TechServerChecks {
 
   private static int phase, finishTicks = -1, a, b;
   private static boolean failed;
-  private static long phaseStart, nextProbe;
+  private static long phaseStart, nextProbe, lastProbe, nextDump;
   private static WorldNetwork data;
   private static final Map<Integer, TechVillageLocator.Visit> visits = new HashMap<>();
   private static List<ChunkPos> chordChunks = List.of();
@@ -517,17 +517,27 @@ public final class TechServerChecks {
     return sb.toString();
   }
 
-  /** Step machine: traceroute the remote server until it completes with a reply. */
+  /**
+   * Step machine: traceroute the remote server until it completes with a reply. The next
+   * traceroute is typed once the last one is back at the prompt (a player retrying), at most
+   * every 2 s, or after 20 s if it hangs; the routers' diagnostics are refreshed every 20 s.
+   */
   private static int traceroute(TerminalBlockEntity pc, String remote) {
-    if (System.currentTimeMillis() > nextProbe) {
-      var level = (ServerLevel) pc.getLevel();
-      for (int n : diagnosed()) {
-        var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
-        if (host.instance() != null)
-          host.instance().sendInput("router\nshow bgp ipv4 unicast summary\nshow ip route\nexit\n");
+    long now = System.currentTimeMillis();
+    boolean idle = now > lastProbe + 2_000 && screen(pc).stripTrailing().endsWith("/ >");
+    if (now > nextProbe || idle) {
+      if (now > nextDump) {
+        var level = (ServerLevel) pc.getLevel();
+        for (int n : diagnosed()) {
+          var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
+          if (host.instance() != null)
+            host.instance().sendInput("router\nshow bgp ipv4 unicast summary\nshow ip route\nexit\n");
+        }
+        nextDump = now + 20_000;
       }
       send(pc, "traceroute " + remote + " 16");
-      nextProbe = System.currentTimeMillis() + 20_000;
+      lastProbe = now;
+      nextProbe = now + 20_000;
       return -1;
     }
     int h = hops(screen(pc), remote);
