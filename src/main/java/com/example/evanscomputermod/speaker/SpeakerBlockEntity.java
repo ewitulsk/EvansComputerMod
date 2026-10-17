@@ -141,8 +141,11 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
         if (pcm.length == 0) return;
         int rate = Math.max(1, audio.rate());
         long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
-        long pts = now + audio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate;
+        // Live audio (a call) plays at once on the client; everything else is stamped with when it plays.
+        boolean live = audio.lastDrainLive();
+        long pts = live ? now : now + audio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate;
         if (pts < now) pts = now;
+        int flags = live ? SpeakerAudioPacket.FLAG_LIVE : 0;
         java.util.UUID computer = peripheral.computer();
         int peak = 0;
         List<ServerPlayer> to = listeners;
@@ -152,7 +155,7 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
             if (to.isEmpty() && testListeners.isEmpty()) continue;
             byte[] block = encoder.encode(pcm, off, n);
             SpeakerAudioPacket packet = new SpeakerAudioPacket(worldPosition, seq++, rate, n, block,
-                    pts + off * 1_000_000L / rate, computer);
+                    live ? now : pts + off * 1_000_000L / rate, computer, flags);
             for (ServerPlayer p : to) {
                 if (!p.hasDisconnected()) PacketDistributor.sendToPlayer(p, packet);
             }

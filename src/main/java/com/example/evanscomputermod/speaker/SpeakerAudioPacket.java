@@ -24,8 +24,19 @@ import java.util.UUID;
  * picture, so sound and picture stay together.
  */
 public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data, long ptsUs,
-                                 @Nullable UUID computer)
+                                 @Nullable UUID computer, int flags)
         implements CustomPacketPayload {
+
+    /** Live audio (a call): the client plays it at once, never on the picture's delay. Other bits reserved (0). */
+    public static final int FLAG_LIVE = 1;
+
+    public SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data, long ptsUs, @Nullable UUID computer) {
+        this(pos, seq, rate, samples, data, ptsUs, computer, 0);
+    }
+
+    public boolean live() {
+        return (flags & FLAG_LIVE) != 0;
+    }
 
     public static final Type<SpeakerAudioPacket> TYPE =
             new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "speaker_audio"));
@@ -35,7 +46,7 @@ public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, b
 
     /** An untimed block of no computer (as before Part E2). */
     public SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data) {
-        this(pos, seq, rate, samples, data, 0, null);
+        this(pos, seq, rate, samples, data, 0, null, 0);
     }
 
     public static final StreamCodec<ByteBuf, SpeakerAudioPacket> STREAM_CODEC = new StreamCodec<>() {
@@ -53,7 +64,8 @@ public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, b
             buf.readBytes(data);
             long pts = buf.readLong();
             UUID computer = buf.readBoolean() ? UUIDUtil.STREAM_CODEC.decode(buf) : null;
-            return new SpeakerAudioPacket(pos, seq, rate, samples, data, pts, computer);
+            int flags = buf.readUnsignedByte();
+            return new SpeakerAudioPacket(pos, seq, rate, samples, data, pts, computer, flags);
         }
 
         @Override
@@ -67,6 +79,7 @@ public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, b
             buf.writeLong(p.ptsUs());
             buf.writeBoolean(p.computer() != null);
             if (p.computer() != null) UUIDUtil.STREAM_CODEC.encode(buf, p.computer());
+            buf.writeByte(p.flags());
         }
     };
 

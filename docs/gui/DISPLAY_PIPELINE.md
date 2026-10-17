@@ -149,7 +149,7 @@ The diagram above is how frames travelled before the display pipeline work. Sinc
 
 - Untimed packets apply on arrival, as before. Timed frames show at `pts + offset + playout delay`; the delay is per computer, `clamp(2 x jitter + 40 ms, 60 ms, display.maxPlayoutMs)`, raised at once by a late frame, lowered slowly; the client option `display.playoutDelayMs` (`evanscomputermod-display-client.toml`) fixes it. Each rendered frame shows the newest due frame. Exact graphics never overtake frames still waiting.
 - The clock offset is one estimate per connection (the least delayed of the last 10 s of timed messages).
-- Speaker blocks carry the time their first sample plays and the computer the speaker is attached to; while that computer streams timed frames (one in the last 2 s) the sound waits the same playout delay, otherwise it plays at once. More than 100 ms late skips ahead.
+- Speaker blocks carry the time their first sample plays and the computer the speaker is attached to; while that computer streams timed frames (one in the last 2 s) the sound waits the same playout delay, otherwise it plays at once. More than 100 ms late skips ahead. Live audio is the exception: blocks flagged `FLAG_LIVE` (the card's last `drain()` had sound from a live stream, a `phone` or `voice` role: cellular and Discord calls; `SpeakerAudio.lastDrainLive`, set by the per-app mixer) play at once whatever the delay, and the first one drops the delayed blocks still queued; when the call ends, delayed sound resumes after a 20 ms gap (`SpeakerSchedule`). The trade-off: while a call plays, video sound on that speaker isn't lip-synced.
 - With client rendering, the client also shows hover and pressed styles, scrolling of scroll containers, window drags and typed text at once, from v2 node props the apps set ([UI_PROTOCOL.md section 20](UI_PROTOCOL.md)); the server's next answer replaces them.
 
 ### Server-side compositing
@@ -173,11 +173,11 @@ The diagram above is how frames travelled before the display pipeline work. Sinc
 - `terminal_delta`: a flags byte (timed, graphics only, text only, flush, encoding exact/JPEG), and for timed packets `pts_us` and `server_send_us`; untimed exact packets keep the old payload.
 - `terminal_ready` and `ui_scene_ack` carry the client's receive time; a scene ack with bit 62 set acks a timed message.
 - Scene stream version 2: `TIMED` and `TFLUSH` messages beside the steps (`UiSceneCodec`).
-- `speaker_audio` gains `pts_us` and the computer; new `display_caps` (server to client) and `ui_scroll` (client to server).
+- `speaker_audio` gains `pts_us`, the computer and a flags byte (`FLAG_LIVE` = 1); new `display_caps` (server to client) and `ui_scroll` (client to server).
 
 ### Tests
 
-JUnit (26.1) `DisplayPipelineTest` (lanes, the window and its timeout, the rate estimate, frames sent ahead and shown at their time on the server and the client, late joiners, flushes, queue limits, JPEG once per frame and the exact refine, auto mode, the codec's rungs, the playout buffer, the clock estimate), `UiTimedSceneTest` (CommitAt end to end, QueueFlush, Frame pacing, motion canvases and refine, v1 apps unchanged, hover / pressed, scroll, typing), and the updated `DisplaySyncHubTest`. GameTests `ecm_display` run the scenarios `video_smooth_under_lag`, `video_seek_flush`, `lossy_refine`, `wall_two_viewers` and `interactive_latency` (TESTING.md).
+JUnit (26.1) `DisplayPipelineTest` (lanes, the window and its timeout, the rate estimate, frames sent ahead and shown at their time on the server and the client, late joiners, flushes, queue limits, JPEG once per frame and the exact refine, auto mode, the codec's rungs, the playout buffer, the clock estimate), `SpeakerScheduleTest` (live blocks play now, the delayed queue dropped on the switch, resuming after a gap), `UiTimedSceneTest` (CommitAt end to end, QueueFlush, Frame pacing, motion canvases and refine, v1 apps unchanged, hover / pressed, scroll, typing), and the updated `DisplaySyncHubTest`. GameTests `ecm_display` run the scenarios `video_smooth_under_lag`, `video_seek_flush`, `lossy_refine`, `wall_two_viewers` and `interactive_latency` (TESTING.md).
 
 ## 2 · With a compositor and a swappable shell
 

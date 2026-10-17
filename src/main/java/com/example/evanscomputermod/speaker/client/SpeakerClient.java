@@ -27,6 +27,7 @@ public final class SpeakerClient {
         final SpeakerSoundInstance sound;
         final long startedMs = System.currentTimeMillis();
         long lastAudioMs;
+        final com.example.evanscomputermod.speaker.SpeakerSchedule schedule = new com.example.evanscomputermod.speaker.SpeakerSchedule();
 
         Playing(PcmStream stream, SpeakerSoundInstance sound) {
             this.stream = stream;
@@ -61,14 +62,16 @@ public final class SpeakerClient {
         }
         // Lip sync (DISPLAY_PIPELINE_SPEC.md Part E2): while the speaker's computer streams timed
         // frames, its audio plays with the same playout delay as the picture; otherwise at once.
+        // A live block (a call) plays at once and drops delayed audio still queued (SpeakerSchedule).
         long now = com.example.evanscomputermod.network.ClockSync.clientNowUs();
-        long delay = com.example.evanscomputermod.network.ClientPlayout.audioDelayUs(p.computer(), now);
         var clock = com.example.evanscomputermod.network.ClockSync.INSTANCE;
-        if (delay >= 0 && p.ptsUs() != 0 && clock.known()) {
-            playing.stream.pushAt(pcm, clock.toClient(p.ptsUs()) + delay - now);
-        } else {
-            playing.stream.pushNow(pcm);
-        }
+        long delay = p.ptsUs() != 0 && clock.known()
+                ? com.example.evanscomputermod.network.ClientPlayout.audioDelayUs(p.computer(), now) : -1;
+        long lead = delay >= 0 ? clock.toClient(p.ptsUs()) + delay - now : -1;
+        var plan = playing.schedule.next(p.live(), delay, lead);
+        if (plan.dropQueued()) playing.stream.dropQueued();
+        if (plan.now()) playing.stream.pushNow(pcm);
+        else playing.stream.pushAt(pcm, plan.leadUs());
         playing.lastAudioMs = System.currentTimeMillis();
     }
 

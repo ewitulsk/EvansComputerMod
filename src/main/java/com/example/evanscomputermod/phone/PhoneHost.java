@@ -873,12 +873,14 @@ public final class PhoneHost implements IComputerHost {
         // When the first sample plays (the card's queue ahead of it), for lip sync on the client (Part E2).
         int rate = Math.max(1, speakerAudio.rate());
         long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
-        long pts = Math.max(now, now + speakerAudio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate);
+        boolean live = speakerAudio.lastDrainLive(); // a call plays at once, not on the picture's delay
+        long pts = live ? now : Math.max(now, now + speakerAudio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate);
+        int flags = live ? com.example.evanscomputermod.speaker.SpeakerAudioPacket.FLAG_LIVE : 0;
         for (int off = 0; off < pcm.length; off += 2600) {
             int n = Math.min(2600, pcm.length - off);
             if (near.isEmpty()) continue;
             var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.rate(), n,
-                    speakerEncoder.encode(pcm, off, n), pts + off * 1_000_000L / rate, id);
+                    speakerEncoder.encode(pcm, off, n), live ? now : pts + off * 1_000_000L / rate, id, flags);
             for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
         }
     }

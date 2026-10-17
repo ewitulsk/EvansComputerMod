@@ -80,6 +80,12 @@ final class PcmStream implements AudioStream {
         push(pcm);
     }
 
+    /** Drop everything queued (a live block arrived: the delayed audio behind it goes). */
+    synchronized void dropQueued() {
+        head = 0;
+        size = 0;
+    }
+
     synchronized long skips() {
         return skips;
     }
