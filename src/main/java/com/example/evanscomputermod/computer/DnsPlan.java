@@ -344,10 +344,12 @@ public final class DnsPlan {
         return switch (role) {
             case WEB -> "named &\n";
             case ISP_ROUTER -> resolverOnIsp ? "named &\n" : "";
-            case RESOLVER, ROOT -> "named &\nsshd &\n";
-            case IANA -> "named &\nianad &\nsshd &\n";
-            case REGISTRY -> v == ecmPrimary() ? "named &\nregistryd &\nsshd &\n" : "named &\nsshd &\n";
-            case REGISTRAR -> "registrard &\nsshd &\n";
+            // No sshd on the DNS computers: 21 fewer processes on the server, and nothing there
+            // needs a remote shell.
+            case RESOLVER, ROOT -> "named &\n";
+            case IANA -> "named &\nianad &\n";
+            case REGISTRY -> v == ecmPrimary() ? "named &\nregistryd &\n" : "named &\n";
+            case REGISTRAR -> "registrard &\n";
             default -> "";
         };
     }
