@@ -33,6 +33,12 @@ jobs:
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip1
 
+      - name: Install wasi-sdk (lua's C sources)
+        run: |
+          curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-30/wasi-sdk-30.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-30.0-x86_64-linux" >> "$GITHUB_ENV"
+          echo "AR_wasm32_wasip1=$RUNNER_TEMP/wasi-sdk-30.0-x86_64-linux/bin/llvm-ar" >> "$GITHUB_ENV"
+
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
@@ -80,6 +86,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip1
+
+      - name: Install wasi-sdk (lua's C sources)
+        run: |
+          curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-30/wasi-sdk-30.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-30.0-x86_64-linux" >> "$GITHUB_ENV"
+          echo "AR_wasm32_wasip1=$RUNNER_TEMP/wasi-sdk-30.0-x86_64-linux/bin/llvm-ar" >> "$GITHUB_ENV"
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2

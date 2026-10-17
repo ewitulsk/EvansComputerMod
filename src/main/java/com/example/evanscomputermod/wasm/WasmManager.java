@@ -97,6 +97,24 @@ public class WasmManager {
         return runtime;
     }
 
+    private static volatile WasmRuntime chicoryFallback;
+    /**
+     * The pure-Java runtime, for a program the bound runtime can't load (the
+     * Wasmtime sidecar's engine predates WASM exception handling, which
+     * lua.wasm's C code uses for errors). {@code null} when the bound runtime
+     * already is Chicory.
+     */
+    public static WasmRuntime fallbackRuntime() {
+        WasmRuntime r=runtime;
+        if(r==null||"chicory".equals(r.providerName())) return null;
+        if(chicoryFallback==null) {
+            synchronized(WasmManager.class) {
+                if(chicoryFallback==null) chicoryFallback=new com.example.evanscomputermod.wasm.chicory.ChicoryRuntimeProvider().create();
+            }
+        }
+        return chicoryFallback;
+    }
+
     /**
      * Initializes the WASM manager by creating the wasm-bin directory
      * and extracting bundled WASM files from the JAR.

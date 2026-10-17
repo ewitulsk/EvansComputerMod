@@ -458,6 +458,8 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 | `echo` | `echo <text>` | Print text |
 | `python` | `python` | Start the Python REPL |
 | `python` | `python <file>` | Run a Python script |
+| `lua` | `lua` | Start the Lua 5.2 REPL |
+| `lua` | `lua <file> [args]` | Run a Lua script |
 | `ifconfig` | `ifconfig` | Show all network interfaces |
 | `ifconfig` | `ifconfig eth0 10.0.0.1/24` | Configure interface with CIDR |
 | `ifconfig` | `ifconfig eth0 up/down` | Bring interface up/down |
@@ -1189,6 +1191,56 @@ Each computer has a MAC address (6 bytes, derived from its UUID) and an IPv4 add
 
 ---
 
+## Lua
+
+The terminal also runs Lua 5.2 (PUC-Rio Lua, the version ComputerCraft programs are written for, through [mlua](https://github.com/mlua-rs/mlua)). Start it with `lua` for an interactive REPL, or `lua script.lua [args]` to run a file; the arguments are in `arg` (and `...`).
+
+```
+> lua
+Lua 5.2 (PUC-Rio, via mlua)
+> 6 * 7
+42
+> for i = 1, 3 do
+>> print(i)
+>> end
+```
+
+Lua's own libraries work as usual (`string`, `table`, `math`, `coroutine`, `bit32`, `io` and `os` on the computer's files); `unpack` and `loadstring` are there for older scripts.
+
+Lua has the same ECM modules as Python, with the same functions (a repository rule, checked by `cargo test -p lua`). They are globals, loaded on first use, and `require("name")` works too:
+
+| Module | What it is |
+|--------|------------|
+| `shell` (also `terminal`) | Python's [`terminal` module](#terminal-module): `write`, `println`, `clear`, `set_cursor`, `get_width`, `get_height`, `sleep`, `input`, `read_file`, `write_file`, `file_exists`, `delete_file`, `file_size`, `list_files`, `set_redstone`, `get_redstone`, `get_all_redstone`, sides `shell.DOWN` .. `shell.RIGHT` |
+| `net` | interfaces, routes, DNS, `ping`, `resolve`, TCP (`tcp_connect`, `tcp_listen`, `tcp_accept`, `tcp_send`, `tcp_recv`, `tcp_close`), `http_get`, `http_post` |
+| `peripheral` | `attached`, `names`, `is_present`, `get_type`, `get_methods`, `call`, `wrap`, `find`, `find_all`, `pull_event` (plus `list`, `methods`, `wait_event`) |
+| `sensors`, `controller`, `audio` | lidars on a Wired Sensor Module, Xbox controllers, the Speaker's `/dev/audio` |
+| `radio` | SDR flowgraphs: sources, blocks, sinks, `Flowgraph`, framed PHY mode |
+| `ui` | GUI apps: `ui.App`, the widgets, `ui.load` for `.ui.json` layouts |
+
+Differences that come from the language: pipelines are written with `..` where Python uses `>>`; optional arguments go in Python's order or in one table of names (`radio.tone(1000, {rate = 8000, seconds = 1})`); methods are called with `:` (`sdr:tune(146.52e6)`); a peripheral's or the radio's error is a Lua error (catch it with `pcall`); complex samples in lists are `{re, im}` pairs; row and column numbers of a lidar scan start at 0 as in Python. `require` also finds your own files: `require("lib.util")` loads `lib/util.lua` (or `lib/util/init.lua`) next to the running script or from the computer's root.
+
+```lua
+local speaker = peripheral.find("speaker")
+audio.open():notes("C5 E5 G5", 0.15)
+local fg = radio.Flowgraph(radio.tone(1000, {rate = 8000, seconds = 1}) .. radio.real() .. radio.speaker())
+fg:run()
+```
+
+A GUI app (start it from the desktop with `gui launch lua /counter.lua`):
+
+```lua
+local app = ui.App("dev.you.counter")
+local count, label = 0, ui.Label("Count: 0")
+app:window("Counter", ui.Column{gap = 8, padding = 12, children = {
+  label,
+  ui.Button("Add one", {on_click = function() count = count + 1; label.text = "Count: " .. count end}),
+}})
+app:run()
+```
+
+Try it with `/ecm scenario spawn lua_basics`, `lua_modules` and `lua_ui` (1.21.1). Lua errors use WASM exception handling, which the Wasmtime sidecar's engine doesn't have: with the sidecar installed, `lua` runs on the built-in Chicory runtime.
+
 ## Networking — Technical Details
 
 ### Cables, faces and segments
@@ -1624,6 +1676,7 @@ public class DroneEntity extends Entity implements IComputerHost {
 
 - Java 21
 - Rust toolchain with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) for `lua` (Lua's C sources): unpack it and set `WASI_SDK_PATH`, or put it in `/opt/wasi-sdk`, `~/wasi-sdk` or `C:\wasi-sdk`. Without it `scripts/stage-wasm.sh` skips `lua` with a warning.
 - Gradle (wrapper included)
 
 ### Build
