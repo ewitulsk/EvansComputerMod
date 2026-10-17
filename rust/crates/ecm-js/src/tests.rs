@@ -186,3 +186,32 @@ fn keys_reach_listeners() {
     assert!(s.dispatch(&mut p, i, "keydown", "Enter"));
     assert_eq!(text_of(&p, "o"), "aEnter");
 }
+
+#[test]
+fn waiting_for_the_network_or_the_player_is_not_running() {
+    // A slow server (twice the budget, twice over) and a player reading a dialog don't stop a script;
+    // only JavaScript's own time counts.
+    let mut p = page("<p id=o></p>");
+    let mut s = script();
+    {
+        let mut h = s.host.borrow_mut();
+        h.fetch = Some(Box::new(|_, url, _| {
+            std::thread::sleep(BUDGET * 2);
+            Ok(Fetched { status: 200, body: "{\"news\":\"slow\"}".into(), content_type: "application/json".into(), url: url.to_string() })
+        }));
+        h.modal = Some(Box::new(|_, _| {
+            std::thread::sleep(BUDGET * 2);
+            true
+        }));
+    }
+    eval(
+        &mut s,
+        &mut p,
+        "fetch('a.json').then(function (r) { return r.json(); }).then(function (j) { return fetch('b.json').then(function () { document.getElementById('o').textContent = j.news + ' ' + confirm('ok?'); }); }); 1",
+    );
+    assert_eq!(text_of(&p, "o"), "slow true");
+    assert_eq!(s.stopped, 0, "{:?}", s.host.borrow().console);
+    // The budget still stops JavaScript that runs too long after a wait.
+    assert!(s.eval(&mut p, "fetch('c.json'); while (true) {}").is_none());
+    assert_eq!(s.stopped, 1);
+}
