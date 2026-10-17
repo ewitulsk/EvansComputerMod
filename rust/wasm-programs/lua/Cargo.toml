@@ -27,3 +27,7 @@ ecm-dsp = { workspace = true }
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 mlua = { version = "0.12", features = ["lua52", "vendored"] }
+
+[dev-dependencies]
+# The `.card` file written by cards.lua must be what the ecm-cards crate reads.
+ecm-cards = { workspace = true }

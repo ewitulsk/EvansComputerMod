@@ -39,6 +39,8 @@
 //! | `titlebar` | `0x2f5f9eff` | the focused window's title bar (shells) |
 //! | `titlebar_inactive` | `0x30353eff` | other windows' title bars (shells) |
 //! | `titlebar_text` | `0xffffffff` | title bar text (shells) |
+//! | `grid_line` | `0x00000070` | pixel grid gridlines |
+//! | `masked` | `0x8c95a3a0` | locked pixel-grid texels (hatched over the colour) |
 //!
 //! [`Theme::named`] knows the built-in themes ([`Theme::NAMES`]): the shell
 //! sends the one `/etc/ui.toml` names, so every app restyles with it.
@@ -118,6 +120,8 @@ theme! {
     titlebar: 0x2f5f_9eff,
     titlebar_inactive: 0x3035_3eff,
     titlebar_text: 0xffff_ffff,
+    grid_line: 0x0000_0070,
+    masked: 0x8c95_a3a0,
 }
 
 impl Theme {

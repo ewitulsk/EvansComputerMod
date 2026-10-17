@@ -4,3 +4,8 @@
 pub mod radio_module;
 pub mod ui_module;
 pub mod web_module;
+
+#[cfg(test)]
+mod cards_tests;
+#[cfg(test)]
+mod cards_apps_tests;

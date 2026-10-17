@@ -4,6 +4,7 @@ import com.example.evanscomputermod.radio.RadioConfig;
 import com.example.evanscomputermod.radio.api.Band;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Emission;
+import com.example.evanscomputermod.radio.api.PassiveEndpoint;
 import com.example.evanscomputermod.radio.api.Pose;
 import com.example.evanscomputermod.radio.api.RadioEndpoint;
 import com.example.evanscomputermod.radio.api.RadioMedium;
@@ -11,6 +12,7 @@ import com.example.evanscomputermod.radio.api.Reception;
 import com.example.evanscomputermod.radio.phys.Fading;
 import com.example.evanscomputermod.radio.phys.FreeSpace;
 import com.example.evanscomputermod.radio.phys.Ionosphere;
+import com.example.evanscomputermod.radio.phys.NearField;
 import com.example.evanscomputermod.radio.phys.Noise;
 import com.example.evanscomputermod.radio.phys.PathLossModel;
 import com.example.evanscomputermod.radio.phys.Polarization;
@@ -74,6 +76,13 @@ public class WorldRadioMedium implements RadioMedium {
     private static final double SPEED_OF_LIGHT = 299_792_458.0;
     private static final int SHARDS = Band.values().length + 1;
     private static final int WANT_SIZE = 1 << 16;
+    /**
+     * The near-field shard: {@link NearField} coupling loss plus the traced obstruction only
+     * (no ground wave, skywave or fading), and ENERGY emissions energise {@link PassiveEndpoint}s.
+     */
+    private static final int NF_SHARD = Band.NEAR_FIELD.ordinal();
+    /** How long an energising field keeps a passive endpoint awake after it ends, micros (2 ticks). */
+    public static final long ENERGY_HOLD_MICROS = 100_000;
 
     /** What the medium needs from the game, read only by {@link #tick} (server thread). */
     public interface WorldAccess {
@@ -131,6 +140,7 @@ public class WorldRadioMedium implements RadioMedium {
     private long currentTick;
     private int computedLastTick;
     private long computedTotal;
+    private final AtomicLong droppedColdTransmits = new AtomicLong();
     private volatile double kLosLinear = Fading.kFromDb(Fading.DEFAULT_LOS_K_DB);
 
     private record PairDeps(String dimension, long[] deps) {}
@@ -210,6 +220,18 @@ public class WorldRadioMedium implements RadioMedium {
             e = new Emission(e.kind(), e.channel(), e.powerDbm(), now, e.durationMicros(), e.modulation(),
                     e.bitRate(), e.payload(), e.iq(), e.sampleRateHz());
         }
+        if (from instanceof PassiveEndpoint p) {
+            // A tag only backscatters the field that powers it: nothing when cold, never more than field − loss.
+            if (!p.energised()) {
+                droppedColdTransmits.incrementAndGet();
+                return e;
+            }
+            double cap = p.maxTxPowerDbm();
+            if (e.powerDbm() > cap) {
+                e = new Emission(e.kind(), e.channel(), cap, e.startMicros(), e.durationMicros(), e.modulation(),
+                        e.bitRate(), e.payload(), e.iq(), e.sampleRateHz());
+            }
+        }
         Node tx = nodes.get(from.id());
         if (tx == null || tx.removed) {
             register(from);
@@ -225,12 +247,14 @@ public class WorldRadioMedium implements RadioMedium {
         Airwaves.Active self = new Airwaves.Active(e, tx, txPose, model.mask());
         Airwaves waves = air[shard];
         waves.add(self);
-        if (e.kind() != Emission.Kind.FRAME) return e;
+        // Frames are delivered; energy only energises passive endpoints (and interferes); IQ is read back.
+        if (e.kind() == Emission.Kind.IQ) return e;
 
         BandIndex.Snapshot snap = index[shard].snapshot();
         if (snap.size == 0) return e;
         double txGain = from.antenna().peakGainDbi() - from.antenna().feedLossDb();
-        double range = FreeSpace.distanceForLossM(e.powerDbm() + txGain + snap.maxGainDbi - snap.minSensitivityDbm + 6, fc);
+        double budgetDb = e.powerDbm() + txGain + snap.maxGainDbi - snap.minSensitivityDbm + 6;
+        double range = shard == NF_SHARD ? NearField.distanceForLossM(budgetDb, fc) : FreeSpace.distanceForLossM(budgetDb, fc);
         int bits = e.payload() == null ? 0 : e.payload().length * 8;
         int r = (int) Math.min(1 << 20, Math.ceil(range / BandIndex.CELL));
         int cx = (int) Math.floor(txPose.x()) >> 6, cz = (int) Math.floor(txPose.z()) >> 6;
@@ -255,6 +279,8 @@ public class WorldRadioMedium implements RadioMedium {
                          Node rxNode, double range, int bits, PerModels.Model model, long now) {
         if (rxNode == tx || rxNode.removed) return;
         RadioEndpoint rx = rxNode.ep;
+        boolean energy = e.kind() == Emission.Kind.ENERGY;
+        if (energy && !(rx instanceof PassiveEndpoint)) return;
         Pose rxPose = rx.pose();
         if (!rxPose.sameDimension(txPose)) return;
         double d = distance(txPose, rxPose);
@@ -265,10 +291,20 @@ public class WorldRadioMedium implements RadioMedium {
         if (w <= 0) return;
         double rssi = e.powerDbm() + linkDb(tx, txPose, rxNode, rxPose, d, e.channel().centerHz(), now, true)
                 + 10 * Math.log10(w);
+        if (energy) {
+            // An energising field: no decoding, no PER roll; the tag wakes if the field is strong enough.
+            PassiveEndpoint p = (PassiveEndpoint) rx;
+            if (rssi >= p.wakeThresholdDbm()) p.energise(rssi, e.endMicros() + ENERGY_HOLD_MICROS);
+            return;
+        }
         if (rssi < rx.sensitivityDbm()) return;
         Conditions c = conditionsOf(rxPose.dimension());
-        double noiseDbm = Noise.floorDbm(tuned.bandwidthHz(), rx.noiseFigureDb(), tuned.centerHz(),
-                Noise.Environment.RURAL, c.dayTime(), c.thundering());
+        // A near-field coil is coupled to the other coil, not to the sky: thermal floor only, no HF
+        // atmospheric or man-made noise (which sits 40 dB above kT0B at 13.56 MHz).
+        double noiseDbm = shard(tuned.centerHz()) == NF_SHARD
+                ? Noise.thermalDbm(tuned.bandwidthHz(), rx.noiseFigureDb())
+                : Noise.floorDbm(tuned.bandwidthHz(), rx.noiseFigureDb(), tuned.centerHz(),
+                        Noise.Environment.RURAL, c.dayTime(), c.thundering());
         // Only interference inside the frame's own band counts (a frame on a sub-channel of a wider receiver).
         double interfMw = interferenceMw(waves, self, e.startMicros(), e.endMicros(), rxNode, rxPose,
                 BasicRadioMedium.intersection(e.channel(), tuned), now);
@@ -333,7 +369,7 @@ public class WorldRadioMedium implements RadioMedium {
         if (w < 1e-9) return 0;
         double d = distance(a.pose(), rxPose);
         double p = rx == null
-                ? o.powerDbm() - FreeSpace.lossDb(Math.max(1, d), o.channel().centerHz()) - UNKNOWN_MARGIN_DB
+                ? o.powerDbm() - baseLossDb(d, o.channel().centerHz()) - UNKNOWN_MARGIN_DB
                 : o.powerDbm() + linkDb(a.sender(), a.pose(), rx, rxPose, d, o.channel().centerHz(), now, true);
         return w * Units.dbmToMw(p);
     }
@@ -371,7 +407,7 @@ public class WorldRadioMedium implements RadioMedium {
         double f = e.channel().centerHz();
         double p = rn == null
                 ? e.powerDbm() + a.sender().ep.antenna().peakGainDbi() + rx.antenna().peakGainDbi()
-                        - FreeSpace.lossDb(Math.max(1, d), f) - UNKNOWN_MARGIN_DB
+                        - baseLossDb(d, f) - UNKNOWN_MARGIN_DB
                 : e.powerDbm() + linkDb(a.sender(), a.pose(), rn, rxPose, d, f, now, false);
         sink.accept(new Heard(a.sender().ep, e, p, d / SPEED_OF_LIGHT * 1e6));
     }
@@ -388,7 +424,23 @@ public class WorldRadioMedium implements RadioMedium {
             request(key);
             return Double.NaN;
         }
-        return -Math.max(0, FreeSpace.lossDb(Math.max(1, distance(pa, pb)), freqHz) + l.excessDb());
+        return -cachedLossDb(l, distance(pa, pb), freqHz);
+    }
+
+    /** Path loss of an untraced pair before the clutter margin: free space, or near-field coupling on that shard. */
+    private static double baseLossDb(double d, double f) {
+        return shard(f) == NF_SHARD ? NearField.lossDb(d, f) : FreeSpace.lossDb(Math.max(1, d), f);
+    }
+
+    /**
+     * Path loss of a traced pair at the live distance: free space plus the cached excess, or on the
+     * near-field shard the coupling loss plus the traced obstruction only (the excess also holds ground
+     * and sky terms, which the near field has none of; conductive blocks on the path still shield).
+     * Never a gain (the excess can be negative where ground reflection adds up).
+     */
+    private static double cachedLossDb(LinkCache.Link l, double d, double f) {
+        if (shard(f) == NF_SHARD) return Math.max(0, NearField.lossDb(d, f) + (l.path() == null ? 0 : l.path().obstructionDb()));
+        return Math.max(0, FreeSpace.lossDb(Math.max(1, d), f) + l.excessDb());
     }
 
     /** Cached link details for two endpoints at a frequency (debug, tests), or null if not traced yet. */
@@ -412,17 +464,17 @@ public class WorldRadioMedium implements RadioMedium {
         if (l != null) {
             boolean tIsA = t.idx < r.idx;
             g = (tIsA ? l.gainA() + l.gainB() : l.gainB() + l.gainA()) - l.polDb();
-            // Path loss is never a gain (the cached excess can be negative where ground reflection adds up).
-            loss = Math.max(0, FreeSpace.lossDb(Math.max(1, d), f) + l.excessDb());
+            loss = cachedLossDb(l, d, f);
             k = l.kLinear();
         } else {
             request(key);
             g = t.ep.antenna().peakGainDbi() + r.ep.antenna().peakGainDbi();
-            loss = FreeSpace.lossDb(Math.max(1, d), f) + UNKNOWN_MARGIN_DB;
+            loss = baseLossDb(d, f) + UNKNOWN_MARGIN_DB;
             k = kLosLinear;
         }
         g -= t.ep.antenna().feedLossDb() + r.ep.antenna().feedLossDb();
-        if (fade) {
+        // The near field is a coupled pair of coils, not a multipath channel: no fading beyond the PER roll.
+        if (fade && shard(f) != NF_SHARD) {
             double coh = Fading.coherenceTimeS(t.ep.speedMps() + r.ep.speedMps(), f);
             long s = Fading.blockSeed(seed ^ key, now * 1e-6, coh);
             g += k > 0 ? Fading.ricianGainDb(k, s) : Fading.rayleighGainDb(s);
@@ -749,7 +801,8 @@ public class WorldRadioMedium implements RadioMedium {
         double pol = polarizationLossDb(ea, eb, ux, uy, uz);
         Polarization groundPol = Math.abs(ea[1]) >= 0.7071 ? Polarization.VERTICAL : Polarization.HORIZONTAL;
         if (c == null) c = Conditions.DEFAULT;
-        Ionosphere iono = f < PathTracer.UNDERGROUND_MAX_HZ ? ionosphere() : null;
+        // Below 30 MHz the ionosphere may carry the pair, except on the near-field shard (coupling only).
+        Ionosphere iono = f < PathTracer.UNDERGROUND_MAX_HZ && shard(f) != NF_SHARD ? ionosphere() : null;
         PathTracer.Sky sky = new PathTracer.Sky(iono, c.dayTime(), c.hasSky());
         if (iono != null && c.hasSky()) ionoPairs.put(key, pa.dimension());
         else ionoPairs.remove(key);
@@ -875,12 +928,30 @@ public class WorldRadioMedium implements RadioMedium {
         return queued.size();
     }
 
+    /** The game tick of the last {@link #tick} (debug: is the medium being ticked?). */
+    public long lastTick() {
+        return currentTick;
+    }
+
+    /** One endpoint's registration state (debug): registered, retired, in the index of which shard. */
+    public String debugNode(RadioEndpoint e) {
+        Node n = nodes.get(e.id());
+        if (n == null) return "unregistered";
+        return "idx=" + n.idx + " removed=" + n.removed + " byIdx=" + (byIdx.get(n.idx) == n) + " band=" + n.indexBand
+                + " pairs=" + (pairsOf.get(n.idx) == null ? 0 : pairsOf.get(n.idx).size());
+    }
+
     public int computedLastTick() {
         return computedLastTick;
     }
 
     public long computedTotal() {
         return computedTotal;
+    }
+
+    /** Transmits from a {@link PassiveEndpoint} that was not energised (dropped before reaching the air). */
+    public long droppedColdTransmits() {
+        return droppedColdTransmits.get();
     }
 
     /** Trace a path right now (debug command, server thread). */

@@ -414,6 +414,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
+name = "cardtool"
+version = "0.1.0"
+dependencies = [
+ "ecm-cards",
+ "ecm-host-abi",
+ "getrandom 0.2.17",
+]
+
+[[package]]
 name = "carrier"
 version = "0.1.0"
 dependencies = [
@@ -1184,6 +1193,14 @@ name = "ecm-bridge"
 version = "0.1.0"
 dependencies = [
  "ecm-net",
+]
+
+[[package]]
+name = "ecm-cards"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha2",
 ]
 
 [[package]]
@@ -2087,6 +2104,7 @@ version = "0.1.0"
 name = "lua"
 version = "0.1.0"
 dependencies = [
+ "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
@@ -2840,6 +2858,7 @@ name = "python"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
@@ -2847,6 +2866,7 @@ dependencies = [
  "ecm-ui-proto",
  "getrandom 0.2.17",
  "num-complex",
+ "pkg",
  "rustpython-vm",
  "visual",
 ]
@@ -3759,14 +3779,6 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
-
-[[package]]
-name = "simtool"
-version = "0.1.0"
-dependencies = [
- "ecm-host-abi",
- "getrandom 0.2.17",
-]
 
 [[package]]
 name = "siphasher"

@@ -242,22 +242,22 @@ print(r.respond("000102030405060708090a0b0c0d0e0f"))   # {'res': '4c45...', 'ks'
 ev = peripheral.pull_event("card_inserted")             # ('card_inserted', 'right', 'sim', True)
 ```
 
-Rust: `rust/wasm-programs/simtool` is the example (`ecm_host_abi::peripheral::call(reader, "write", ...)`,
+Rust: `rust/wasm-programs/cardtool` is the example (`ecm_host_abi::peripheral::call(reader, "write", ...)`,
 `peripheral::wait_event`).
 
-**`simtool`** (Rust WASI program, in `/bin` with the other programs):
+**`cardtool sim`** (Rust WASI program, in `/bin` with the other programs):
 
 ```
-simtool [info]                                          the card in the reader
-simtool write <imsi> <carrier> [--key <hex>|--random]   write a blank SIM; prints "key <hex>" once
-simtool auth <challenge-hex>                            the card's res and ks
-simtool eject                                           done with the card
-simtool wait [seconds]                                  wait for the next card_inserted / card_removed
+cardtool sim [info]                                          the card in the reader
+cardtool sim write <imsi> <carrier> [--key <hex>|--random]   write a blank SIM; prints "key <hex>" once
+cardtool sim auth <challenge-hex>                            the card's res and ks
+cardtool sim eject                                           done with the card
+cardtool sim wait [seconds]                                  wait for the next card_inserted / card_removed
 --reader <name>                                         pick a reader when there are several
 ```
 
 `--random` (the default) uses WASI `random_get` (the host's SecureRandom).
-(`ecm_host_abi::random::getrandom` returned all zeros in a WASI program, so simtool doesn't use it.)
+(`ecm_host_abi::random::getrandom` returned all zeros in a WASI program, so cardtool doesn't use it.)
 
 Model: `models/card_reader.bbmodel` (Blockbench MCP), exported with `py -3 scripts/export-radio-models.py card_reader`
 (kind `facing_card`: the cubes named `card_*`, the inserted SIM and the green LED, appear only in `card_reader_card`).
@@ -274,13 +274,13 @@ Recipe: `IGI / IPI / IRI` (iron ingots, a gold nugget, paper, redstone).
 
 Scenario `card_writer` (`/ecm scenario spawn card_writer`): a player places a computer, a Card Reader/Writer
 against its east side and a chest beyond it. (1) Auto Eject Sim = true in the reader's screen; a blank SIM
-clicked in; `simtool write 310150000000001 cell-red --random` prints the key and the SIM lands in the
+clicked in; `cardtool sim write 310150000000001 cell-red --random` prints the key and the SIM lands in the
 chest holding exactly that key. Control: that SIM, taken from the chest and clicked back in, can't be
-written again (`simtool: the card is not blank`) and is unchanged; `simtool auth` matches the server's own
-HMAC of the stored key; `simtool eject` pushes it back into the chest. (2) Auto Eject Sim = false and a
+written again (`cardtool: the card is not blank`) and is unchanged; `cardtool sim auth` matches the server's own
+HMAC of the stored key; `cardtool sim eject` pushes it back into the chest. (2) Auto Eject Sim = false and a
 hopper under the reader: a new blank SIM stays in the reader (control: the hopper doesn't take it), is
 written with a given key and the hopper pulls it; its network encoding (what a client gets) has no key.
-(3) A hopper on top fed by a chest: a blank SIM put into that chest reaches the reader, `simtool wait`
+(3) A hopper on top fed by a chest: a blank SIM put into that chest reaches the reader, `cardtool sim wait`
 prints `event card_inserted sim blank=true`, the card is written and pulled out below.
 NeoForge's FakePlayer refuses `openMenu`, so `ScenarioPlayer.openMenu` right-clicks the block (its own use
 code runs) and then builds the server-side menu from the block's MenuProvider, as `ServerPlayer.openMenu`
@@ -621,7 +621,7 @@ counts it); `cell down` removes `wwan0` (control: the ping fails); `cell up` bri
 
 | Scenario | |
 |---|---|
-| `cell_phone_celld` (GameTest `ecm_phone`) | A SIM written at a Card Reader/Writer with `simtool` and taken out by hand; a new ePhone; its slot screen (sneak-right-click) gets an LTE Modem and the SIM. The phone starts celld; its attachments are `module_2` (framed_radio) and `sim` (the tray), with no SIM slot of the modem's own; the status bar has `cell 0` and `carrier -`. In the phone's Terminal `cell` shows the SIM's identity (read through `sim`) and `searching`, `cell scan` hears nothing (no network is built). Control: the SIM out of the tray stops celld and `cell` says it isn't running. About 5 s. |
+| `cell_phone_celld` (GameTest `ecm_phone`) | A SIM written at a Card Reader/Writer with `cardtool sim` and taken out by hand; a new ePhone; its slot screen (sneak-right-click) gets an LTE Modem and the SIM. The phone starts celld; its attachments are `module_2` (framed_radio) and `sim` (the tray), with no SIM slot of the modem's own; the status bar has `cell 0` and `carrier -`. In the phone's Terminal `cell` shows the SIM's identity (read through `sim`) and `searching`, `cell scan` hears nothing (no network is built). Control: the SIM out of the tray stops celld and `cell` says it isn't running. About 5 s. |
 | `cell_phone_attach` (GameTest `ecm_cellular`) | The whole network, see "As built: phase 3 network side". |
 
 ### Tests
@@ -851,7 +851,7 @@ All in `ecm_cellular` (`scripts\Test.ps1 -GameTests ecm_cellular`), spawnable wi
 |---|---|---|
 | `cell_lte_far` | Here: a computer with an LTE Modem, no SIM; `celld &`; **control**: `cell status` says `no_sim`. 300 blocks east (kept loaded with `/forceload`, an operator command): a core with a Card Reader/Writer, a server cabled to its top, a site cabled to its bottom (Advanced SDR, coax up a mast, LTE panel facing west). Typed there: server address and `ip route add 100.65.10.0/24 via 10.0.31.1 dev eth1`; the core's router CLI (addresses, `ip routing`); `cored init cell-far 100.65.10.0/24`, `cored site-add`, `cored start &`; `celld-site config set ... channel 2`, `celld-site start &` until `link up`; a blank SIM in the reader, `cored sim new --label far`, taken out; back at the phone, right-click the modem's bay with it: celld finds it and attaches to cell-far cell 1 (the antenna checked 298 m away), pings the server (at least 4 of 5), `cored status` lists the session at site-far | 13.5 s |
 | `cell_mmwave_hill` | A core with two sites: an mmWave site (mmWave Array Antenna facing south, `power 37`, the SDR's maximum) and an LTE site (LTE panel facing south). 28 blocks south: `los` in the open and `hidden` behind a 3-block earth ridge, each with an mmWave Modem and a SIM `cored sim new` wrote. `los` attaches over mmWave with CQI 16-18 (256QAM) and pings the core; the traced paths: line of sight to `los`, >100 dB of earth at 28 GHz to `hidden`, tens of dB at 800 MHz. **Control**: `hidden`'s `cell scan` hears nothing and it stays `searching`. The player stops celld (`ps`, `kill`), sneak-right-clicks the bay (the modem comes out), sneak-uses the loose modem (its SIM comes out with its key), clicks an LTE Modem in and the SIM into it, `celld &`: attached to cell 2 (LTE, channel 4) through the ridge, pings the core; `cored sessions` lists it at site-lte | 12.8 s |
-| `cell_wrong_carrier` | cell-red's core and site (LTE channel 5, panel facing south); 12 blocks south a computer with an LTE Modem. At the same card writer the player writes a **cell-blue** SIM with `simtool write 001020000000042 cell-blue --random` (the core knows nothing of it) and clicks it into the modem; `celld &`. **Control**: `cell scan` lists `cell-red 1 lte 5 ... (other carrier)`; `cell status` stays `searching - no service (heard cell-red), looking for a cell-blue cell`; `celld-site status` says `phones 0`; `cored log` never mentions the IMSI. Then `cored sim new --label red`, the red SIM clicked into the bay: the blue card comes back to the player with the key simtool printed, celld sees the new SIM and attaches to cell-red, pings the core | 12.8 s |
+| `cell_wrong_carrier` | cell-red's core and site (LTE channel 5, panel facing south); 12 blocks south a computer with an LTE Modem. At the same card writer the player writes a **cell-blue** SIM with `cardtool sim write 001020000000042 cell-blue --random` (the core knows nothing of it) and clicks it into the modem; `celld &`. **Control**: `cell scan` lists `cell-red 1 lte 5 ... (other carrier)`; `cell status` stays `searching - no service (heard cell-red), looking for a cell-blue cell`; `celld-site status` says `phones 0`; `cored log` never mentions the IMSI. Then `cored sim new --label red`, the red SIM clicked into the bay: the blue card comes back to the player with the key cardtool printed, celld sees the new SIM and attaches to cell-red, pings the core | 12.8 s |
 | `cell_roaming` | Sites A (x 0) and B (x 40), cell 1 and 2 on LTE channel 2 (`neighbours 2:2` / `1:2`), each behind its own router computer in its own subnet (10.0.61.0/24 behind `ra`, 10.0.63.0/24 behind `rb`; the sites' default routes point at them); the core between them with its router CLI (three interfaces, `ip routing`, static routes to both site subnets) and a server (`sshd`) on its LAN; `cored sites` shows site-b connected from 10.0.63.2. The phone is a computer with an LTE Modem on a plank cart at the panels' height in front of A. **[scripted]** the cart becomes a Sable ship; `celld &`: attached to cell 1; it pings the server, `ssh root@10.0.64.10`, `echo before-handover`. **[scripted]** the cart drives 28 blocks east (31.5 m from A, 4.8 m from B): `cored handovers` logs `handover <imsi> cell 1 -> 2 (ip 100.65.13.2 kept)`, `echo after-handover` works in the same SSH session, `exit`; `cell status` shows cell 2 and the handover, the same address as at A; `cored sessions` lists it at site-b | 19.4 s |
 | `cell_chat` | The `cell_phone_attach` network (core, LTE site, `cored sim new`, an ePhone with an LTE Modem and the SIM in its slot screen) with a server on the core's LAN running `chatd`, `chatapp --source /src/chat`, `pkg build`, `pkg serve /srv/repo 8080 &`. On the phone: App Store from the home grid (**control**: no repository, no apps), Repos, the server's `10.0.71.10:8080`, Add (the index over LTE), Chat, Install (672 KB over LTE, ~7.5 s), Open; the server's address and a nickname, Connect; the phone's dialog asks for the network: Allow. The server joins with `chat 10.0.71.10 --nick base`; the phone's message reaches it and the reply shows in Chat (**control**: no notification while Chat is on screen). Alt+H: Chat is suspended (an ePhone suspends background apps). In the phone's Terminal: `pkg perm grant dev.ecm.chat background:refresh` and `... notifications`. **[exception]** refresh wakes every 3 s with a 2 s budget for the run (minutes in a world). The server writes again: the next refresh wake fetches it and Chat posts "base in Tech Village chat: still there, pat?" while it stays in the background | 23.9 s |
 | `cell_site_core`, `cell_phone_attach` (phase 3, unchanged) | see "As built: phase 3 network side" | 14.8 s, 9.1 s |

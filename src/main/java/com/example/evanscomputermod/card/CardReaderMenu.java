@@ -27,7 +27,7 @@ public class CardReaderMenu extends AbstractContainerMenu {
 
     /** Client. */
     public CardReaderMenu(int id, Inventory inv) {
-        this(id, inv, null, new SimpleContainerData(3));
+        this(id, inv, null, new SimpleContainerData(4));
     }
 
     /** Server. */
@@ -57,9 +57,15 @@ public class CardReaderMenu extends AbstractContainerMenu {
         return data.get(0) != 0;
     }
 
-    /** 0 no card, 1 blank SIM, 2 written SIM, 3 another card. */
+    /** 0 no card, 1 blank card, 2 written card, 3 another item. */
     public int cardState() {
         return data.get(1);
+    }
+
+    /** The card's kind, or null. */
+    public @Nullable com.example.evanscomputermod.card.CardKind cardKind() {
+        int k = data.get(3) - 1;
+        return k < 0 || k >= com.example.evanscomputermod.card.CardKind.values().length ? null : com.example.evanscomputermod.card.CardKind.values()[k];
     }
 
     public boolean released() {

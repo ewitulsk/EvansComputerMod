@@ -14,6 +14,7 @@ members = [
     "crates/ecm-dsp",
     "crates/ecm-radio",
     "crates/ecm-cell",
+    "crates/ecm-cards",
     "crates/ecm-cell-net",
     "crates/ecm-cell-ui",
     "crates/ecm-chat",
@@ -103,7 +104,7 @@ members = [
     "wasm-programs/wifi",
     "wasm-programs/cell",
     "wasm-programs/celld",
-    "wasm-programs/simtool",
+    "wasm-programs/cardtool",
     "wasm-programs/celld-site",
     "wasm-programs/cored",
     "wasm-programs/cellsite",
@@ -143,6 +144,7 @@ ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
 ecm-radio = { path = "crates/ecm-radio" }
 ecm-cell = { path = "crates/ecm-cell" }
+ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-disco = { path = "crates/ecm-disco" }
 ecm-dns = { path = "crates/ecm-dns" }

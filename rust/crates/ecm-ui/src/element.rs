@@ -60,6 +60,20 @@ pub enum Kind {
     /// A polyline (`points`, at most 256, relative to the parent), `stroke`
     /// lu wide in `color`: wires and connectors.
     Wire,
+    /// An editable indexed bitmap (card faces, icons): `cols` x `rows`
+    /// texels drawn `zoom` lu each (auto-fit without `zoom`) in colours of a
+    /// `palette` of up to 16 RGB values. The pointer paints with `tool`
+    /// (`pencil`, `fill`, `eyedropper`, `line`) in palette index `color`,
+    /// mirrored left-right with `mirror_h`; texels whose `mask` entry is
+    /// non-zero are locked and drawn hatched. `change` carries the changed
+    /// texels ([`crate::EventValue::Texels`]); the eyedropper emits `select`
+    /// with the picked index. The bitmap lives in the widget's state
+    /// (`WidgetState::pixels`), read back with `Ctx::pixels`.
+    PixelGrid,
+    /// An RGB colour picker: a hue strip, a saturation/value square and an
+    /// editable `#rrggbb` field. `value` is the colour as `0xRRGGBB`;
+    /// `change` fires with every drag and every valid hex edit.
+    ColorPicker,
 }
 
 impl Kind {
@@ -90,6 +104,8 @@ impl Kind {
             Kind::Board => "board",
             Kind::Panel => "panel",
             Kind::Wire => "wire",
+            Kind::PixelGrid => "pixel_grid",
+            Kind::ColorPicker => "color_picker",
         }
     }
 
@@ -118,6 +134,8 @@ impl Kind {
         Kind::Board,
         Kind::Panel,
         Kind::Wire,
+        Kind::PixelGrid,
+        Kind::ColorPicker,
     ];
 
     pub fn from_name(name: &str) -> Option<Kind> {
@@ -125,6 +143,8 @@ impl Kind {
             "scroll_view" | "scrollview" => "scroll",
             "text_field" => "textfield",
             "text_area" => "textarea",
+            "pixelgrid" => "pixel_grid",
+            "colorpicker" => "color_picker",
             n => n,
         };
         Kind::ALL.iter().copied().find(|k| k.name() == name)
@@ -145,6 +165,8 @@ impl Kind {
                 | Kind::TextArea
                 | Kind::Custom
                 | Kind::Board
+                | Kind::PixelGrid
+                | Kind::ColorPicker
         )
     }
 
@@ -312,6 +334,23 @@ pub struct Props {
     /// Boards: grab every press inside, interactive children included
     /// (designers use this to select widgets in a live preview).
     pub capture: Option<bool>,
+    /// Pixel grids: the bitmap's size in texels.
+    pub cols: Option<u16>,
+    pub rows: Option<u16>,
+    /// Pixel grids: lu per texel (None = fit the element's size).
+    pub zoom: Option<u16>,
+    /// Pixel grids: up to 16 RGB colours (`0xRRGGBB`); empty = the default palette.
+    pub palette: Vec<u32>,
+    /// Pixel grids: palette indices, `cols * rows` (replaces the state when set).
+    pub pixels: Vec<u8>,
+    /// Pixel grids: `cols * rows` entries, non-zero = locked (drawn hatched, never painted).
+    pub mask: Vec<u8>,
+    /// Pixel grids: `pencil` (default), `fill`, `eyedropper` or `line`.
+    pub tool: Option<String>,
+    /// Pixel grids: paint the mirrored texel too.
+    pub mirror_h: Option<bool>,
+    /// Pixel grids: draw gridlines (when a texel is at least 4 lu).
+    pub grid: Option<bool>,
 }
 
 /// One node of an element tree.
@@ -484,6 +523,47 @@ impl Element {
         self.props.capture = Some(on);
         self
     }
+    /// Pixel grids: the bitmap's size in texels.
+    pub fn texels(mut self, cols: u16, rows: u16) -> Self {
+        self.props.cols = Some(cols);
+        self.props.rows = Some(rows);
+        self
+    }
+    /// Pixel grids: lu per texel.
+    pub fn zoom(mut self, z: u16) -> Self {
+        self.props.zoom = Some(z);
+        self
+    }
+    /// Pixel grids: the palette (`0xRRGGBB`, at most 16 are used).
+    pub fn palette(mut self, colors: impl IntoIterator<Item = u32>) -> Self {
+        self.props.palette = colors.into_iter().take(16).collect();
+        self
+    }
+    /// Pixel grids: the bitmap (palette indices, `cols * rows`); replaces the edited one.
+    pub fn pixels(mut self, px: impl IntoIterator<Item = u8>) -> Self {
+        self.props.pixels = px.into_iter().collect();
+        self
+    }
+    /// Pixel grids: locked texels (non-zero), `cols * rows`.
+    pub fn mask(mut self, m: impl IntoIterator<Item = u8>) -> Self {
+        self.props.mask = m.into_iter().collect();
+        self
+    }
+    /// Pixel grids: `pencil`, `fill`, `eyedropper` or `line`.
+    pub fn tool(mut self, t: impl Into<String>) -> Self {
+        self.props.tool = Some(t.into());
+        self
+    }
+    /// Pixel grids: paint the left-right mirrored texel too.
+    pub fn mirror_h(mut self, on: bool) -> Self {
+        self.props.mirror_h = Some(on);
+        self
+    }
+    /// Pixel grids: draw gridlines.
+    pub fn grid(mut self, on: bool) -> Self {
+        self.props.grid = Some(on);
+        self
+    }
     pub fn child(mut self, c: Element) -> Self {
         self.children.push(c);
         self
@@ -612,4 +692,12 @@ pub fn panel() -> Element {
 /// A polyline through `points` (relative to the parent).
 pub fn wire(points: impl IntoIterator<Item = (i32, i32)>) -> Element {
     Element::new(Kind::Wire).points(points)
+}
+/// An editable indexed bitmap of `cols` x `rows` texels; see [`Kind::PixelGrid`].
+pub fn pixel_grid(cols: u16, rows: u16) -> Element {
+    Element::new(Kind::PixelGrid).texels(cols, rows)
+}
+/// An RGB colour picker; see [`Kind::ColorPicker`].
+pub fn color_picker() -> Element {
+    Element::new(Kind::ColorPicker)
 }

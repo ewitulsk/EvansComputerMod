@@ -269,7 +269,7 @@ with open(A + '/blockstates/redstone_link_interface.json', 'w', encoding='utf-8'
 # ---------------------------------------------------------------- item models
 I = A + '/models/item'
 # (sensor_wire and lidar_sensor have 3D item models from Blockbench: scripts/export-radio-models.py)
-for name in ("module_expansion_card", "redstone_link_module", "wired_sensor_module"):
+for name in ("module_expansion_card", "redstone_link_module", "wired_sensor_module", "card_reader_module", "nfc_module"):
     with open(I + '/' + name + '.json', 'w', encoding='utf-8', newline='\n') as fh:
         json.dump({"parent": "minecraft:item/generated", "textures": {"layer0": "evanscomputermod:item/" + name}}, fh, indent=2)
         fh.write('\n')

@@ -40,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 public class UiGoldenTest {
     static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
+            // The card widgets (CARDS.md): a pixel_grid with a locked stripe and a color_picker, painted and dragged.
+            "card_widgets",
             "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
             // Integration: Settings -> Apps (AppsSection in the Settings app) at medium, compact and wide.
             "settings_apps", "settings_apps_compact", "settings_apps_wide",
