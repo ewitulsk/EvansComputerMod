@@ -7,9 +7,10 @@ Kinds:
   facing_active  like facing_lit but for an `active` property (<name>_active)
   facing_card  like facing_lit but cubes named card_* appear in <name>_card, for a `card` property
   facing_field like facing_lit but cubes named field_* appear in <name>_field, for a `field` property
+  facing_disk  like facing_lit but cubes named disk_* appear in <name>_disk, for a `disk` property
   connector6   cubes named center*/north*/south*/west*/east*/down*/up* -> multipart on 6 sides
   simple       one model, one variant
-  item         an item model (no blockstate)
+  item         an item model (no blockstate); with no cubes, a flat item/generated sprite (layer0)
   item_ref:<item>  an item model for <item> (models/item/<item>.json) that reuses the block texture
                of the same name already in the pack; the embedded copy is not written back
   item_as:<item>   an item model for <item> with its own texture(s) (written like 'item')
@@ -85,6 +86,8 @@ PROJECTS = {
     'card_sim_body': ('item_bewlr:sim_card', 'item'),
     'card_printer': ('facing_lit', 'block'),
     'nfc_reader': ('facing_field', 'block'),
+    'disk_drive': ('facing_disk', 'block'),
+    'floppy_disk': ('item', 'item'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -248,11 +251,14 @@ def export(name):
         return
     if kind == 'item':
         out['parent'] = 'minecraft:item/generated' if not out['elements'] else 'minecraft:block/block'
+        if not out['elements']:
+            # A sprite: item/generated draws layer0.
+            out = {'parent': out['parent'], 'textures': {'layer0': next(iter(out['textures'].values()))}}
         write(models / f'{name}.json', out)
         return
-    if kind in ('facing_lit', 'facing_active', 'facing_card', 'facing_field'):
-        prop = {'facing_lit': 'lit', 'facing_active': 'active', 'facing_card': 'card', 'facing_field': 'field'}[kind]
-        prefix = {'facing_card': 'card_', 'facing_field': 'field_'}.get(kind, 'lit_')
+    if kind in ('facing_lit', 'facing_active', 'facing_card', 'facing_field', 'facing_disk'):
+        prop = {'facing_lit': 'lit', 'facing_active': 'active', 'facing_card': 'card', 'facing_field': 'field', 'facing_disk': 'disk'}[kind]
+        prefix = {'facing_card': 'card_', 'facing_field': 'field_', 'facing_disk': 'disk_'}.get(kind, 'lit_')
         write(models / f'{name}.json', {**out, 'elements': [e for e in out['elements'] if not e['name'].startswith(prefix)]})
         write(models / f'{name}_{prop}.json', out)
         state = {'variants': {}}

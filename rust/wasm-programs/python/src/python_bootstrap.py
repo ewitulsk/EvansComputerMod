@@ -134,7 +134,7 @@ sys.modules['web'] = _web_module
 # redstone) ship inside the
 # native `_console` module.
 import _console as _console_native
-for _name in ('colors', 'keys', 'term', 'events', 'computer', 'fs', 'textutils', 'redstone'):
+for _name in ('colors', 'keys', 'term', 'events', 'computer', 'fs', 'textutils', 'redstone', 'disk'):
     _m = ModuleType(_name)
     _m.__file__ = '<' + _name + '>'
     exec(compile(getattr(_console_native, '_' + _name + '_source'), '<' + _name + '>', 'exec'), _m.__dict__)

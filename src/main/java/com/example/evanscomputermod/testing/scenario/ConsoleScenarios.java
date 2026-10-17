@@ -3,6 +3,8 @@ package com.example.evanscomputermod.testing.scenario;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.ComputerNumbers;
+import com.example.evanscomputermod.disk.DiskContent;
+import com.example.evanscomputermod.disk.DiskStorage;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.Container;
@@ -74,6 +76,19 @@ import java.util.regex.Pattern;
  * with a water bucket by the player; {@code tanks.py} (Python) sees both as
  * {@code fluid_storage}, moves the 1000 mB right ({@code push_fluid}) and the
  * cauldrons' real states are checked; control: no target.
+ *
+ * <p>{@code floppy_disks} (phase 4): two computers, each with a Disk Drive the
+ * player places on its left. On the first, {@code save.py} (Python) finds no
+ * disk (control); the player puts a Floppy Disk in, and the program sees it
+ * as {@code disk/}, labels it "notes" and writes {@code disk/hello.txt}: the
+ * file is in the disk's folder in the world and the item carries the number
+ * and label. The player takes the floppy out (control: the first computer
+ * sees no disk again) and puts it into the second drive, where
+ * {@code read.lua} (a CC program) reads the file back with its label and
+ * number.
+ * <pre>
+ *   Terminals at (0,1,0) and (4,1,0) facing north; drives at (-1,1,0) and (3,1,0).
+ * </pre>
  * <pre>
  *   Terminal at (0,1,0) facing north, Redstone Lamp at (0,2,0) on top,
  *   stone at (-1,1,0) on its left, Lever at (-2,1,0) on the stone.
@@ -83,6 +98,26 @@ public final class ConsoleScenarios {
     private static final BlockPos PC = new BlockPos(0, 1, 0);
     /** Chests or cauldrons on either side (generic_chests, generic_tanks). */
     private static final BlockPos LEFT = new BlockPos(-1, 1, 0), RIGHT = new BlockPos(1, 1, 0);
+    /** floppy_disks: a second computer and the drives on the computers' left. */
+    private static final BlockPos PC2 = new BlockPos(4, 1, 0), DRIVE1 = new BlockPos(-1, 1, 0), DRIVE2 = new BlockPos(3, 1, 0);
+    private static final String SAVE_PY = String.join("\n",
+            "import disk, fs",
+            "print('PY PRESENT %s %s' % (disk.is_present('left'), disk.get_mount_path('left')))",
+            "if disk.is_present('left'):",
+            "    disk.set_label('left', 'notes')",
+            "    f = open('disk/hello.txt', 'w')",
+            "    f.write('hi from the first computer')",
+            "    f.close()",
+            "    print('PY SAVED %s %s' % (disk.get_label('left'), ','.join(fs.list('disk'))))");
+    private static final String READ_LUA = String.join("\n",
+            "print('PRESENT ' .. tostring(disk.isPresent('left')) .. ' ' .. tostring(disk.getMountPath('left')))",
+            "if disk.isPresent('left') then",
+            "  local h = fs.open(fs.combine(disk.getMountPath('left'), 'hello.txt'), 'r')",
+            "  print('READ ' .. h.readAll())",
+            "  h.close()",
+            "  print('LABEL ' .. disk.getLabel('left') .. ' ID ' .. disk.getID('left'))",
+            "end");
+
     private static final BlockPos LAMP = new BlockPos(0, 2, 0);
     /** A block against the computer's left side, and the Lever on it: a lever on the computer itself
      *  would power the computer's block, and through it the lamp. */
@@ -91,7 +126,7 @@ public final class ConsoleScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
-        for (Scenario s : List.of(ccLua(), python(), ccWorld(), pythonWorld(), genericChests(), genericTanks())) ALL.put(s.name, s);
+        for (Scenario s : List.of(ccLua(), python(), ccWorld(), pythonWorld(), genericChests(), genericTanks(), floppyDisks())) ALL.put(s.name, s);
     }
 
     private ConsoleScenarios() {
@@ -269,6 +304,86 @@ public final class ConsoleScenarios {
                 .expect("pc", PlayerKit.PROMPT, "back at the shell")
                 .timeLimit(60_000)
                 .build();
+    }
+
+    private static Scenario floppyDisks() {
+        var b = Scenario.builder("floppy_disks",
+                        "Floppy disks: write a file on one computer's disk, carry the floppy to another computer, read it there")
+                .host("pc1", PC, "-")
+                .host("pc2", PC2, "-")
+                .asPlayer()
+                .decor(PlayerKit.decor(List.of(DRIVE1, DRIVE2), null, ConsoleScenarios::placeDrives, null))
+                .note("Setup (done for you): a Disk Drive on the left of each computer")
+                .note("Type the programs in (save.py on the first, read.lua on the second, from Python)");
+        PlayerKit.typeFiles(b, Map.of("pc1", Map.of("/save.py", SAVE_PY), "pc2", Map.of("/read.lua", READ_LUA)));
+        return b.note("Control: no floppy in the drive yet")
+                .send("pc1", "python save.py")
+                .expect("pc1", "^PY PRESENT False None$", "no disk, no disk/ folder", "Traceback")
+                .expect("pc1", PlayerKit.PROMPT, "the program ends")
+                .note("Put a Floppy Disk into the first drive and run the program again")
+                .mutate(r -> r.player().use(new ItemStack(DiskContent.FLOPPY_DISK.get()), r.abs(DRIVE1), Direction.NORTH, false),
+                        "put a floppy into the first drive")
+                .await(r -> diskIn(r, DRIVE1).isEmpty() ? "the drive is empty" : null, "the floppy is in", 2_000)
+                .send("pc1", "python save.py")
+                .expect("pc1", "^PY PRESENT True disk$", "the disk is the folder disk/", "Traceback")
+                .expect("pc1", "^PY SAVED notes hello\\.txt$", "it labels the disk and writes disk/hello.txt", "Traceback")
+                .await(ConsoleScenarios::floppySaved, "the file is in the disk's folder; the item has its number and label", 5_000)
+                .note("Take the floppy out (control: the first computer sees no disk)")
+                .mutate(r -> r.player().useEmpty(r.abs(DRIVE1), Direction.NORTH, false), "take the floppy out")
+                .send("pc1", "python save.py")
+                .expect("pc1", "^PY PRESENT False None$", "no disk any more", "Traceback")
+                .note("Put the floppy into the second computer's drive and read it there (Lua)")
+                .mutate(ConsoleScenarios::moveFloppyToSecondDrive, "put the floppy into the second drive")
+                .send("pc2", "lua read.lua")
+                .expect("pc2", "^PRESENT true disk$", "the second computer sees the disk as disk/", "^lua: ")
+                .expect("pc2", "^READ hi from the first computer$", "and reads the file the first one wrote", "^lua: ")
+                .expect("pc2", "^LABEL notes ID \\d+$", "with its label and number", "^lua: ")
+                .expect("pc2", PlayerKit.PROMPT, "the program ends")
+                .timeLimit(90_000)
+                .build();
+    }
+
+    /** The player puts a Disk Drive on the left of each computer. */
+    private static void placeDrives(ScenarioRun run) {
+        for (BlockPos at : List.of(DRIVE1, DRIVE2))
+            run.player().placeAgainst(DiskContent.DISK_DRIVE.get(), run.abs(at), Direction.SOUTH, Direction.EAST,
+                    s -> s.is(DiskContent.DISK_DRIVE.get()));
+    }
+
+    private static ItemStack diskIn(ScenarioRun r, BlockPos at) {
+        var h = r.level().getCapability(net.neoforged.neoforge.capabilities.Capabilities.ItemHandler.BLOCK, r.abs(at), Direction.UP);
+        return h == null ? ItemStack.EMPTY : h.getStackInSlot(0);
+    }
+
+    /** Check: hello.txt in computer-data/disks/<n>/, the item numbered n and named "notes". */
+    private static String floppySaved(ScenarioRun r) {
+        ItemStack d = diskIn(r, DRIVE1);
+        Integer id = d.get(DiskContent.DISK_ID.get());
+        if (id == null) return "the floppy has no number";
+        if (!"notes".equals(d.getHoverName().getString())) return "the floppy is called " + d.getHoverName().getString();
+        java.nio.file.Path f = DiskStorage.folder(r.level().getServer(), id).resolve("hello.txt");
+        try {
+            String text = java.nio.file.Files.exists(f) ? java.nio.file.Files.readString(f) : null;
+            return "hi from the first computer".equals(text) ? null : "disk " + id + " holds " + text;
+        } catch (java.io.IOException e) {
+            return e.toString();
+        }
+    }
+
+    /** The floppy the player took out goes into the second drive. */
+    private static void moveFloppyToSecondDrive(ScenarioRun r) {
+        var inv = r.player().entity().getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.is(DiskContent.FLOPPY_DISK.get())) {
+                ItemStack floppy = s.copy();
+                inv.setItem(i, ItemStack.EMPTY);
+                r.player().use(floppy, r.abs(DRIVE2), Direction.NORTH, false);
+                if (diskIn(r, DRIVE2).isEmpty()) throw new IllegalStateException("the second drive did not take the floppy");
+                return;
+            }
+        }
+        throw new IllegalStateException("the player has no floppy (it was not taken out of the first drive)");
     }
 
     /** The player puts a chest on each side and 16 cobblestone and 5 diamonds into the left one. */

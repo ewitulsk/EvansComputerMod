@@ -52,5 +52,11 @@ public final class ConsoleTests {
     public static void generic_tanks(GameTestHelper h) {
         TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("generic_tanks"), true);
     }
+
+    /** Phase 4: a file written to a floppy on one computer is read on another. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".floppy_disks")
+    public static void floppy_disks(GameTestHelper h) {
+        TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("floppy_disks"), true);
+    }
 }
 //?}

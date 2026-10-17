@@ -72,6 +72,8 @@ public class WasiFunctions {
         public int pid;
         /** Permission checks for apps; null = unconfined (docs/gui/APPS.md). */
         public ProcessSandbox sandbox;
+        /** Folders mounted into the computer (a floppy as disk/); null: none. */
+        public com.example.evanscomputermod.computer.StorageMounts mounts;
 
         public WasiState(FdTable fdTable, String[] argv, Path storagePath,
                          java.util.Map<String, String> envVars) {
@@ -331,10 +333,14 @@ public class WasiFunctions {
                 return retI32(ERRNO_SUCCESS);
             }
 
-            Path filePath = state.storagePath.resolve(pathStr).normalize();
-            if (!filePath.startsWith(state.storagePath)) {
+            Place place = place(state, pathStr);
+            if (place == null) {
                 EvansComputerMod.LOGGER.debug("WASI path_open: rejected path (escape): {}", pathStr);
                 return retI32(ERRNO_NOENT);
+            }
+            Path filePath = place.real();
+            if (place.readOnly() && ((oflags & (1 | 8)) != 0 || (fdflags & 1) != 0 || (argsArr[5] & (1L << 6)) != 0)) {
+                return retI32(ERRNO_ACCES);
             }
 
             // server-bin/: the server's programs, read-only, as the console sees them (cp, pkg build).
@@ -378,7 +384,8 @@ public class WasiFunctions {
 
             try {
                 if (Files.isDirectory(filePath)) {
-                    DirFd dirFd = new DirFd(filePath);
+                    // The computer's root also lists its mounted folders (disk/).
+                    DirFd dirFd = filePath.equals(state.storagePath) ? new DirFd(filePath, mountNames(state)) : new DirFd(filePath);
                     int newFd = state.fdTable.allocate(dirFd);
                     mem.writeInt(fdOutPtr, newFd);
                     EvansComputerMod.LOGGER.debug("WASI path_open: opened dir fd={}", newFd);
@@ -403,9 +410,11 @@ public class WasiFunctions {
 
         addWasi(sink, "path_create_directory", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
-            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            if (!pathAllowed(state, pathStr, true) || readOnly(state, pathStr)) return retI32(ERRNO_ACCES);
             try {
-                Path p = state.storagePath.resolve(pathStr).normalize();
+                Place place = place(state, pathStr);
+                if (place == null) return retI32(ERRNO_NOENT);
+                Path p = place.real();
                 Files.createDirectories(p);
                 return retI32(ERRNO_SUCCESS);
             } catch (IOException e) {
@@ -418,7 +427,7 @@ public class WasiFunctions {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
             Path p = resolveChildPath(state, pathStr);
             if (p == null || p.equals(state.storagePath)) return retI32(ERRNO_NOENT);
-            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            if (!pathAllowed(state, pathStr, true) || readOnly(state, pathStr)) return retI32(ERRNO_ACCES);
             if (!Files.isDirectory(p)) return retI32(Files.exists(p) ? 54 /* NOTDIR */ : ERRNO_NOENT);
             try (var entries = Files.list(p)) {
                 if (entries.findAny().isPresent()) return retI32(55); // NOTEMPTY
@@ -435,9 +444,11 @@ public class WasiFunctions {
 
         addWasi(sink, "path_unlink_file", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
-            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            if (!pathAllowed(state, pathStr, true) || readOnly(state, pathStr)) return retI32(ERRNO_ACCES);
             try {
-                Path p = state.storagePath.resolve(pathStr).normalize();
+                Place place = place(state, pathStr);
+                if (place == null) return retI32(ERRNO_NOENT);
+                Path p = place.real();
                 Files.deleteIfExists(p);
                 return retI32(ERRNO_SUCCESS);
             } catch (IOException e) {
@@ -453,8 +464,9 @@ public class WasiFunctions {
                 dm.writeByte((int) args[4] + 16, (byte) 2); // character device
                 return retI32(ERRNO_SUCCESS);
             }
-            Path p = state.storagePath.resolve(pathStr).normalize();
-            if (!Files.exists(p) || !pathAllowed(state, pathStr, false)) {
+            Place place = place(state, pathStr);
+            Path p = place == null ? null : place.real();
+            if (p == null || !Files.exists(p) || !pathAllowed(state, pathStr, false)) {
                 return retI32(ERRNO_NOENT);
             }
             WasmMemory mem = state.mem();
@@ -533,7 +545,7 @@ public class WasiFunctions {
             if (filePath == null || dataLen < 0 || dataLen > 1024 * 1024) {
                 return retI32(-1);
             }
-            if (!pathAllowed(state, path, true)) return retI32(EACCES);
+            if (!pathAllowed(state, path, true) || readOnly(state, path)) return retI32(EACCES);
             try {
                 byte[] data = state.mem().readBytes(dataPtr, dataLen);
                 Path parent = filePath.getParent();
@@ -569,7 +581,7 @@ public class WasiFunctions {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path filePath = resolveChildPath(state, path);
             if (filePath == null || !Files.exists(filePath)) return retI32(0);
-            if (!pathAllowed(state, path, true)) return retI32(0);
+            if (!pathAllowed(state, path, true) || readOnly(state, path)) return retI32(0);
             try {
                 Files.delete(filePath);
                 return retI32(1);
@@ -582,7 +594,7 @@ public class WasiFunctions {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path dirPath = resolveChildPath(state, path);
             if (dirPath == null) return retI32(-1);
-            if (!pathAllowed(state, path, true)) return retI32(EACCES);
+            if (!pathAllowed(state, path, true) || readOnly(state, path)) return retI32(EACCES);
             try {
                 Files.createDirectories(dirPath);
                 return retI32(0);
@@ -634,6 +646,13 @@ public class WasiFunctions {
             try (var stream = Files.list(dirPath)) {
                 StringBuilder sb = new StringBuilder();
                 boolean first = true;
+                if (dirPath.equals(state.storagePath)) {
+                    for (String m : mountNames(state)) {
+                        if (!first) sb.append('\n');
+                        sb.append("d:").append(m);
+                        first = false;
+                    }
+                }
                 for (var p : (Iterable<Path>) stream::iterator) {
                     if (!first) sb.append('\n');
                     sb.append(Files.isDirectory(p) ? "d:" : "f:");
@@ -1850,11 +1869,41 @@ public class WasiFunctions {
     }
 
     private static Path resolveChildPath(WasiState state, String pathStr) {
-        if (pathStr == null) return null;
-        if (pathStr.contains("..") || pathStr.startsWith("/")) return null;
-        Path filePath = state.storagePath.resolve(pathStr).normalize();
-        if (!filePath.startsWith(state.storagePath)) return null;
-        return filePath;
+        Place place = place(state, pathStr);
+        return place == null ? null : place.real();
+    }
+
+    /** Where a program's path is on the host, and whether it may be written. */
+    record Place(Path real, boolean readOnly) {}
+
+    /**
+     * A path from the computer's root (no leading "/", no ".."): in a mounted
+     * folder ({@code disk/...}, see StorageMounts) or else the computer's own
+     * storage. Null if it would leave either.
+     */
+    static Place place(WasiState state, String pathStr) {
+        if (pathStr == null || pathStr.contains("..") || pathStr.startsWith("/")) return null;
+        if (state.mounts != null) {
+            com.example.evanscomputermod.computer.VirtualMount m = state.mounts.of(pathStr);
+            if (m != null) {
+                Path real = com.example.evanscomputermod.computer.StorageMounts.resolve(m, pathStr);
+                return real == null ? null : new Place(real, m.isReadOnly());
+            }
+        }
+        Path p = state.storagePath.resolve(pathStr).normalize();
+        return p.startsWith(state.storagePath) ? new Place(p, false) : null;
+    }
+
+    /** Whether {@code path} is in a read-only mounted folder. */
+    private static boolean readOnly(WasiState state, String path) {
+        Place place = place(state, path);
+        return place != null && place.readOnly();
+    }
+
+    /** The names of the mounted folders, as the root lists them. */
+    private static java.util.List<String> mountNames(WasiState state) {
+        if (state.mounts == null) return java.util.List.of();
+        return state.mounts.list().stream().map(com.example.evanscomputermod.computer.VirtualMount::getPrefix).toList();
     }
 
     /**

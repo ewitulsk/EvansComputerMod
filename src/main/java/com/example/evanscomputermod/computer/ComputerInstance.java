@@ -48,6 +48,8 @@ public class ComputerInstance implements AutoCloseable {
     private volatile IComputerHost host;
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
+    /** Mounted folders (a floppy as disk/), looked at before the mounts above. */
+    private final StorageMounts storageMounts;
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
     /** Installed and running apps, permissions, saved state (docs/gui/APPS.md). */
     private com.example.evanscomputermod.computer.apps.AppManager appManager;
@@ -361,6 +363,9 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
         }
 
+        StorageMounts hostMounts = host.getStorageMounts();
+        this.storageMounts = hostMounts != null ? hostMounts : new StorageMounts();
+
         // Set up virtual mount table:
         // 1. User storage (read-write) — checked first, allows shadowing system programs
         mounts.add(new VirtualMount("", computerStoragePath, false));
@@ -376,6 +381,7 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
                 computerStoragePath, netIpcBridge, childBridge);
         // Child output/exit and new socket requests wake the kernel worker.
+        this.processManager.setStorageMounts(storageMounts);
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
@@ -1714,6 +1720,20 @@ public class ComputerInstance implements AutoCloseable {
     private static final int MAX_PATH_LENGTH = 256;
 
     /** Resolved mount result: the real filesystem path and whether the mount is read-only. */
+    /** Mounted folders first (disk/ is not a folder of the computer's own), then the computer's storage and server-bin. */
+    private List<VirtualMount> allMounts() {
+        List<VirtualMount> extra = storageMounts.list();
+        if (extra.isEmpty()) return mounts;
+        List<VirtualMount> all = new ArrayList<>(extra);
+        all.addAll(mounts);
+        return all;
+    }
+
+    /** This computer's mounted folders (Disk Drives mount floppies here). */
+    public StorageMounts storageMounts() {
+        return storageMounts;
+    }
+
     private record MountedPath(Path realPath, boolean readOnly) {}
 
     /**
@@ -1726,7 +1746,7 @@ public class ComputerInstance implements AutoCloseable {
         // Strip leading slash (Rust side resolves CWD, may produce absolute-looking paths)
         if (filename.startsWith("/")) filename = filename.substring(1);
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename)) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null && Files.exists(resolved)) {
@@ -1735,7 +1755,7 @@ public class ComputerInstance implements AutoCloseable {
             }
         }
         // No mount had an existing file — return the first mount's resolution for "not found"
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename)) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null) {
@@ -1754,7 +1774,7 @@ public class ComputerInstance implements AutoCloseable {
         if (filename == null || filename.isEmpty()) return null;
         if (filename.startsWith("/")) filename = filename.substring(1);
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename) && !mount.isReadOnly()) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null) {
@@ -1932,7 +1952,7 @@ public class ComputerInstance implements AutoCloseable {
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         boolean foundDir = false;
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             String resolvedDirname = dirname.isEmpty() ? "" : dirname;
             if (mount.matches(resolvedDirname) || resolvedDirname.isEmpty()) {
                 Path dirPath;
@@ -1959,7 +1979,7 @@ public class ComputerInstance implements AutoCloseable {
 
         // When listing root, add virtual mount point directories
         if (dirname.isEmpty()) {
-            for (VirtualMount mount : mounts) {
+            for (VirtualMount mount : allMounts()) {
                 if (!mount.getPrefix().isEmpty()) {
                     seen.add("d:" + mount.getPrefix());
                 }

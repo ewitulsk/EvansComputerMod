@@ -84,10 +84,32 @@ A block next to a computer that has no peripheral of its own, but has NeoForge's
 - **Visual Programmer:** all three types are in its catalog.
 - **Not covered:** CC's other generic sources (`getItemDetail`'s NBT hash, custom generic methods from other mods). Those arrive with the CC bridge.
 
+## Phase 4: floppy disks and the Disk Drive (done)
+
+- **Blocks and items:** a **Disk Drive** block and a **Floppy Disk** item, both 1.21.1 only.
+  - Floppy recipe: paper plus redstone, shapeless.
+  - Disk Drive recipe: seven stone and two redstone.
+  - Models are made in Blockbench: `models/disk_drive.bbmodel` and `floppy_disk.bbmodel`.
+- **Inserting and removing:** use a floppy on a drive to put it in, and use the drive with an empty hand to take it out. Hoppers and pipes insert and extract through the item capability. A comparator reads 15 while a floppy is in.
+- **Files:**
+  - While a floppy is in a drive next to a computer, its files are the folder `disk/`. A second drive gives `disk2/`, and so on.
+  - Every program sees the folder: the shell (`ls`, `cd`), Lua's and Python's files (`io.open`, `fs`, `open`), and `cat`/`cp`.
+  - The files live in `<world>/computer-data/disks/<n>/`.
+  - A floppy gets its number the first time it goes into a drive, so copies of the item are the same disk.
+  - The label is the item's name. Rename it on an anvil, or with `disk.set_label`.
+- **Peripheral:** the drive is a peripheral of type `drive` with `is_disk_present`, `has_data`, `get_mount_path`, `get_disk_label`, `set_disk_label`, `get_disk_id` and `eject_disk`. Events: `disk` when a floppy goes in, `disk_eject` when it comes out.
+- **`disk` module** (Lua and Python): `is_present`, `has_data`, `get_mount_path`, `get_label`, `set_label`, `get_id` and `eject`, plus no-op audio functions. Lua also has CC's names (`disk.isPresent`, `disk.getID`, ...).
+- **New primitive, `StorageMounts`:** folders mounted into a computer through `IComputerAccess.mount`/`unmount`.
+  - It is kept by the computer's `ComputerHost`, so mounts outlive a reboot.
+  - The kernel and WASI both resolve paths through it, and read-only mounts refuse writes.
+  - The root listing shows the mount points.
+- **Not yet:**
+  - **CC floppies:** reading CC: Tweaked's own floppies (`<world>/computercraft/disk/<id>`) when CC is installed. That needs CC in the test run, so it comes with the bridge.
+  - **Size limit:** there is no per-disk size limit yet; computers have no storage quota at all.
+
 ## Later phases
 
-1. A floppy Disk Drive and disks of our own, plus reading CC floppies when CC is installed.
-2. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
-3. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
+1. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
+2. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
 
-Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2), `generic_chests` and `generic_tanks` (phase 3).
+Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2), `generic_chests` and `generic_tanks` (phase 3), `floppy_disks` (phase 4). Render check: `-ClientChecks -ClientSuite disks`.

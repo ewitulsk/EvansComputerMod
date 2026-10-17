@@ -26,6 +26,7 @@ pub const KEYS_PY: &str = include_str!("keys.py");
 pub const FS_PY: &str = include_str!("fs.py");
 pub const TEXTUTILS_PY: &str = include_str!("textutils.py");
 pub const REDSTONE_PY: &str = include_str!("redstone.py");
+pub const DISK_PY: &str = include_str!("disk.py");
 
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
@@ -144,6 +145,10 @@ pub mod console_native {
     #[pyattr]
     fn _redstone_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(REDSTONE_PY).into()
+    }
+    #[pyattr]
+    fn _disk_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(DISK_PY).into()
     }
 
     // --- fs (paths from the computer's root) ---

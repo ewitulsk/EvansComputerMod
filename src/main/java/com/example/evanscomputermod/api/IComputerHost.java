@@ -51,6 +51,16 @@ public interface IComputerHost {
     IWorldAccess getWorldAccess();
 
 
+    /**
+     * Folders mounted into the computer's filesystem (a floppy in a Disk Drive
+     * as {@code disk/}), kept by the host so they outlive a reboot. Null: the
+     * computer keeps its own (empty) table.
+     */
+    @Nullable
+    default com.example.evanscomputermod.computer.StorageMounts getStorageMounts() {
+        return null;
+    }
+
     /** Peripherals attached to this computer, or null if the host has none (programs then see an empty list). */
     @Nullable
     default com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() {

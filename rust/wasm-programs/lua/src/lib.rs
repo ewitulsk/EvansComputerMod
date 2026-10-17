@@ -43,6 +43,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("textutils", include_str!("lua/textutils.lua")),
     ("redstone", include_str!("lua/redstone.lua")),
     ("parallel", include_str!("lua/parallel.lua")),
+    ("disk", include_str!("lua/disk.lua")),
 ];
 
 /// ComputerCraft's globals (`os.pullEvent`, `sleep`, `print` through the

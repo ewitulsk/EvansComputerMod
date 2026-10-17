@@ -53,6 +53,12 @@ public final class PeripheralHub {
 
         /** The running computer's event bus, or null while it's off. */
         @Nullable PeripheralEventBus events();
+
+        /** The computer's mounted folders, or null if it can't mount any. */
+        @Nullable
+        default com.example.evanscomputermod.computer.StorageMounts mounts() {
+            return null;
+        }
     }
 
     private final class Attachment implements IComputerAccess {
@@ -78,6 +84,18 @@ public final class PeripheralHub {
         public void queueEvent(String event, Object... arguments) {
             if (attached.get(name) != this) return; // detached: stale access
             post(event, name, arguments);
+        }
+
+        @Override
+        public String mount(String base, java.nio.file.Path root, boolean readOnly) {
+            var m = owner.mounts();
+            return m == null ? null : m.add(base, root, readOnly);
+        }
+
+        @Override
+        public void unmount(String mountName) {
+            var m = owner.mounts();
+            if (m != null) m.remove(mountName);
         }
 
         @Override

@@ -962,6 +962,41 @@ audio.save_wav(DIR .. "/memo.wav", pcm, 8000)
     let _ = std::fs::remove_dir_all(&d);
 }
 
+#[test]
+fn cc_disk_api_over_a_drive() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r##"
+calls = {}
+local label = nil
+package.loaded._peripheral = {
+  list = function() return {{"left", "drive"}, {"top", "speaker"}} end,
+  methods = function(n) return true, (n == "left" and "drive" or "speaker"), {"is_disk_present"} end,
+  call = function(n, m, a)
+    calls[#calls + 1] = m
+    if m == "is_disk_present" or m == "has_data" then return true, true end
+    if m == "get_mount_path" then return true, "disk" end
+    if m == "get_disk_id" then return true, 4 end
+    if m == "set_disk_label" then label = a return true, nil end
+    if m == "get_disk_label" then return true, label end
+    return true, nil
+  end,
+}
+P, D, M, ID = disk.isPresent("left"), disk.hasData("left"), disk.getMountPath("left"), disk.getID("left")
+disk.setLabel("left", "backups")
+L = disk.getLabel("left")
+disk.eject("left")
+NOT_A_DRIVE = disk.isPresent("top") == false and disk.getMountPath("top") == nil and disk.isPresent("nothing") == false
+AUDIO = disk.hasAudio("left")
+BAD = pcall(disk.isPresent, 3)
+"##);
+    assert!(get::<bool>(&l, "P") && get::<bool>(&l, "D"));
+    assert_eq!((get::<String>(&l, "M"), get::<i64>(&l, "ID"), get::<String>(&l, "L")), ("disk".into(), 4, "backups".into()));
+    assert!(get::<bool>(&l, "NOT_A_DRIVE") && !get::<bool>(&l, "AUDIO") && !get::<bool>(&l, "BAD"));
+    let calls: Vec<String> = get::<Table>(&l, "calls").sequence_values::<String>().map(Result::unwrap).collect();
+    assert!(calls.contains(&"eject_disk".to_string()), "{calls:?}");
+}
+
 // ---------------------------------------------------------------- cards
 
 /// A `_peripheral` with one of each card device (a Card Reader/Writer, an NFC
@@ -1382,7 +1417,8 @@ fn lua_offers_every_python_module_and_name() {
     for (name, file) in [("peripheral", "peripheral.py"), ("sensors", "sensors.py"), ("controller", "controller.py"),
         ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py"),
         ("term", "term.py"), ("events", "events.py"), ("computer", "computer.py"), ("colors", "colors.py"),
-        ("keys", "keys.py"), ("fs", "fs.py"), ("textutils", "textutils.py"), ("redstone", "redstone.py")]
+        ("keys", "keys.py"), ("fs", "fs.py"), ("textutils", "textutils.py"), ("redstone", "redstone.py"),
+        ("disk", "disk.py")]
     {
         let module: Table = l.load(format!("return require('{name}')")).eval().unwrap();
         for n in python_names(&read(file)) {

@@ -13,10 +13,17 @@ import java.util.stream.Stream;
 public class DirFd implements WasiFileDescriptor {
 
     private final Path dirPath;
+    /** Folders listed besides the real ones: the mounts at the computer's root (disk/). */
+    private final List<String> extraDirs;
     private List<DirEntry> cachedEntries;
 
     public DirFd(Path dirPath) {
+        this(dirPath, List.of());
+    }
+
+    public DirFd(Path dirPath, List<String> extraDirs) {
         this.dirPath = dirPath;
+        this.extraDirs = extraDirs;
     }
 
     /** A directory entry for WASI readdir. */
@@ -28,9 +35,11 @@ public class DirFd implements WasiFileDescriptor {
     public List<DirEntry> readDir(long cookie) {
         if (cachedEntries == null) {
             cachedEntries = new ArrayList<>();
+            for (String name : extraDirs) cachedEntries.add(new DirEntry(name, (byte) 3, name.hashCode() & 0xFFFFFFFFL));
             try (Stream<Path> stream = Files.list(dirPath)) {
                 stream.sorted().forEach(p -> {
                     String name = p.getFileName().toString();
+                    if (extraDirs.contains(name)) return; // a mount hides a folder of the same name
                     byte type = Files.isDirectory(p) ? (byte) 3 : (byte) 4; // DIR=3, REG=4
                     long inode = name.hashCode() & 0xFFFFFFFFL;
                     cachedEntries.add(new DirEntry(name, type, inode));
