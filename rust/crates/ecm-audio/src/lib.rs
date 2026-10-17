@@ -36,6 +36,8 @@
 //! in Settings > Sound ([`SOUND_CONF`]: `output <side>` / `input <side>`
 //! lines), else the first speaker / microphone.
 
+pub mod adpcm;
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 

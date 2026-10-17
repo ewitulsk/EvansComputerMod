@@ -1,0 +1,12 @@
+[package]
+name = "bluetoothctl"
+version = "0.1.0"
+edition = "2021"
+description = "bluetoothctl: the console's Bluetooth tool (scan, pair, connect, forget AirPods) over the bluetooth peripheral."
+
+[[bin]]
+name = "bluetoothctl"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }

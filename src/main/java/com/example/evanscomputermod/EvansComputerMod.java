@@ -95,6 +95,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.phone.PhoneContent.register(modEventBus, modContainer);
         // Microphones and players' voices (docs/VOICE.md).
         com.example.evanscomputermod.voice.VoiceContent.register(modEventBus, modContainer);
+        // Bluetooth and AirPods (docs/BLUETOOTH.md).
+        com.example.evanscomputermod.bluetooth.BluetoothContent.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)

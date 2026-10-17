@@ -15,6 +15,9 @@ link budget, noise and interference of every other radio signal).
 | **Walkie-Talkie** | A two-way FM radio for VHF (30-300 MHz) and UHF (300-512 MHz, starts on FRS / PMR channel 1, 462.5625 MHz) channels. It receives like the Handheld Radio, and while its holder holds its **push-to-talk key** it transmits their voice: 5 W narrow FM. Half duplex, like a real one: it hears nothing while it talks (its speaker cuts out at once, and the HUD shows `TX (receive off)`). The PTT key is bound on the item itself, the way the Wireless Controller binds its buttons: sneak + right-click opens the tuning screen, click **PTT**, press any key (Escape cancels, Delete restores the default, B). Recipe: lightning rod over iron / note block / iron over copper / redstone / copper. |
 | **Handheld Radio** | Unchanged: a receive-only AM / shortwave / VHF FM receiver (it now tunes UHF too). Holding a PTT key with one in hand transmits nothing. |
 | **Speaker** | Unchanged for listeners, and now also a sound source microphones hear. |
+| **AirPods** | Paired with an ePhone and worn, they are its speaker and microphone over Bluetooth: the phone's sound plays only in the wearer's ears (it is not in the air), and `/dev/mic` hears the wearer's mouth ([BLUETOOTH.md](BLUETOOTH.md)). |
+
+Discord's voice channels use these devices ([DISCORD.md](DISCORD.md)).
 
 ## The sound in the air
 

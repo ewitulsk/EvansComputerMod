@@ -851,3 +851,49 @@ fn settings_cellular_shows_celld_and_sends_roaming_and_power() {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+#[test]
+fn settings_bluetooth_pairs_airpods_and_shows_where_sound_goes() {
+    use ecm_apps::sys::{BtDevice, BtState};
+    for w in [240, 600] {
+        let root = temp_root(&format!("bt{w}"));
+        let m = mock("settings", w, 400);
+        let sys = settings_sys(&root);
+        // Control: a computer without a radio says so.
+        {
+            let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("bluetooth")).unwrap();
+            let mut t = Texts::default();
+            run(&mut app, &m, &mut t, vec![configure(1, 1, w, 380, proto::window_states::ACTIVATED)]);
+            assert!(t.has(1, "This computer has no Bluetooth radio."), "{:?}", t.of(1));
+        }
+        let m = mock("settings", w, 400);
+        sys.state.borrow_mut().bluetooth = BtState {
+            present: true,
+            powered: true,
+            name: "Alex's ePhone".into(),
+            address: "12:34:56:78:9A:BC".into(),
+            audio: "speaker".into(),
+            nearby: vec![BtDevice { address: "AC:DE:48:00:11:22".into(), name: "Alex's AirPods".into(), pairable: true, battery: Some(90), ..Default::default() }],
+            ..Default::default()
+        };
+        let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("bluetooth")).unwrap();
+        let mut t = Texts::default();
+        run(&mut app, &m, &mut t, vec![configure(1, 1, w, 380, proto::window_states::ACTIVATED)]);
+        for want in ["MY DEVICES", "No devices paired yet.", "OTHER DEVICES", "Alex's AirPods", "ready to pair", "Sound plays on: this phone's speaker"] {
+            assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+        }
+        let pair = hit(&app, 1, "bt_pair:0");
+        run(&mut app, &m, &mut t, click(1, pair));
+        assert!(sys.state.borrow().log.contains(&"bt pair AC:DE:48:00:11:22".to_string()), "{:?}", sys.state.borrow().log);
+        for want in ["Connected", "Sound plays on: Alex's AirPods"] {
+            assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+        }
+        let off = hit(&app, 1, "bt_disconnect:0");
+        run(&mut app, &m, &mut t, click(1, off));
+        assert!(t.has(1, "Not Connected"), "{:?}", t.of(1));
+        let forget = hit(&app, 1, "bt_forget:0");
+        run(&mut app, &m, &mut t, click(1, forget));
+        assert!(sys.state.borrow().bluetooth.devices.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

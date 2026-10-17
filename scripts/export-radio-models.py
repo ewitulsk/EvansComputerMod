@@ -39,6 +39,8 @@ PROJECTS = {
     'sdr_standard': ('facing', 'block'),
     'sdr_advanced': ('facing', 'block'),
     'handheld_radio': ('item', 'item'),
+    'airpods': ('item', 'item'),
+    'airpods_case': ('item', 'item'),
     'controller_receiver_module': ('item', 'item'),
     'wifi_module': ('item', 'item'),
     'access_point': ('facing_active', 'block'),

@@ -45,8 +45,10 @@ pub const MAX_ANSWERS: usize = 16;
 
 /// The service types the mod's programs use.
 pub mod types {
-    /// A chat server (`chatd`).
+    /// Something the `chat` command talks to (a Discord backend, `discordd`).
     pub const CHAT: &str = "chat";
+    /// A Discord backend (`discordd`): the Discord app connects to every one it finds.
+    pub const DISCORD: &str = "discord";
     /// A package repository (`pkg serve`): `http://<host>:<port>/`.
     pub const PKG: &str = "pkg";
 }
