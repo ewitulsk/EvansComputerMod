@@ -1,0 +1,270 @@
+package com.example.evanscomputermod.voice.client;
+
+//? if <=1.21.1 {
+import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.speaker.ImaAdpcm;
+import com.example.evanscomputermod.voice.Resampler;
+import com.example.evanscomputermod.voice.VoiceClientConfig;
+import com.example.evanscomputermod.voice.VoicePackets;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.gui.ConfigurationScreen;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
+import net.neoforged.neoforge.client.settings.KeyConflictContext;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.network.PacketDistributor;
+import org.lwjgl.glfw.GLFW;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * The player's microphone, client side. Nothing is captured unless the player
+ * turned on Microphone input ({@link VoiceClientConfig}) and the server says
+ * something wants their voice (a recording microphone nearby, or a handheld
+ * radio in hand). Then the microphone is opened: this mod's own OpenAL capture,
+ * or, when Simple Voice Chat or Plasmo Voice is installed, the audio that mod
+ * already captures (the microphone is never opened twice). The voice goes to
+ * the server at {@link VoicePackets#VOICE_RATE} as IMA ADPCM while the player
+ * holds Talk (push-to-talk) or speaks (voice activation).
+ *
+ * <p>A Walkie-Talkie in hand has its own push-to-talk key, bound on the item
+ * like the Wireless Controller's buttons and read straight from the keyboard:
+ * while it is held the radio transmits (the server is told with the voice, or
+ * with a {@link VoicePackets.Talk}), and its speaker goes quiet at once.
+ */
+public final class VoiceClient {
+
+    public static final String CATEGORY = "key.categories.evanscomputermod.voice";
+    public static final KeyMapping TALK = new KeyMapping("key.evanscomputermod.talk", KeyConflictContext.IN_GAME,
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY);
+
+    /** Voice activation keeps sending this long after the level drops (so words aren't clipped). */
+    private static final long HANGOVER_MS = 400;
+
+    private static final OpenAlCapture OWN = new OpenAlCapture();
+    private static boolean svc, plasmo;
+    private static volatile int demand;
+    private static final ImaAdpcm ENCODER = new ImaAdpcm();
+    private static Resampler resampler;
+    private static int seq;
+    private static boolean talkSent;
+    private static long lastLoudMs;
+    private static long lastSentMs;
+    private static long lastHintMs;
+    private static long lastTalkMs;
+    private static boolean pttWas;
+    /** Push-to-talk keeps the microphone open this long after Talk is let go (no re-opening between sentences). */
+    private static final long PTT_LINGER_MS = 1500;
+    /** Peak of the last captured block, dBFS (HUD level, tests). */
+    public static volatile int levelDb = -99;
+
+    private VoiceClient() {}
+
+    public static void register(IEventBus modBus, ModContainer container) {
+        svc = ModList.get().isLoaded("voicechat");
+        plasmo = ModList.get().isLoaded("plasmovoice");
+        if (plasmo) {
+            try {
+                com.example.evanscomputermod.voice.client.compat.PlasmoVoiceBridge.install();
+            } catch (Throwable t) {
+                EvansComputerMod.LOGGER.warn("Microphone: couldn't attach to Plasmo Voice ({}); microphones won't hear you", t.toString());
+            }
+        }
+        if (svc || plasmo) EvansComputerMod.LOGGER.info("Microphone: using {}'s capture", svc ? "Simple Voice Chat" : "Plasmo Voice");
+        container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> new ConfigurationScreen(mod, parent));
+        modBus.addListener((RegisterKeyMappingsEvent e) -> e.register(TALK));
+        MicrophoneOptions.register();
+        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> tick());
+        NeoForge.EVENT_BUS.addListener((RenderGuiEvent.Post e) -> hud(e));
+        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut e) -> reset());
+    }
+
+    /** The server's {@code DEMAND_*} bits. */
+    public static void onDemand(int flags) {
+        demand = flags;
+    }
+
+    /** The Walkie-Talkie's push-to-talk is held: its own key, or (none bound) the voice chat mod's push-to-talk, or B. */
+    public static boolean pttDown(net.minecraft.world.item.ItemStack walkie) {
+        String key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.explicitPtt(walkie);
+        if (key.isEmpty()) {
+            if (plasmo) {
+                try {
+                    return com.example.evanscomputermod.voice.client.compat.PlasmoVoiceBridge.pttPressed();
+                } catch (Throwable t) {
+                    return false;
+                }
+            }
+            KeyMapping svcPtt = svc ? voiceModPtt() : null;
+            if (svcPtt != null) return com.example.evanscomputermod.controller.client.ControllerClient.isKeyDown(svcPtt.saveString());
+            key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT;
+        }
+        return com.example.evanscomputermod.controller.client.ControllerClient.isKeyDown(key);
+    }
+
+    /** What the Walkie-Talkie's push-to-talk is, for the HUD and its screen. */
+    public static String pttLabel(net.minecraft.world.item.ItemStack walkie) {
+        String key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.explicitPtt(walkie);
+        if (!key.isEmpty()) return com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(key);
+        if (plasmo) return "Plasmo Voice's PTT";
+        KeyMapping svcPtt = svc ? voiceModPtt() : null;
+        if (svcPtt != null) return svcPtt.getTranslatedKeyMessage().getString() + " (Simple Voice Chat's PTT)";
+        return com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(
+                com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT);
+    }
+
+    /** Simple Voice Chat's push-to-talk key mapping ({@code key.push_to_talk}) when it is bound, or null. */
+    private static KeyMapping voiceModPtt() {
+        for (KeyMapping k : Minecraft.getInstance().options.keyMappings)
+            if (k.getName().equals("key.push_to_talk")) return k.isUnbound() ? null : k;
+        return null;
+    }
+
+    /** A voice chat mod provides the microphone (ECM doesn't open it). */
+    public static boolean usesVoiceMod() {
+        return svc || plasmo;
+    }
+
+    /** Which capture is in use: "Simple Voice Chat", "Plasmo Voice" or "OpenAL". */
+    public static String captureName() {
+        return svc ? "Simple Voice Chat" : plasmo ? "Plasmo Voice" : "OpenAL";
+    }
+
+    private static void reset() {
+        demand = 0;
+        OWN.stop();
+        CaptureBuffer.setAccepting(false);
+        talkSent = false;
+    }
+
+    private static void tick() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.getConnection() == null) {
+            if (OWN.running()) reset();
+            return;
+        }
+        boolean enabled = VoiceClientConfig.enabled();
+        // The radio's push-to-talk: the key bound on the Walkie-Talkie in hand (or the voice chat mod's).
+        boolean ptt = false;
+        for (var h : net.minecraft.world.InteractionHand.values()) {
+            var stack = mc.player.getItemInHand(h);
+            if (com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(stack)
+                    && com.example.evanscomputermod.radio.handheld.HandheldSettings.read(stack).on()) {
+                ptt = mc.screen == null && pttDown(stack);
+                break;
+            }
+        }
+        if (ptt && !pttWas) com.example.evanscomputermod.speaker.client.HandheldAudioClient.mute();
+        pttWas = ptt;
+        // With a voice chat mod, its own push-to-talk / voice activation decides when the microphone is live.
+        boolean talk = (!usesVoiceMod() && TALK.isDown() && mc.screen == null) || ptt;
+        long nowMs = System.currentTimeMillis();
+        if (talk) lastTalkMs = nowMs;
+        // Push-to-talk opens the microphone only around Talk; voice activation (and a voice chat mod's
+        // capture, which that mod gates itself) while something listens.
+        boolean pttOnly = !usesVoiceMod() && VoiceClientConfig.mode() == VoiceClientConfig.Mode.PUSH_TO_TALK;
+        boolean wanted = enabled && demand != 0 && (!pttOnly || nowMs - lastTalkMs < PTT_LINGER_MS);
+        CaptureBuffer.setAccepting(wanted);
+        if (!svc && !plasmo) {
+            String device = VoiceClientConfig.device();
+            if (wanted && OWN.running() && !device.equals(OWN.openedName())) OWN.stop();   // device changed
+            if (wanted && !OWN.running()) OWN.start(device);
+            else if (!wanted && OWN.running()) OWN.stop();
+        }
+
+        // Everything captured since the last tick, at the voice rate.
+        List<short[]> parts = new ArrayList<>();
+        int total = 0;
+        boolean fromVoiceMod = false;
+        int peak = 0;
+        CaptureBuffer.Block b;
+        // A voice chat mod's audio already has its own input volume and filters applied: ours doesn't stack on top.
+        int volume = usesVoiceMod() ? 100 : VoiceClientConfig.inputVolume();
+        while ((b = CaptureBuffer.poll()) != null) {
+            if (resampler == null || resampler.inRate() != b.rate()) resampler = new Resampler(b.rate(), VoicePackets.VOICE_RATE);
+            short[] in = b.pcm();
+            if (volume != 100) {
+                // Input volume (0-200 %), like a sound card's capture level: applied before anything else, clipped.
+                in = in.clone();
+                for (int i = 0; i < in.length; i++) in[i] = (short) Math.max(-32768, Math.min(32767, in[i] * volume / 100));
+            }
+            for (short s : in) peak = Math.max(peak, Math.abs(s));
+            short[] r = resampler.process(in, 0, in.length);
+            parts.add(r);
+            total += r.length;
+            fromVoiceMod |= b.source() != CaptureBuffer.Source.OWN;
+        }
+        long now = System.currentTimeMillis();
+        if (total > 0) {
+            levelDb = peak == 0 ? -99 : (int) Math.round(20 * Math.log10(peak / 32768.0));
+            if (levelDb > VoiceClientConfig.activationDb()) lastLoudMs = now;
+        }
+
+        boolean radio = (demand & VoicePackets.DEMAND_RADIO) != 0;
+        boolean open;
+        if (fromVoiceMod) open = true;   // the voice chat mod only hands over frames while you talk in it
+        else if (VoiceClientConfig.mode() == VoiceClientConfig.Mode.PUSH_TO_TALK) open = talk;
+        else open = talk || now - lastLoudMs < HANGOVER_MS;
+        boolean send = wanted && total > 0 && (open || (radio && ptt));
+
+        if (send) {
+            short[] pcm = new short[total];
+            int at = 0;
+            for (short[] p : parts) {
+                System.arraycopy(p, 0, pcm, at, p.length);
+                at += p.length;
+            }
+            for (int off = 0; off < pcm.length; off += VoicePackets.MAX_SAMPLES) {
+                int n = Math.min(VoicePackets.MAX_SAMPLES, pcm.length - off);
+                PacketDistributor.sendToServer(new VoicePackets.Voice(seq++, VoicePackets.VOICE_RATE, n, ENCODER.encode(pcm, off, n), ptt));
+            }
+            lastSentMs = now;
+            talkSent = ptt;
+        } else if (ptt != talkSent) {
+            // Key a radio up or down even when there is no audio to send with it.
+            PacketDistributor.sendToServer(new VoicePackets.Talk(ptt));
+            talkSent = ptt;
+        }
+        if (ptt && radio && !enabled && now - lastHintMs > 10_000) {
+            lastHintMs = now;
+            mc.player.displayClientMessage(Component.translatable("evanscomputermod.voice.mic_off_hint"), true);
+        }
+    }
+
+    /** The server says your radio is transmitting. */
+    public static boolean onAir() {
+        return (demand & VoicePackets.DEMAND_ON_AIR) != 0;
+    }
+
+    /** Your voice is being sent now. */
+    public static boolean live() {
+        return System.currentTimeMillis() - lastSentMs < 300;
+    }
+
+    private static void hud(RenderGuiEvent.Post e) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.options.hideGui || !VoiceClientConfig.showIndicator()) return;
+        boolean onAir = (demand & VoicePackets.DEMAND_ON_AIR) != 0;
+        boolean live = live();
+        boolean listening = VoiceClientConfig.enabled() && demand != 0;
+        if (!onAir && !live && !listening) return;
+        var g = e.getGuiGraphics();
+        int x = 6, y = g.guiHeight() - 40;
+        String label = onAir ? "TX" : "MIC";
+        int dot = live ? 0xFFE03030 : 0xFF707070;
+        g.fill(x - 3, y - 3, x + 12 + mc.font.width(label) + 3, y + 11, 0x90000000);
+        g.fill(x, y + 1, x + 7, y + 8, dot);
+        g.drawString(mc.font, label, x + 11, y, onAir ? 0xFFFF5555 : 0xFFFFFFFF);
+    }
+}
+//?}

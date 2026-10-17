@@ -75,6 +75,8 @@ PROJECTS = {
     'ephone_body': ('item_bewlr:ephone', 'item'),
     'charging_dock': ('facing_active', 'block'),
     'card_reader': ('facing_card', 'block'),
+    'microphone': ('facing_lit', 'block'),
+    'walkie_talkie': ('item', 'item'),
     'card_bank_body': ('item_bewlr:bank_card', 'item'),
     'card_nfc_body': ('item_bewlr:nfc_card', 'item'),
     'card_hybrid_body': ('item_bewlr:hybrid_card', 'item'),

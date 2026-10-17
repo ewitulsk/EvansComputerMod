@@ -197,6 +197,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "arecord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "arm7tdmi"
 version = "0.1.0"
 dependencies = [
@@ -1157,6 +1164,7 @@ version = "0.1.0"
 dependencies = [
  "celld",
  "ecm-apps-ui",
+ "ecm-audio",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",

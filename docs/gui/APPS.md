@@ -143,7 +143,7 @@ Installing unpacks into `/apps/<id>/` (replacing an older version), creates `/va
 
 Names from [UI Protocol §10](UI_PROTOCOL.md#10--apps-and-permissions), plus `packages` (install, launch and manage apps through `app_ctl`; for the App Store):
 
-`network`, `radio`, `cellular`, `controller`, `location`, `notifications`, `files:documents`, `files:all`, `packages`, `peripherals:<type>`, `background:refresh|audio|radio|transfer|navigation`.
+`network`, `radio`, `cellular`, `controller`, `microphone`, `location`, `notifications`, `files:documents`, `files:all`, `packages`, `peripherals:<type>`, `background:refresh|audio|radio|transfer|navigation`.
 
 How a check is decided:
 
@@ -181,7 +181,7 @@ In Java, at the host-call boundary, through `ProcessSandbox` (implemented by `Ap
 | `sock_socket(AF_ECM_TUN)` (radio0) | `radio` | -13 |
 | `wifi_ctl` (wlan0: iw, wpa_supplicant) | `radio` | status -13 |
 | `net_set_promiscuous_on`, `net_pcap_enable` | `radio` | -13 |
-| `periph_call`, `periph_methods` | by type: `sdr amplifier antenna dish microwave_radio wifi` → `radio`; `lte_modem mmwave_modem` → `cellular`; `xbox_controller controller_receiver` → `controller`; else `peripherals:<type>` | error frame "permission denied" |
+| `periph_call`, `periph_methods` | by type: `sdr amplifier antenna dish microwave_radio wifi` → `radio`; `lte_modem mmwave_modem` → `cellular`; `xbox_controller controller_receiver` → `controller`; `microphone` → `microphone` (also `/dev/mic*`); else `peripherals:<type>` | error frame "permission denied" |
 | `periph_wait_event` | only events of peripherals already allowed (filtered when posted) | — |
 | `redstone_*` | `peripherals:redstone` | -13 / 0 |
 | `/dev/sdr*` (`path_open`) | `radio` | `ACCES` |

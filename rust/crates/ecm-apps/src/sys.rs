@@ -154,6 +154,16 @@ impl DisplayState {
     }
 }
 
+/// A speaker (output) or microphone (input) attached to the computer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SoundDevice {
+    /// Attachment name (`top`, `left_bay_1`, `speaker` / `microphone` on an ePhone).
+    pub name: String,
+    pub input: bool,
+    /// Output volume or input gain, 0-100.
+    pub volume: i64,
+}
+
 /// Everything an app needs from the computer.
 pub trait Sys {
     /// Where `/` is (the computer's disk; a temp dir in tests).
@@ -181,6 +191,20 @@ pub trait Sys {
     /// 0 running, 1 exited, -1 invalid.
     fn session_status(&mut self, id: i32) -> i32;
     fn session_close(&mut self, id: i32);
+    /// Attached speakers and microphones (Settings > Sound).
+    fn sound_devices(&mut self) -> Vec<SoundDevice> {
+        Vec::new()
+    }
+    /// Set a speaker's volume or a microphone's gain (0-100).
+    fn sound_set_volume(&mut self, _device: &SoundDevice, _volume: u8) -> Result<(), String> {
+        Err("no sound devices".into())
+    }
+    /// The peak level (dBFS) a microphone heard since the last call (it records while asked); None if it can't be read.
+    fn mic_level(&mut self, _name: &str) -> Option<i32> {
+        None
+    }
+    /// Stop reading microphones for [`mic_level`](Self::mic_level).
+    fn mic_level_stop(&mut self) {}
     /// The upload port (files from the player's real computer, abi `[imports.upload]`):
     /// 1 ready, 0 no add-on on the server, 2 not in the player's game, 3 not permitted.
     fn upload_supported(&mut self) -> i32 {
@@ -372,6 +396,19 @@ mod host {
 
     /// The computer this program runs on.
     pub struct HostSys;
+
+    thread_local! {
+        /// Microphones Settings > Sound is reading for its level meter (its own capture streams).
+        static METERS: RefCell<Vec<(String, std::fs::File)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn ctl_value(path: &str, key: &str) -> Option<i64> {
+        let text = std::fs::read_to_string(path).ok()?;
+        text.lines().find_map(|l| {
+            let mut it = l.split_whitespace();
+            (it.next()? == key).then(|| it.next()?.parse().ok()).flatten()
+        })
+    }
 
     fn get<'a>(m: &'a Value, key: &str) -> Option<&'a Value> {
         match m {
@@ -573,6 +610,72 @@ mod host {
         fn session_close(&mut self, id: i32) {
             ipc::session_close(id);
         }
+
+        fn sound_devices(&mut self) -> Vec<SoundDevice> {
+            let mut out = Vec::new();
+            for (name, ty) in peripheral::list().unwrap_or_default() {
+                let input = match ty.as_str() {
+                    "speaker" => false,
+                    "microphone" => true,
+                    _ => continue,
+                };
+                let volume = if input {
+                    ctl_value(&format!("/dev/micctl.{name}"), "gain")
+                } else {
+                    ctl_value(&format!("/dev/audioctl.{name}"), "volume")
+                };
+                out.push(SoundDevice { name, input, volume: volume.unwrap_or(0) });
+            }
+            out.sort_by(|a, b| a.input.cmp(&b.input).then_with(|| a.name.cmp(&b.name)));
+            out
+        }
+
+        fn sound_set_volume(&mut self, d: &SoundDevice, volume: u8) -> Result<(), String> {
+            let (path, cmd) = if d.input {
+                (format!("/dev/micctl.{}", d.name), format!("gain {}\n", volume.min(100)))
+            } else {
+                (format!("/dev/audioctl.{}", d.name), format!("volume {}\n", volume.min(100)))
+            };
+            std::fs::write(&path, cmd).map_err(|e| format!("{path}: {e}"))
+        }
+
+        fn mic_level(&mut self, name: &str) -> Option<i32> {
+            use std::io::Read;
+            METERS.with(|m| {
+                let mut m = m.borrow_mut();
+                if !m.iter().any(|(n, _)| n == name) {
+                    let f = std::fs::File::open(format!("/dev/mic.{name}")).ok()?;
+                    m.push((name.to_string(), f));
+                }
+                let ctl = format!("/dev/micctl.{name}");
+                let rate = ctl_value(&ctl, "rate").unwrap_or(48000).max(8000) as usize;
+                let frame = (ctl_value(&ctl, "bits").unwrap_or(16) as usize / 8) * ctl_value(&ctl, "channels").unwrap_or(1).max(1) as usize;
+                let file = &mut m.iter_mut().find(|(n, _)| n == name)?.1;
+                // 50 ms (waits the first time), then whatever this stream has captured since.
+                let mut peak = -99;
+                let mut want = rate / 20;
+                for _ in 0..4 {
+                    let mut buf = vec![0u8; want.max(1) * frame];
+                    let n = file.read(&mut buf).ok()?;
+                    let samples: Vec<i16> = if frame % 2 == 0 {
+                        buf[..n].chunks_exact(frame).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
+                    } else {
+                        buf[..n].chunks_exact(frame).map(|b| ((b[0] as i16) - 128) << 8).collect()
+                    };
+                    peak = peak.max(ecm_audio::peak_dbfs(&samples));
+                    let left = ctl_value(&ctl, "buffered_ms").unwrap_or(0) as usize;
+                    if left < 20 {
+                        break;
+                    }
+                    want = (rate * left / 1000).min(rate / 2);
+                }
+                Some(peak)
+            })
+        }
+
+        fn mic_level_stop(&mut self) {
+            METERS.with(|m| m.borrow_mut().clear());
+        }
     }
 }
 
@@ -597,6 +700,10 @@ pub struct MockState {
     pub session_size: Option<(u16, u16)>,
     pub session_exited: bool,
     pub log: Vec<String>,
+    /// Speakers and microphones.
+    pub sound: Vec<SoundDevice>,
+    /// What each microphone hears (dBFS) for the level meter.
+    pub mic_levels: Vec<(String, i32)>,
     /// What `upload_supported` answers (1 = ready).
     pub upload_support: i32,
     /// Polls of the running upload answer these in turn (the last one repeats).
@@ -737,6 +844,23 @@ impl Sys for MockSys {
     }
     fn session_close(&mut self, _id: i32) {
         self.state.borrow_mut().log.push("session close".into());
+    }
+    fn sound_devices(&mut self) -> Vec<SoundDevice> {
+        self.state.borrow().sound.clone()
+    }
+    fn sound_set_volume(&mut self, d: &SoundDevice, volume: u8) -> Result<(), String> {
+        let mut s = self.state.borrow_mut();
+        s.log.push(format!("{} {} {}", if d.input { "gain" } else { "volume" }, d.name, volume));
+        match s.sound.iter_mut().find(|x| x.name == d.name && x.input == d.input) {
+            Some(x) => {
+                x.volume = volume as i64;
+                Ok(())
+            }
+            None => Err(format!("no device {}", d.name)),
+        }
+    }
+    fn mic_level(&mut self, name: &str) -> Option<i32> {
+        self.state.borrow().mic_levels.iter().find(|(n, _)| n == name).map(|(_, l)| *l)
     }
 }
 

@@ -2660,6 +2660,7 @@ public class ComputerInstance implements AutoCloseable {
         if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
         if (name.startsWith("frames")) return openFramesDevice(name);
+        if (name.startsWith("mic")) return openMicDevice(name);
         boolean ctl;
         String rest;
         if (name.startsWith("audioctl")) {
@@ -2686,6 +2687,32 @@ public class ComputerInstance implements AutoCloseable {
                 if (audio.isClosed()) return null;
                 return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
                         : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code /dev/mic} / {@code /dev/micctl} (the first attached microphone) or
+     * {@code mic.<attachment>} / {@code micctl.<attachment>} (a particular one).
+     */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openMicDevice(String name) {
+        boolean ctl = name.startsWith("micctl");
+        String rest = name.substring(ctl ? 6 : 3);
+        String attachment;
+        if (rest.isEmpty()) attachment = null;
+        else if (rest.startsWith(".") && rest.length() > 1) attachment = rest.substring(1);
+        else return null;
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null) return null;
+        for (String n : hub.names()) {
+            if (attachment != null && !attachment.equals(n)) continue;
+            if (hub.get(n) instanceof com.example.evanscomputermod.voice.MicrophonePeripheral mp) {
+                var mic = mp.mic();
+                if (mic.isClosed()) return null;
+                return ctl ? new com.example.evanscomputermod.voice.MicDeviceFd.Ctl(mic, mp::gainChanged)
+                        : new com.example.evanscomputermod.voice.MicDeviceFd(mic);
             }
         }
         return null;

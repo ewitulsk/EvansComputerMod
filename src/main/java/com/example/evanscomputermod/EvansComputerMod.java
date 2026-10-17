@@ -93,6 +93,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.radio.RadioContent.register(modEventBus);
         // ePhone hardware (docs/gui/EPHONE.md).
         com.example.evanscomputermod.phone.PhoneContent.register(modEventBus, modContainer);
+        // Microphones and players' voices (docs/VOICE.md).
+        com.example.evanscomputermod.voice.VoiceContent.register(modEventBus, modContainer);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)
