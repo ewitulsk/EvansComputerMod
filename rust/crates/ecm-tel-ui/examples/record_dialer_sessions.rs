@@ -204,7 +204,7 @@ fn main() {
                 480,
                 {
                     let mut t = tel();
-                    t.calls.push(CallLine { id: 5, state: "active".into(), number: "+12145550142".into(), outgoing: true, seconds: 42, muted: false, hd: true, codec: "ADPCM-WB".into(), loss: 0.4, merged: false, hidden: false });
+                    t.calls.push(CallLine { id: 5, state: "active".into(), number: "+12145550142".into(), outgoing: true, seconds: 42, muted: false, hd: true, codec: "ADPCM-WB".into(), loss: 0.4, merged: false, hidden: false, rx: 0, tx: 0 });
                     t
                 },
                 |a, m| press(a, m, "mute", 1010),

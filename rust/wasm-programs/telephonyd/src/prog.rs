@@ -99,6 +99,8 @@ struct Audio {
     play: Option<(u32, Vec<i16>)>,
     /// Recording the far end: (call, until ms, path, samples).
     record: Option<(u32, u64, String, Vec<i16>)>,
+    /// A new text's chime (two short beeps, once), on the ringtone's path.
+    chime: Option<ecm_rtp::Tone>,
 }
 
 pub fn main() {
@@ -134,7 +136,7 @@ pub fn main() {
     log.line(&format!("telephonyd: SIM {imsi}, {} messages, {} calls in the log", st.msgs.len(), st.calls.len()));
     let mut clients: Vec<Client> = Vec::new();
     let mut rtp: BTreeMap<u16, i32> = BTreeMap::new();
-    let mut audio = Audio { call: None, ring: None, mic: None, speaker_on: false, play: None, record: None };
+    let mut audio = Audio { call: None, ring: None, mic: None, speaker_on: false, play: None, record: None, chime: None };
     let clock = Instant::now();
     let ms = || clock.elapsed().as_millis() as u64;
     let mut last_celld = 0u64;
@@ -180,6 +182,8 @@ pub fn main() {
         }
         let mut fds = vec![sip, listener, sms_listener];
         fds.extend(clients.iter().map(|c| c.fd));
+        // clients accepted below have no entry in `ready` until the next round
+        let polled = clients.len();
         let ports: Vec<u16> = rtp.keys().copied().collect();
         fds.extend(ports.iter().map(|p| rtp[p]));
         let ready = sys::readable(&fds, 5);
@@ -190,7 +194,7 @@ pub fn main() {
             }
         }
         for (i, p) in ports.iter().enumerate() {
-            if ready[3 + clients.len() + i] {
+            if ready[3 + polled + i] {
                 for (from, d) in sys::udp_drain(rtp[p], &mut buf, 32) {
                     ua.on_rtp(*p, from, &d, now);
                 }
@@ -210,7 +214,7 @@ pub fn main() {
         let mut gone = Vec::new();
         let mut requests: Vec<(i32, String)> = Vec::new();
         for (i, cl) in clients.iter_mut().enumerate() {
-            if !ready[3 + i] {
+            if i >= polled || !ready[3 + i] {
                 continue;
             }
             match sys::read_now(cl.fd, &mut buf) {
@@ -324,6 +328,10 @@ pub fn main() {
         }
         if !st.pending_calls.is_empty() {
             append(store::CALLS, &std::mem::take(&mut st.pending_calls));
+        }
+        // a new text or picture chimes once (not with the ringtone off, nor over a call)
+        if phone && g("ringtone") != "off" && events.iter().any(|e| e.name == "sms" || e.name == "mms") && ua.calls().iter().all(|c| c.state == CallState::Ended) {
+            audio.chime = Some(ecm_rtp::Tone::message());
         }
         // events to watchers
         if !events.is_empty() {
@@ -440,20 +448,38 @@ fn media(ua: &mut Ua, audio: &mut Audio, g: &dyn Fn(&str) -> String, now: u64, l
     match ua.ring(320) {
         Some(r) if g("ringtone") != "off" => {
             if audio.ring.is_none() {
-                if let Ok(mut d) = ecm_audio::Device::open(None) {
-                    let _ = d.set_format(16_000, 16, 1);
-                    let _ = d.set_role(ecm_audio::Role::Phone);
-                    let _ = d.set_latency_ms(80);
-                    let _ = d.set_volume(100);
-                    audio.ring = Some(d);
-                }
+                audio.ring = ring_device(100);
             }
             if let Some(d) = audio.ring.as_mut() {
                 let _ = d.write_samples(&r);
             }
         }
+        _ if audio.chime.is_some() => {
+            if audio.ring.is_none() {
+                audio.ring = ring_device(80);
+            }
+            let t = audio.chime.as_mut().expect("chime");
+            let s = t.next_samples(320);
+            let done = t.is_done();
+            if let Some(d) = audio.ring.as_mut() {
+                let _ = d.write_samples(&s);
+            }
+            if done {
+                audio.chime = None;
+            }
+        }
         _ => audio.ring = None,
     }
+}
+
+/// The ringtone's (and the message chime's) output: the phone's speaker, role phone.
+fn ring_device(volume: u8) -> Option<ecm_audio::Device> {
+    let mut d = ecm_audio::Device::open(None).ok()?;
+    let _ = d.set_format(16_000, 16, 1);
+    let _ = d.set_role(ecm_audio::Role::Phone);
+    let _ = d.set_latency_ms(80);
+    let _ = d.set_volume(volume);
+    Some(d)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -549,7 +575,6 @@ fn on_event(
             let id = st.add(&k, MsgLine { incoming: true, from: from.clone(), time_ms: now, status: "received".into(), text: text.clone(), ..Default::default() });
             if phone {
                 notify("dev.ecm.messages", &format!("sms:{k}"), &name_of(&from), &text);
-                uictl("chime message");
             }
             events.push(Event::new("sms", &[("id", &id.to_string()), ("from", &from), ("thread", &k), ("text", &text)]));
         }
@@ -625,6 +650,8 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
                     codec: c.codec.clone(),
                     loss: c.loss,
                     merged: c.merged,
+                    rx: c.rx_packets,
+                    tx: c.tx_packets,
                 }
                 .line()
             })
