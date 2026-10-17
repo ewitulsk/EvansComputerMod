@@ -246,4 +246,29 @@ mod tests {
         assert!(c.hss("FROB", 0).is_err());
         assert_ne!(peer_proof(b"s", "imsd"), peer_proof(b"s", "smscd"));
     }
+
+    #[test]
+    fn enum_key_port_codes_and_ported_numbers() {
+        let mut c = core();
+        assert!(c.admin("port-code +12145550142", 0).unwrap_err().contains("no enum key"));
+        assert!(c.admin("enum-key 0011", 0).is_err());
+        c.admin("enum-key 000102030405060708090a0b0c0d0e0f", 0).unwrap();
+        // the nonce is 00 01 02 with this entropy; ianad checks the mac with the same key
+        let r = c.admin("port-code +12145550142", 0).unwrap();
+        assert!(r.ends_with("port-out code for +12145550142 is 000102-16ffd23c"), "{}", r);
+        assert_eq!(c.db().subs["310150000000001"].ims.port, "000102-16ffd23c");
+        assert!(c.admin("port-code 310150000000001 7Q2K9X", 0).is_ok(), "a code typed in still works");
+        // porting in: a number outside the blocks needs `ported`
+        c.admin("add 310150000000002 00112233445566778899aabbccddeeff", 0).unwrap();
+        assert!(c.admin("number 310150000000002 +19725550123", 0).unwrap_err().contains("outside"));
+        assert!(c.admin("number 310150000000002 +19725550123 ported", 0).unwrap().contains("ported in"));
+        assert!(c.db().subs["310150000000002"].ims.ported);
+        assert!(c.admin("port-code +19725550123", 0).unwrap_err().contains("block's holder"));
+        assert_eq!(kv(&c.hss("LIR +19725550123", 0).unwrap(), "result"), "local", "a ported-in number is ours");
+        let saved = Db::parse(&c.db().to_text()).unwrap();
+        assert_eq!(&saved, c.db(), "enum key and ported round-trip");
+        assert!(c.db().to_text().contains("enum key=000102030405060708090a0b0c0d0e0f"));
+        c.admin("number-release 310150000000002", 0).unwrap();
+        assert!(!c.db().subs["310150000000002"].ims.ported);
+    }
 }

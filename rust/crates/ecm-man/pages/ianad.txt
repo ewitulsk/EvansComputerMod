@@ -1,10 +1,12 @@
 NAME
-    ianad - IANA's desk: adds new top-level domains to the root zone
+    ianad - IANA's desk: new top-level domains and phone number blocks
 
 SYNOPSIS
     ianad [-c FILE]
     ianad list
     ianad revoke TLD
+    ianad enum
+    ianad enum-revoke BLOCK
 
 DESCRIPTION
     ianad runs on the computer that keeps the root zone (iana.ring). It
@@ -16,6 +18,20 @@ DESCRIPTION
     (NS records and glue) to the root zone, raises the serial and has
     the local named reload, which NOTIFYs the root servers.
 
+    ianad is also the numbering administrator. It keeps the zone
+    e164.arpa (ENUM) in the same named: when it starts it adds the zone
+    to /etc/named.conf and its delegation (e164.arpa NS iana.ring) to
+    the root zone if they are missing, so any resolver reaches it.
+    domain enum apply grants a free block of 10,000 numbers (+1214555)
+    to a carrier's SIP domain once _sip._udp.DOMAIN SRV or DOMAIN A
+    resolves, and publishes a NAPTR record at the block's name
+    (5.5.5.4.1.2.1.e164.arpa) that rewrites a number to
+    sip:NUMBER@DOMAIN. A domain's first block issues its key (32 hex),
+    shown once. domain enum port checks a port-out code (NONCE-MAC,
+    the mac signed with the key of the number's block) and the gaining
+    domain's key, and writes a NAPTR at the number's own name that
+    overrides the block's; porting back to the holder removes it.
+
     It runs until you stop it with Ctrl+T; start it with ianad &.
 
 COMMANDS
@@ -26,6 +42,12 @@ COMMANDS
         Take a TLD out of the root zone (the operator's command; no
         account needed at the IANA console).
 
+    enum
+        The number blocks and ported numbers.
+
+    enum-revoke BLOCK
+        Take a number block back; its ported numbers go too.
+
 FILES
     /etc/ianad.conf
         One setting per line, # comments; all optional:
@@ -33,11 +55,20 @@ FILES
       zone /etc/named/root.zone
       port 80
       db /etc/ianad.db
+      enum-zone /etc/named/e164.arpa.zone
+      enum-ns iana.ring
+      named-conf /etc/named.conf
+      cc 1
+
+    enum-ns is the name of this computer, the zone's nameserver.
 
 EXAMPLES
       ianad &
       ianad list
       ianad revoke base
+      ianad enum
+      ianad enum-revoke +1214555
+      dig -t NAPTR 5.5.5.4.1.2.1.e164.arpa
 
 SEE ALSO
-    domain, named, dig, networking
+    domain, named, dig, cored, networking

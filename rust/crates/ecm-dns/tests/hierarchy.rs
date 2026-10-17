@@ -348,3 +348,37 @@ fn resolver_follows_naptr_and_srv_for_sip() {
     // a number without records
     assert_eq!(n.ask("100.70.0.53", "3.4.1.0.5.5.5.v4.ring", NAPTR).header.rcode, NXDOMAIN);
 }
+
+#[test]
+fn enum_blocks_and_ports_resolve_from_iana() {
+    use ecm_dns::numbering::{delegate_root, named_conf_with_zone, port_code, Numbering, ZONE_FILE};
+    let ka = "000102030405060708090a0b0c0d0e0f";
+    let kb = "f0e0d0c0b0a090807060504030201000";
+    let mut num = Numbering::default();
+    num.apply("1", "+1214555", "v4.ring", "", ka, 1).unwrap();
+    num.apply("1", "+1214556", "other.ring", "", kb, 1).unwrap();
+    let n = "+12145550142";
+    num.port("1", n, "other.ring", &port_code(ka, n, "abc123").unwrap(), kb, 2).unwrap();
+    // what ianad writes: the root delegates e164.arpa to iana.ring, named loads the zone
+    let root = delegate_root(&ecm_dns::zone::Zone::parse(ROOT_ZONE, "").unwrap(), "iana.ring").unwrap().to_text();
+    let e164 = num.zone(1, "iana.ring").to_text();
+    let conf = named_conf_with_zone("zone . primary /etc/named/root.zone\n", ZONE_FILE).unwrap();
+    let ring_zone = format!("{RING_ZONE}iana A 100.66.0.57\n");
+    let mut net = Net::new();
+    net.add("100.66.0.57", &conf, &[("/etc/named/root.zone", &root), (ZONE_FILE, &e164)]);
+    net.add("100.65.0.54", "zone . secondary 100.66.0.57\n", &[]);
+    net.add("100.67.0.54", "zone . secondary 100.66.0.57\n", &[]);
+    net.add("100.68.0.55", "zone ring primary /etc/named/ring.zone\n", &[("/etc/named/ring.zone", &ring_zone)]);
+    net.add("100.70.0.53", "recursion yes\nroot-hints /etc/named/root.hints\n", &[("/etc/named/root.hints", ROOT_HINTS)]);
+    net.run(200);
+    let uri = |net: &mut Net, name: &str| {
+        let r = net.ask("100.70.0.53", name, NAPTR);
+        assert_eq!(r.header.rcode, NOERROR, "{name}: {}", net.logs.join("\n"));
+        ecm_dns::enum_dns::enum_sip_uri(ecm_dns::enum_dns::naptrs(&r.answers), n)
+    };
+    // the ported number has its own record; an unported one falls back to its block
+    assert_eq!(uri(&mut net, "2.4.1.0.5.5.5.4.1.2.1.e164.arpa").as_deref(), Some("sip:+12145550142@other.ring"));
+    assert_eq!(uri(&mut net, "5.5.5.4.1.2.1.e164.arpa").as_deref(), Some("sip:+12145550142@v4.ring"));
+    assert_eq!(net.ask("100.70.0.53", "3.4.1.0.5.5.5.4.1.2.1.e164.arpa", NAPTR).header.rcode, NXDOMAIN);
+    assert_eq!(net.ask("100.70.0.53", "9.9.9.9.1.e164.arpa", NAPTR).header.rcode, NXDOMAIN, "no such block");
+}

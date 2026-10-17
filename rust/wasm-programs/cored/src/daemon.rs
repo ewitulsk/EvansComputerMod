@@ -13,9 +13,10 @@
 //! | `log [n]`, `handovers [n]` | the last n lines of the log / of the handover log |
 //! | `sim-new [label] [quota]` | write the blank SIM in the Card Reader/Writer (with the next free number when the carrier holds a block): `imsi`, `number`, `label`, `ejected` lines |
 //! | `blocks`, `block-add <NPA-NXX>`, `block-remove <NPA-NXX>` | number blocks (docs/TELEPHONY.md) |
-//! | `numbers`, `number <imsi\|label> [+number]`, `number-release <who>`, `number-move <+number> <who>` | who has which number: `num <number> <imsi> <label>` lines |
+//! | `numbers`, `number <imsi\|label> [+number [ported]]`, `number-release <who>`, `number-move <+number> <who>` | who has which number: `num <number> <imsi> <label>` lines; `ported` for a number ported in from another carrier |
+//! | `enum-key <hex>` | the ENUM key IANA issued with the blocks (`domain enum apply`) |
 //! | `ims pool=<cidr> [pcscf=<ip>] [domain=<d>] [net=<cidr>] [mmsc=<ip>]`, `ims-off` | the IMS bearer (VoLTE, SMS over IMS, MMS) |
-//! | `feature <who> <cfu\|cfb\|cfnr\|cfnrc\|cw\|clir\|dnd\|vm\|block\|unblock> <value>`, `port-code <who> <code>` | the TAS profile in the HSS |
+//! | `feature <who> <cfu\|cfb\|cfnr\|cfnrc\|cw\|clir\|dnd\|vm\|block\|unblock> <value>`, `port-code <who> [code]` | the TAS profile in the HSS; `port-code <who>` makes a port-out code signed with the enum key |
 //! | `site-new <id>` | a new site with a random credential: `site`, `secret` lines |
 //! | `add <imsi> <key> [quota] [label]`, `revoke <imsi>`, `unrevoke <imsi>`, `quota <imsi> <bytes>`, `reset-usage <imsi>`, `remove <imsi>`, `label <imsi> <label>`, `release <imsi>`, `site-add <id> <secret>`, `site-remove <id>` | the database operations (`ecm_cell::core::Core::admin`) |
 //! | `stop` | `stopping` |
@@ -155,6 +156,7 @@ impl Daemon {
         // telephony (docs/TELEPHONY.md)
         kv("cc", db.cc.clone());
         kv("blocks", if db.blocks.is_empty() { "-".into() } else { db.blocks.join(",") });
+        kv("enum_key", if db.enum_key.is_some() { "set" } else { "-" }.into());
         kv("numbers", db.subs.values().filter(|x| !x.ims.msisdn.is_empty()).count().to_string());
         match &db.ims {
             Some(i) => {
@@ -345,7 +347,7 @@ impl Daemon {
             [cmd, ..]
                 if [
                     "add", "revoke", "unrevoke", "quota", "reset-usage", "remove", "label", "release", "site-add", "site-remove", "block-add", "block-remove", "blocks", "numbers", "number", "number-release",
-                    "number-move", "feature", "port-code", "ims", "ims-off",
+                    "number-move", "feature", "port-code", "enum-key", "ims", "ims-off",
                 ]
                 .contains(cmd) =>
             {
@@ -353,7 +355,7 @@ impl Daemon {
             }
             [] => Err("empty command".into()),
             _ => Err(format!(
-                "unknown command '{}' (status, subs, sites, sessions, log, handovers, sim-new, site-new, add, revoke, unrevoke, quota, reset-usage, remove, label, release, site-add, site-remove, blocks, block-add, block-remove, numbers, number, number-release, number-move, ims, ims-off, feature, port-code, stop)",
+                "unknown command '{}' (status, subs, sites, sessions, log, handovers, sim-new, site-new, add, revoke, unrevoke, quota, reset-usage, remove, label, release, site-add, site-remove, blocks, block-add, block-remove, numbers, number, number-release, number-move, ims, ims-off, feature, port-code, enum-key, stop)",
                 line.trim()
             )),
         };
@@ -563,5 +565,26 @@ mod tests {
         assert_eq!(d.handle("stop", 0, &mut r).1, Action::Stop);
         let log = d.handle("log", 0, &mut r).0.unwrap();
         assert!(log.contains("admin: 001010000000042 revoked"), "{log}");
+    }
+
+    #[test]
+    fn enum_key_and_port_codes() {
+        let mut d = daemon();
+        let mut r = FakeReader::default();
+        d.handle("block-add 214-555", 0, &mut r).0.unwrap();
+        d.handle("add 001010000000042 00112233445566778899aabbccddeeff", 0, &mut r).0.unwrap();
+        d.handle("number 001010000000042", 0, &mut r).0.unwrap();
+        assert!(d.handle("port-code +12145550100", 0, &mut r).0.unwrap_err().contains("no enum key"));
+        d.handle("enum-key 000102030405060708090a0b0c0d0e0f", 0, &mut r).0.unwrap();
+        let st = lines(&d.handle("status", 0, &mut r).0.unwrap());
+        assert_eq!(value(&st, "enum_key"), Some("set"));
+        let code = d.handle("port-code +12145550100", 0, &mut r).0.unwrap();
+        let code = code.rsplit(' ').next().unwrap();
+        assert_eq!(code.len(), 15, "{code}");
+        assert_eq!(*code, ecm_cell::db::port_code(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "+12145550100", &code[..6]));
+        d.handle("add 001010000000043 00112233445566778899aabbccddeeff", 0, &mut r).0.unwrap();
+        assert!(d.handle("number 001010000000043 +19725550123 ported", 0, &mut r).0.is_ok());
+        let saved = d.take_out(0).into_iter().filter_map(|o| if let CoreOut::SaveDb(t) = o { Some(t) } else { None }).last().unwrap();
+        assert!(saved.contains("enum key=000102030405060708090a0b0c0d0e0f") && saved.contains("ported=1"), "{saved}");
     }
 }
