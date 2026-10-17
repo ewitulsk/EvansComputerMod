@@ -16,6 +16,12 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 public final class AppTests {
     static final String NS = "ecm_apps";
 
+    /** The Volume Mixer: two programs on one Speaker, one turned down, one muted; master mute silences both. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".volume_mixer")
+    public static void volume_mixer(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MixerScenarios.ALL.get("volume_mixer"), true);
+    }
+
     /** A serves a repository; B installs the app over the cable with pkg; network denied until granted. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".app_repo")
     public static void app_repo(GameTestHelper h) {
