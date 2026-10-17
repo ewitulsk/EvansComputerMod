@@ -1,0 +1,149 @@
+# DNS lab (docs/DNS.md, scenario dns_lab): a root server, a TLD server for `test.`,
+# the authoritative server of `lab.test.`, and a client that runs its own recursive
+# named for the stub resolver. dig +trace walks root -> test. -> lab.test.; the stub
+# resolver (curl, nslookup) uses /etc/resolv.conf with a search domain, follows a
+# CNAME, and tells NXDOMAIN from no answer. Controls: the authoritative server stopped
+# gives SERVFAIL (lame delegation), the delegation removed from the TLD gives NXDOMAIN.
+[[node]]
+name = "root"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.1/24\n"
+"etc/named.conf" = "zone . primary /etc/named/root.zone\n"
+"etc/named/root.zone" = '''
+$TTL 300
+@                 SOA a.root-servers.test. admin.lab.test. 1 60 30 600 30
+@                 NS  a.root-servers.test.
+a.root-servers.test. A 10.53.0.1
+test.             NS  ns.test.
+ns.test.          A   10.53.0.2
+'''
+[[node]]
+name = "tld"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.2/24\n"
+"etc/named.conf" = "zone test primary /etc/named/test.zone\n"
+"etc/named/test.zone" = '''
+$ORIGIN test.
+$TTL 300
+@        SOA ns admin.lab 1 60 30 600 30
+@        NS  ns
+ns       A   10.53.0.2
+lab      NS  ns1.lab
+ns1.lab  A   10.53.0.3
+'''
+"etc/named/test-nolab.zone" = '''
+$ORIGIN test.
+$TTL 300
+@        SOA ns admin.lab 2 60 30 600 30
+@        NS  ns
+ns       A   10.53.0.2
+'''
+[[node]]
+name = "auth"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.3/24\n"
+"etc/named.conf" = "zone lab.test primary /etc/named/lab.test.zone\n"
+"etc/named/lab.test.zone" = '''
+$ORIGIN lab.test.
+$TTL 60
+@     SOA ns1 admin 1 60 30 600 30
+@     NS  ns1
+ns1   A   10.53.0.3
+www   A   10.53.0.3
+web   CNAME www
+'''
+"index.html" = "hello from www.lab.test\n"
+[[node]]
+name = "client"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.4/24\n"
+"etc/named.conf" = "recursion yes\nroot-hints /etc/named/root.hints\n"
+"etc/named/root.hints" = ". NS a.root-servers.test.\na.root-servers.test. A 10.53.0.1\n"
+"etc/resolv.conf" = "nameserver 127.0.0.1\nsearch lab.test\n"
+"etc/hosts" = "127.0.0.1 localhost\n10.53.0.3 printer\n"
+[[segment]]
+name = "lab"
+members = ["root:eth0", "tld:eth0", "auth:eth0", "client:eth0"]
+[scenario]
+name = "dns-lab"
+description = "a 4-computer DNS hierarchy: dig +trace, the stub resolver, SERVFAIL and NXDOMAIN controls"
+steps = '''
+send root "named &"
+expect root /zone \.: loaded serial 1/
+send tld "named &"
+expect tld /zone test\.: loaded serial 1/
+send auth "named &"
+expect auth /zone lab\.test\.: loaded serial 1/
+send auth "httpd 80 &"
+send client "named &"
+expect client /recursion yes/
+wait 1s
+send client "dig +trace www.lab.test"
+expect client /^\.\s+\d+ IN NS\s+a\.root-servers\.test\./
+expect client /^test\.\s+300 IN NS\s+ns\.test\./
+expect client /Received \d+ bytes from 10\.53\.0\.1#53\(a\.root-servers\.test\)/
+expect client /^lab\.test\.\s+300 IN NS\s+ns1\.lab\.test\./
+expect client /Received \d+ bytes from 10\.53\.0\.2#53\(ns\.test\)/
+expect client /^www\.lab\.test\.\s+60 IN A\s+10\.53\.0\.3/
+expect client /Received \d+ bytes from 10\.53\.0\.3#53\(ns1\.lab\.test\)/
+wait_prompt client
+send client "dig web.lab.test"
+expect client /status: NOERROR/
+expect client /flags: qr rd ra;/
+expect client /^web\.lab\.test\.\s+60 IN CNAME www\.lab\.test\./
+expect client /^www\.lab\.test\.\s+60 IN A\s+10\.53\.0\.3/
+wait_prompt client
+send client "dig @10.53.0.3 lab.test SOA +norecurse"
+expect client /flags: qr aa;/
+expect client /SOA\s+ns1\.lab\.test\. admin\.lab\.test\. 1 60 30 600 30/
+wait_prompt client
+send client "nslookup -type=MX lab.test"
+expect client /No MX records for lab\.test/
+wait_prompt client
+send client "curl http://www/"
+expect client /hello from www\.lab\.test/ within 10s
+wait_prompt client
+send client "ping printer -n 1"
+expect client /PING printer \(10\.53\.0\.3\)|10\.53\.0\.3/
+wait_prompt client
+send client "curl http://nosuch.lab.test/"
+expect client /Could not resolve host: nosuch\.lab\.test \(name not found\)/ within 3s
+wait_prompt client
+send client "dig @10.53.0.1 www.lab.test +norecurse"
+expect client /status: NOERROR/
+expect client /AUTHORITY SECTION:/
+expect client /^test\.\s+300 IN NS\s+ns\.test\./
+wait_prompt client
+send client "dig @10.53.0.3 lab.test AXFR"
+expect client /XFR size: 6 records, serial 1/
+wait_prompt client
+send client "named cache"
+expect client /www\.lab\.test\.\s+\d+ IN A\s+10\.53\.0\.3/
+wait_prompt client
+send auth "named stop"
+expect auth /stopping/
+wait_prompt auth
+send client "named flush"
+expect client /cache flushed/
+wait_prompt client
+send client "dig www.lab.test"
+expect client /status: SERVFAIL/ within 12s
+wait_prompt client
+expect_any client /SERVFAIL www\.lab\.test\. for 127\.0\.0\.1: no nameserver of lab\.test\. answered \(lame delegation\)/
+send tld "cp /etc/named/test-nolab.zone /etc/named/test.zone"
+wait_prompt tld
+send tld "named reload"
+expect tld /zone test\.: loaded serial 2/
+wait_prompt tld
+send client "named flush"
+wait_prompt client
+send client "dig +trace www.lab.test"
+expect client /www\.lab\.test\. does not exist \(NXDOMAIN\)/ within 10s
+wait_prompt client
+send client "curl http://www.lab.test/"
+expect client /Could not resolve host: www\.lab\.test \(name not found\)/ within 5s
+'''

@@ -1,0 +1,166 @@
+# DNS registries (docs/DNS.md "The registrar", "Adding TLDs"): a root with IANA's desk,
+# the .ecm registry (registryd + named) with a secondary, the registrar (registrard), a
+# player's own nameserver for a new TLD, and a client with its own resolver.
+# The client makes an account, registers mybase.ecm and points www at itself; the
+# registry rewrites ecm.zone and NOTIFYs its secondary, which transfers it; curl and
+# whois work by name. Controls: the same name again, a wrong password and a reserved name
+# are refused; with the registry's primary stopped the secondary still answers.
+# Then a TLD: applying for .test is refused, applying with a lame nameserver is refused,
+# applying for .base with a working nameserver puts it in the root zone.
+[[node]]
+name = "root"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.1/24\n"
+"etc/named.conf" = "zone . primary /etc/named/root.zone\n"
+"etc/named/root.zone" = '''
+$TTL 300
+@                 SOA a.root-servers.lab. admin.nic.lab. 1 60 30 600 30
+@                 NS  a.root-servers.lab.
+a.root-servers.lab. A 10.53.0.1
+ecm.              NS  ns1.nic.lab.
+ecm.              NS  ns2.nic.lab.
+ns1.nic.lab.      A   10.53.0.5
+ns2.nic.lab.      A   10.53.0.6
+'''
+"etc/ianad.conf" = "zone /etc/named/root.zone\nport 80\n"
+[[node]]
+name = "reg"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.5/24\n"
+"etc/named.conf" = "zone ecm primary /etc/named/ecm.zone notify 10.53.0.6\n"
+"etc/named/ecm.zone" = '''
+$ORIGIN ecm.
+$TTL 3600
+@ SOA ns1.nic.lab. hostmaster.nic.lab. 1 300 60 600 60
+@ NS ns1.nic.lab.
+@ NS ns2.nic.lab.
+'''
+"etc/registryd.conf" = "zone ecm /etc/named/ecm.zone\nport 700\nregistrar nic-lab k3y\n"
+[[node]]
+name = "reg2"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.6/24\n"
+"etc/named.conf" = "zone ecm secondary 10.53.0.5\n"
+[[node]]
+name = "nic"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.7/24\n"
+"etc/registrard.conf" = "registry 10.53.0.5 700\nid nic-lab\nsecret k3y\nport 80\n"
+[[node]]
+name = "base"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.8/24\n"
+"etc/named.conf" = "zone base primary /etc/named/base.zone\n"
+"etc/named/base.zone" = '''
+$ORIGIN base.
+$TTL 60
+@     SOA ns1 admin 1 60 30 600 30
+@     NS  ns1
+ns1   A   10.53.0.8
+www.shop A 10.53.0.4
+'''
+[[node]]
+name = "client"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 10.53.0.4/24\n"
+"etc/named.conf" = "recursion yes\nroot-hints /etc/named/root.hints\n"
+"etc/named/root.hints" = ". NS a.root-servers.lab.\na.root-servers.lab. A 10.53.0.1\n"
+"etc/resolv.conf" = "nameserver 127.0.0.1\n"
+"index.html" = "my base on the ring\n"
+[[segment]]
+name = "lab"
+members = ["root:eth0", "reg:eth0", "reg2:eth0", "nic:eth0", "base:eth0", "client:eth0"]
+[scenario]
+name = "dns-registry"
+description = "registry + registrar + secondary + IANA: register, records, whois, NOTIFY/AXFR, a new TLD, and the controls"
+steps = '''
+send root "named &"
+expect root /zone \.: loaded serial 1/
+send root "ianad &"
+expect root /TLD applications on port 80/
+send reg "named &"
+expect reg /zone ecm\.: loaded serial 1/
+send reg "registryd &"
+expect reg /the \.ecm registry: EPP-lite on port 700/
+send reg2 "named &"
+expect reg2 /zone ecm\.: transferred serial 1 from 10\.53\.0\.5/ within 10s
+send nic "registrard &"
+expect nic /the registrar nic-lab/
+send base "named &"
+expect base /zone base\.: loaded serial 1/
+send client "named &"
+expect client /recursion yes/
+send client "httpd 80 &"
+wait 1s
+send client "domain --registrar http://10.53.0.7/ account create alice pw1234"
+expect client /account alice created/ within 10s
+expect client /logged in as alice/
+wait_prompt client
+send client "domain --registrar http://10.53.0.7/ register mybase.ecm"
+expect client /registered mybase\.ecm to alice/ within 10s
+wait_prompt client
+expect_any reg /zone ecm\. serial 2 written, named reloaded/
+expect_any reg2 /zone ecm\.: transferred serial 2 from 10\.53\.0\.5/ within 10s
+send client "domain --registrar http://10.53.0.7/ set mybase.ecm www A 10.53.0.4"
+expect client /www\.mybase\.ecm\. A 10\.53\.0\.4/ within 10s
+wait_prompt client
+send client "curl http://www.mybase.ecm/"
+expect client /my base on the ring/ within 10s
+wait_prompt client
+send client "dig +trace www.mybase.ecm"
+expect client /^ecm\.\s+\d+ IN NS\s+ns1\.nic\.lab\./ within 10s
+expect client /^www\.mybase\.ecm\.\s+300 IN A\s+10\.53\.0\.4/
+expect client /Received \d+ bytes from 10\.53\.0\.[56]#53\(ns[12]\.nic\.lab\)/
+wait_prompt client
+send client "whois -h 10.53.0.7 mybase.ecm"
+expect client /Domain Name: MYBASE\.ECM/ within 10s
+expect client /Registrant: alice/
+wait_prompt client
+send client "domain --registrar http://10.53.0.7/ show mybase.ecm"
+expect client /record www 300 A 10\.53\.0\.4/ within 10s
+wait_prompt client
+send client "domain --registrar http://10.53.0.7/ register mybase.ecm"
+expect client /mybase\.ecm is already registered/ within 10s
+wait_prompt client
+send client "domain --registrar http://10.53.0.7/ --password wrong set mybase.ecm www A 1.2.3.4"
+expect client /wrong handle or password/ within 10s
+wait_prompt client
+send client "domain --registrar http://10.53.0.7/ register nic.ecm"
+expect client /'nic' is reserved/ within 10s
+wait_prompt client
+send reg "named stop"
+expect reg /stopping/
+wait_prompt reg
+send client "named flush"
+wait_prompt client
+send client "dig www.mybase.ecm"
+expect client /^www\.mybase\.ecm\.\s+300 IN A\s+10\.53\.0\.4/ within 10s
+wait_prompt client
+send client "domain --iana http://10.53.0.1/ tld apply test ns1.base=10.53.0.8"
+expect client /\.test is reserved and never delegated/ within 10s
+wait_prompt client
+send client "dig +trace www.shop.base"
+expect client /www\.shop\.base\. does not exist \(NXDOMAIN\)/ within 10s
+wait_prompt client
+send client "domain --iana http://10.53.0.1/ tld apply base ns1.base=10.53.0.8 ns2.base=10.53.0.99"
+expect client /ns2\.base\. \(10\.53\.0\.99\) did not answer .*lame/ within 20s
+wait_prompt client
+send client "domain --iana http://10.53.0.1/ tld apply base ns1.base=10.53.0.8"
+expect client /\.base is delegated to ns1\.base\.; root zone serial 2/ within 20s
+wait_prompt client
+expect_any root /zone \.: loaded serial 2/
+send client "named flush"
+wait_prompt client
+send client "dig +trace www.shop.base"
+expect client /^base\.\s+3600 IN NS\s+ns1\.base\./ within 10s
+expect client /^www\.shop\.base\.\s+60 IN A\s+10\.53\.0\.4/
+wait_prompt client
+send client "domain --iana http://10.53.0.1/ tld show base"
+expect client /nameserver ns1\.base\. 10\.53\.0\.8/ within 10s
+'''

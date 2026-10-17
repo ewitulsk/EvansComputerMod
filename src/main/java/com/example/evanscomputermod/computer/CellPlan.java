@@ -140,6 +140,12 @@ public final class CellPlan {
         };
     }
 
+    /**
+     * The DNS server the core hands its phones: the core village's resolver once the ring has
+     * DNS ({@link DnsPlan}, set by {@code WorldNetwork}), {@link #DNS} before.
+     */
+    public String dns = DNS;
+
     public String displayName() {
         return displayName(carrier);
     }
@@ -278,7 +284,7 @@ public final class CellPlan {
         StringBuilder s = new StringBuilder();
         s.append("# ecm-cell subscriber database (owned by cored; edit with the Carrier Console or cored's admin commands)\n");
         s.append("version 1\ncarrier ").append(carrier).append("\npool ").append(POOL).append("\ngateway ").append(GATEWAY)
-                .append("\ndns ").append(DNS).append("\nmtu 1500\n");
+                .append("\ndns ").append(dns).append("\nmtu 1500\n");
         TreeMap<String, String> sites = new TreeMap<>();
         for (String id : siteIds()) sites.put(id, hex(siteSecret(id)));
         sites.forEach((id, secret) -> s.append("site ").append(id).append(' ').append(secret).append('\n'));

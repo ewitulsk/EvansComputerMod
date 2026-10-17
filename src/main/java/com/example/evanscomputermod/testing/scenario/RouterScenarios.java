@@ -1102,26 +1102,18 @@ public final class RouterScenarios {
   }
 
   /**
-   * A player taps the real generated ring between village {@code a} and the next one. The
-   * layout's origin is the air block on top of a path span: the player puts a Fiber Patch
-   * Panel there, a network cable on it and their router on the cable (DOWN face, eth0); a
-   * PC shares the router's UP face (eth1, LAN 10.200.a.0/24). A control panel is placed
-   * two blocks from the path under the "ctl" computer and must not join the fiber.
-   *
-   * @param cut also break the span at {@code breakAt} (toward village a) and repair it, and
-   *     keep the tap router Always-On through an unload
+   * The ring-tap lab up to BGP: the tap router on a Fiber Patch Panel on a span of the
+   * generated ring between village {@code a} and the next (eth0, a free address .5 in the
+   * link's /28, AS 65200+a), its LAN 10.200.a.0/24 on its UP face with a PC (.10), an
+   * off-path control panel under "ctl", both sessions Established. {@code listen}: first
+   * listen to the link with tcpdump; {@code extra}/{@code family}: more router lines (see
+   * {@link #tapConfig}). Other scenarios (DNS) continue from here.
    */
-  public static Scenario ringTap(int a, boolean cut, BlockPos breakAt) {
-    int b = a == 10 ? 1 : a + 1, far = (a + 3) % 10 + 1;
+  public static Scenario.Builder tapLab(int a, String name, String description, long timeLimit, boolean listen,
+      List<String> extra, List<String> family) {
+    int b = a == 10 ? 1 : a + 1;
     String sub = "172.31." + a + ".";
-    var s =
-        Scenario.builder(
-                "router_ring_tap_" + a + (cut ? "_cut" : ""),
-                "Tap the Tech Village ring between villages " + a + " and " + b + ": a patch panel"
-                    + " on a span, a router (AS " + (65200 + a) + ", LAN 10.200." + a + ".0/24) at " + sub
-                    + "5/28 peering with both ISPs.")
-            .timeLimit(55_000)
-            .asPlayer();
+    var s = Scenario.builder(name, description).timeLimit(timeLimit).asPlayer();
     var up = net.minecraft.core.Direction.UP;
     var north = net.minecraft.core.Direction.NORTH;
     s.host("tap", new BlockPos(0, 2, 0), null);
@@ -1169,7 +1161,7 @@ public final class RouterScenarios {
         },
         "the tap shares the fiber with both ISPs; the off-path control panel does not",
         5_000);
-    if (!cut) {
+    if (listen) {
       // The ring carries the carrier's cell traffic too: listen to BGP (TCP 179) only.
       s.send("tap", "tcpdump -i eth0 -c 1 tcp port 179");
       s.expect("tap", q(sub) + "[12]\\.\\d+ > " + q(sub) + "[12]\\.", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
@@ -1180,14 +1172,43 @@ public final class RouterScenarios {
     s.send("tap", "router");
     s.expect("tap", "router#", "router CLI");
     for (String line :
-        tapConfig(65200 + a, a, sub + "5/28", sub + "1", 65000 + a, sub + "2", 65000 + b,
-            cut ? List.of() : List.of("ip route 100." + (64 + far) + ".0.0/24 10.200." + a + ".99"),
-            cut ? List.of() : List.of("network 100." + (64 + far) + ".0.0/24",
-                "neighbor " + sub + "1 default-originate", "neighbor " + sub + "2 default-originate")))
+        tapConfig(65200 + a, a, sub + "5/28", sub + "1", 65000 + a, sub + "2", 65000 + b, extra, family))
       s.send("tap", line);
     s.expect("tap", "Configuration saved", "write memory");
     s.until("tap", "show bgp ipv4 unicast summary", "^ " + q(sub) + "1 +" + (65000 + a) + " .*Established", "peered with village " + a);
     s.until("tap", "show bgp ipv4 unicast summary", "^ " + q(sub) + "2 +" + (65000 + b) + " .*Established", "peered with village " + b);
+    return s;
+  }
+
+  /**
+   * A player taps the real generated ring between village {@code a} and the next one. The
+   * layout's origin is the air block on top of a path span: the player puts a Fiber Patch
+   * Panel there, a network cable on it and their router on the cable (DOWN face, eth0); a
+   * PC shares the router's UP face (eth1, LAN 10.200.a.0/24). A control panel is placed
+   * two blocks from the path under the "ctl" computer and must not join the fiber.
+   *
+   * @param cut also break the span at {@code breakAt} (toward village a) and repair it, and
+   *     keep the tap router Always-On through an unload
+   */
+  public static Scenario ringTap(int a, boolean cut, BlockPos breakAt) {
+    int b = a == 10 ? 1 : a + 1, far = (a + 3) % 10 + 1;
+    String sub = "172.31." + a + ".";
+    var s = tapLab(a, "router_ring_tap_" + a + (cut ? "_cut" : ""),
+        "Tap the Tech Village ring between villages " + a + " and " + b + ": a patch panel"
+            + " on a span, a router (AS " + (65200 + a) + ", LAN 10.200." + a + ".0/24) at " + sub
+            + "5/28 peering with both ISPs.",
+        55_000, !cut,
+        cut ? List.of() : List.of("ip route 100." + (64 + far) + ".0.0/24 10.200." + a + ".99"),
+        cut ? List.of() : List.of("network 100." + (64 + far) + ".0.0/24",
+            "neighbor " + sub + "1 default-originate", "neighbor " + sub + "2 default-originate"));
+    var north = net.minecraft.core.Direction.NORTH;
+    var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
+    java.util.function.Function<ScenarioRun, byte[]> tapNic =
+        r -> NetworkHub.deriveMac(r.terminal("tap").getComputerId(), 0);
+    java.util.function.BiFunction<ScenarioRun, Boolean, byte[]> ispNic =
+        (r, next) -> NetworkHub.deriveMac(
+            WorldNetwork.get(r.level()).identity(r.level(), next ? a : b, WorldNetwork.ISP_ROUTER),
+            next ? WorldNetwork.FIBER_NEXT_PORT : WorldNetwork.FIBER_PREV_PORT);
     if (!cut) {
       s.until("tap", "show bgp ipv4 unicast", "^0\\.0\\.0\\.0/0 via ", "the default route from village 1");
       s.mutate(

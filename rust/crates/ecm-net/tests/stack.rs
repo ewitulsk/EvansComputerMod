@@ -612,6 +612,65 @@ fn dns_ignores_spoofed_replies_and_times_out() {
     assert_eq!(s2.dns_query("x.y", now), Err(NetError::NotConfigured));
 }
 
+#[test]
+fn dns_search_list_failover_and_errors() {
+    let mut net = two_hosts(13);
+    let srv = net.s(B).udp_bind(sa("0.0.0.0", 53)).unwrap();
+    let names = [("web.v3.ring", ip("100.67.0.10"))];
+    // 10.0.0.9 does not exist (no ARP reply): the first try times out, the second
+    // server answers. "web" is tried as web.v3.ring first (search domain).
+    let req = |n: &str, cands: &[&str]| DnsRequest {
+        name: n.to_string(),
+        candidates: cands.iter().map(|c| c.to_string()).collect(),
+        servers: vec![ip("10.0.0.9"), ip("10.0.0.2")],
+    };
+    let now = net.now;
+    let q = net.s(A).dns_query_with(req("web", &["web.v3.ring", "web"]), now).unwrap();
+    let t0 = net.now;
+    let mut st = DnsStatus::Pending;
+    assert!(net.run(20_000, |n| {
+        serve_dns(n, B, srv, &names);
+        st = n.s(A).dns_poll(q);
+        st != DnsStatus::Pending
+    }));
+    assert_eq!(st, DnsStatus::Resolved(ip("100.67.0.10")));
+    assert!(net.now - t0 >= DNS_TIMEOUT_MS, "after the first server timed out");
+    // the stub cache answers at once
+    let now = net.now;
+    let q = net.s(A).dns_query_with(req("web", &["web.v3.ring", "web"]), now).unwrap();
+    assert_eq!(net.s(A).dns_poll(q), DnsStatus::Resolved(ip("100.67.0.10")));
+    // NXDOMAIN for every candidate: NotFound, without waiting for timeouts
+    let mut only_b = req("nosuch", &["nosuch.v3.ring", "nosuch"]);
+    only_b.servers = vec![ip("10.0.0.2")];
+    let now = net.now;
+    let q = net.s(A).dns_query_with(only_b, now).unwrap();
+    let t0 = net.now;
+    assert!(net.run(20_000, |n| {
+        serve_dns(n, B, srv, &names);
+        st = n.s(A).dns_poll(q);
+        st != DnsStatus::Pending
+    }));
+    assert_eq!(st, DnsStatus::Failed(NetError::NotFound));
+    assert!(net.now - t0 < 100, "NXDOMAIN fails at once");
+    // no server answers at all: TimedOut
+    let mut dead = req("x", &["x"]);
+    dead.servers = vec![ip("10.0.0.9")];
+    let now = net.now;
+    let q = net.s(A).dns_query_with(dead, now).unwrap();
+    assert!(net.run(20_000, |n| {
+        st = n.s(A).dns_poll(q);
+        st != DnsStatus::Pending
+    }));
+    // (no ARP reply from the only server: unreachable, which callers report as no answer)
+    assert!(matches!(st, DnsStatus::Failed(NetError::TimedOut | NetError::HostUnreachable)), "{st:?}");
+    // a new DNS server flushes the cache and bumps the generation
+    let g = net.s(A).dns_generation();
+    net.s(A).set_dns_server(ip("10.0.0.2"));
+    net.s(A).set_dns_domain("v3.ring");
+    assert_eq!(net.s(A).dns_generation(), g.wrapping_add(2));
+    assert_eq!(net.s(A).dns_domain(), "v3.ring");
+}
+
 // ------------------------------------------------------------------------ TCP
 
 fn pattern(len: usize, seed: u64) -> Vec<u8> {

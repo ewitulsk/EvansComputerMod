@@ -1416,7 +1416,11 @@ fn register_sockets(l: &mut Linker<ChildCtx>) -> Result<()> {
         let mut a = (host.len() as u16).to_le_bytes().to_vec();
         a.extend_from_slice(&host);
         let r = c.data_mut().call(SOCK_GETADDRINFO, a)?;
-        if r.status < 0 || r.payload.len() < 16 {
+        // -2..-5: why the name did not resolve (kernel net/ipc.rs GAI_*), passed on.
+        if r.status < 0 {
+            return Ok(if r.status >= -5 { r.status } else { -1 });
+        }
+        if r.payload.len() < 16 {
             return Ok(-1);
         }
         let n = 16.min(rl.max(0) as usize);

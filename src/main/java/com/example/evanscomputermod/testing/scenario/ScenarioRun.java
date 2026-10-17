@@ -259,16 +259,28 @@ public final class ScenarioRun {
         //? if <=1.21.1 {
         if (byPlayer() && !screensOpened) {
             // A player boots a computer by opening its screen.
-            for (Node n : sc.nodes.values()) player().openScreen(where(n.name()), n.facing());
+            for (Node n : sc.nodes.values()) {
+                if (sc.later.contains(n.name())) continue;
+                // In the world as it is, a computer faces whichever way it was built.
+                var st = level.getBlockState(where(n.name()));
+                var face = sc.inWorld && st.hasProperty(com.example.evanscomputermod.block.TerminalBlock.FACING)
+                        ? st.getValue(com.example.evanscomputermod.block.TerminalBlock.FACING) : n.facing();
+                player().openScreen(where(n.name()), face);
+            }
             screensOpened = true;
         }
         //?}
         boolean all = true;
         for (Node n : sc.nodes.values()) {
+            if (sc.later.contains(n.name())) continue;
             TerminalBlockEntity be = be(n.name());
             if (be == null) throw new IllegalStateException("no terminal at " + abs(n.pos()) + " (" + n.name() + ")");
             if (!byPlayer()) be.initializeWasm(); // no-op once started
-            all &= screen(n.name()).contains("Welcome to Terminal OS");
+            String scr = screen(n.name());
+            // A computer of the world that was already running has scrolled its banner away.
+            all &= scr.contains("Welcome to Terminal OS")
+                    || sc.inWorld && be.getComputer() != null && java.util.regex.Pattern.compile("^/\\S* > *$",
+                            java.util.regex.Pattern.MULTILINE).matcher(scr).find();
         }
         return all;
     }

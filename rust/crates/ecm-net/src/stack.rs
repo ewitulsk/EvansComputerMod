@@ -287,14 +287,46 @@ struct Slot {
 }
 
 struct DnsQuery {
-    name: String,
+    /// The names to try (search-list candidates), in order.
+    names: Vec<String>,
+    name_idx: usize,
+    /// What the caller asked for (the cache key).
+    key: String,
+    servers: Vec<Ipv4Addr>,
+    /// Attempt number for the current name; attempt `n` asks `servers[n % len]`.
+    attempt: usize,
+    cnames: u8,
     txid: u16,
     port: u16,
     server: Ipv4Addr,
-    tries: u8,
     deadline: i64,
     status: DnsStatus,
 }
+
+impl DnsQuery {
+    fn name(&self) -> &str {
+        &self.names[self.name_idx]
+    }
+    fn attempts(&self) -> usize {
+        self.servers.len().max(DNS_TRIES as usize)
+    }
+}
+
+/// What to resolve and where to ask ([`Stack::dns_query_with`]).
+#[derive(Clone, Debug, Default)]
+pub struct DnsRequest {
+    /// The name as the program gave it (for the cache).
+    pub name: String,
+    /// The names to try in order (`ResolvConf::candidates`).
+    pub candidates: Vec<String>,
+    /// Up to three servers, tried in order after a timeout or a server failure.
+    pub servers: Vec<Ipv4Addr>,
+}
+
+/// Answers the stub keeps (positive only, by TTL, at most this many).
+pub const DNS_CACHE_SIZE: usize = 32;
+/// Longest a stub cache entry lives, whatever the TTL (seconds).
+pub const DNS_CACHE_MAX_TTL: u32 = 300;
 
 struct DnsSlot {
     gen: u16,
@@ -340,6 +372,9 @@ pub struct Stack {
     ifaces: Vec<Option<Interface>>,
     routes: Vec<Route>,
     dns_server: Ipv4Addr,
+    dns_domain: String,
+    dns_gen: u32,
+    dns_cache: Vec<(String, Ipv4Addr, i64)>,
     sockets: Vec<Slot>,
     dns: Vec<DnsSlot>,
     tx: VecDeque<(usize, Vec<u8>)>,
@@ -364,6 +399,9 @@ impl Stack {
             ifaces: Vec::new(),
             routes: Vec::new(),
             dns_server: Ipv4Addr::ZERO,
+            dns_domain: String::new(),
+            dns_gen: 0,
+            dns_cache: Vec::new(),
             sockets: Vec::new(),
             dns: Vec::new(),
             tx: VecDeque::new(),
@@ -703,7 +741,10 @@ impl Stack {
                 self.clear_addr(iface);
             }
             if l.dns.is_some_and(|d| d == self.dns_server) {
-                self.dns_server = Ipv4Addr::ZERO;
+                self.set_dns_server(Ipv4Addr::ZERO);
+            }
+            if l.domain.is_some_and(|d| d == self.dns_domain) {
+                self.set_dns_domain("");
             }
         }
         released
@@ -751,6 +792,9 @@ impl Stack {
             if let Some(dns) = l.dns {
                 self.set_dns_server(dns);
             }
+            if let Some(d) = l.domain.as_deref() {
+                self.set_dns_domain(d);
+            }
         } else {
             self.clear_addr(iface);
         }
@@ -780,7 +824,35 @@ impl Stack {
     }
 
     pub fn set_dns_server(&mut self, ip: Ipv4Addr) {
-        self.dns_server = ip;
+        if self.dns_server != ip {
+            self.dns_server = ip;
+            self.dns_gen = self.dns_gen.wrapping_add(1);
+            self.dns_cache.clear();
+        }
+    }
+
+    /// The search domain from DHCP (option 15), `""` for none.
+    pub fn dns_domain(&self) -> &str {
+        &self.dns_domain
+    }
+
+    pub fn set_dns_domain(&mut self, d: &str) {
+        if self.dns_domain != d {
+            self.dns_domain = d.to_string();
+            self.dns_gen = self.dns_gen.wrapping_add(1);
+            self.dns_cache.clear();
+        }
+    }
+
+    /// Changes whenever the DNS server or domain changes (the kernel then rewrites
+    /// `/etc/resolv.conf`).
+    pub fn dns_generation(&self) -> u32 {
+        self.dns_gen
+    }
+
+    /// Forget the stub's cached answers (`resolv.conf` changed).
+    pub fn dns_flush(&mut self) {
+        self.dns_cache.clear();
     }
 
     /// Neighbour cache of one interface (empty for a bad index). Incomplete entries
@@ -1905,18 +1977,27 @@ impl Stack {
 
         // DNS client queries
         if unicast {
-            for d in self.dns.iter_mut() {
+            let mut reply_for = None;
+            let mut reply_seen = false;
+            for (i, d) in self.dns.iter_mut().enumerate() {
                 let Some(q) = d.q.as_mut() else { continue };
                 if q.status != DnsStatus::Pending || q.port != uh.dst_port {
                     continue;
                 }
+                reply_seen = true;
                 if from.ip == q.server && from.port == dns::DNS_PORT {
-                    match dns::parse_answer(data, q.txid, &q.name) {
-                        Ok(ip) => q.status = DnsStatus::Resolved(ip),
-                        Err(NetError::InvalidPacket) => {}
-                        Err(e) => q.status = DnsStatus::Failed(e),
+                    let txid = q.txid;
+                    let name = q.name().to_string();
+                    if let Ok(reply) = dns::parse_reply(data, txid, &name) {
+                        reply_for = Some((i, reply));
                     }
                 }
+                break;
+            }
+            if let Some((i, reply)) = reply_for {
+                self.dns_reply(i, reply);
+            }
+            if reply_seen {
                 return;
             }
         }
@@ -2090,17 +2171,40 @@ impl Stack {
     /// "localhost" resolve immediately. Errors: `InvalidInput` (bad name),
     /// `NotConfigured` (no DNS server), `NoSockets` (16 queries in flight).
     pub fn dns_query(&mut self, name: &str, now_ms: i64) -> Result<DnsHandle, NetError> {
+        let req = DnsRequest {
+            name: name.to_string(),
+            candidates: vec![name.to_string()],
+            servers: if self.dns_server.is_unspecified() { Vec::new() } else { vec![self.dns_server] },
+        };
+        self.dns_query_with(req, now_ms)
+    }
+
+    /// Start resolving with an explicit candidate list and servers (the kernel builds
+    /// them from `/etc/resolv.conf`). A candidate that does not exist (NXDOMAIN or no
+    /// address) moves on to the next one; a timeout or a server failure (SERVFAIL,
+    /// REFUSED) moves on to the next server. Results: `Resolved`, `Failed(NotFound)`
+    /// when no candidate exists, `Failed(TimedOut)` when no server answered,
+    /// `Failed(ConnectionRefused)` when servers answered only with failures.
+    pub fn dns_query_with(&mut self, req: DnsRequest, now_ms: i64) -> Result<DnsHandle, NetError> {
         self.now = now_ms;
+        let name = req.name.trim();
         let immediate = if let Some(ip) = Ipv4Addr::parse(name) {
             Some(ip)
         } else if name.eq_ignore_ascii_case("localhost") {
             Some(Ipv4Addr::LOCALHOST)
         } else {
-            None
+            let key = name.to_ascii_lowercase();
+            self.dns_cache.retain(|e| e.2 > now_ms);
+            self.dns_cache.iter().find(|e| e.0 == key).map(|e| e.1)
         };
+        let mut names: Vec<String> = Vec::new();
         if immediate.is_none() {
             dns::encode_name_vec(name).ok_or(NetError::InvalidInput)?;
-            if self.dns_server.is_unspecified() {
+            names = req.candidates.iter().filter(|c| dns::encode_name_vec(c).is_some()).cloned().collect();
+            if names.is_empty() {
+                return Err(NetError::InvalidInput);
+            }
+            if req.servers.is_empty() {
                 return Err(NetError::NotConfigured);
             }
         }
@@ -2118,12 +2222,20 @@ impl Stack {
             self.pick_port(|s, p| s.udp_port_used(Ipv4Addr::ZERO, p))?
         };
         let txid = self.rng.next_u32() as u16;
+        let server = req.servers.first().copied().unwrap_or(Ipv4Addr::ZERO);
+        if names.is_empty() {
+            names.push(name.to_string());
+        }
         let q = DnsQuery {
-            name: name.to_string(),
+            names,
+            name_idx: 0,
+            key: name.to_ascii_lowercase(),
+            servers: req.servers,
+            attempt: 0,
+            cnames: 0,
             txid,
             port,
-            server: self.dns_server,
-            tries: 1,
+            server,
             deadline: now_ms + DNS_TIMEOUT_MS,
             status: immediate.map_or(DnsStatus::Pending, DnsStatus::Resolved),
         };
@@ -2158,6 +2270,15 @@ impl Stack {
         st
     }
 
+    /// The server the query asked last (for "no answer from ..." messages).
+    pub fn dns_server_of(&self, q: DnsHandle) -> Option<Ipv4Addr> {
+        let slot = self.dns.get(q.idx as usize)?;
+        if slot.gen != q.gen {
+            return None;
+        }
+        slot.q.as_ref().map(|q| q.server)
+    }
+
     /// Abandon a query (e.g. the requesting process exited).
     pub fn dns_cancel(&mut self, q: DnsHandle) {
         if let Some(slot) = self.dns.get_mut(q.idx as usize) {
@@ -2178,7 +2299,7 @@ impl Stack {
             gen: slot.gen,
         };
         let (server, port) = (q.server, q.port);
-        let res = dns::build_query(&q.name, q.txid)
+        let res = dns::build_query(q.name(), q.txid)
             .ok_or(NetError::InvalidInput)
             .and_then(|pkt| {
                 let src = self.select_src(Ipv4Addr::ZERO, server)?;
@@ -2186,7 +2307,86 @@ impl Stack {
                 self.send_ip(src, server, PROTO_UDP, &dg, Owner::Dns(h))
             });
         if let Err(e) = res {
+            self.dns_server_failed(h, e);
+        }
+    }
+
+    /// The current server cannot be reached: the next one, or fail with `e`.
+    fn dns_server_failed(&mut self, h: DnsHandle, e: NetError) {
+        let i = h.idx as usize;
+        let more = match self.dns.get(i) {
+            Some(slot) if slot.gen == h.gen => match slot.q.as_ref() {
+                Some(q) if q.status == DnsStatus::Pending => q.attempt + 1 < q.attempts() && q.servers.len() > 1,
+                _ => return,
+            },
+            _ => return,
+        };
+        if more {
+            self.dns_retry(i, true);
+        } else {
             self.dns_fail(h, e);
+        }
+    }
+
+    /// Ask again: the next server (`next_server`) or the current name anew, with a new id.
+    fn dns_retry(&mut self, i: usize, next_server: bool) {
+        let txid = self.rng.next_u32() as u16;
+        let now = self.now;
+        let Some(q) = self.dns[i].q.as_mut() else { return };
+        if next_server {
+            q.attempt += 1;
+        }
+        q.server = q.servers[q.attempt % q.servers.len()];
+        q.txid = txid;
+        q.deadline = now + DNS_TIMEOUT_MS;
+        self.dns_send(i);
+    }
+
+    fn dns_reply(&mut self, i: usize, reply: dns::Reply) {
+        let now = self.now;
+        let Some(q) = self.dns[i].q.as_mut() else { return };
+        match reply.rcode {
+            0 if !reply.addrs.is_empty() => {
+                let (ip, ttl) = reply.addrs[0];
+                q.status = DnsStatus::Resolved(ip);
+                let key = q.key.clone();
+                let ttl = ttl.min(DNS_CACHE_MAX_TTL);
+                if ttl > 0 {
+                    self.dns_cache.retain(|e| e.0 != key && e.2 > now);
+                    if self.dns_cache.len() >= DNS_CACHE_SIZE {
+                        self.dns_cache.remove(0);
+                    }
+                    self.dns_cache.push((key, ip, now + ttl as i64 * 1000));
+                }
+            }
+            0 if reply.cname.is_some() => {
+                // The answer stopped at a CNAME: ask for its target.
+                q.cnames += 1;
+                if q.cnames > 8 {
+                    q.status = DnsStatus::Failed(NetError::NotFound);
+                    return;
+                }
+                q.names[q.name_idx] = reply.cname.unwrap();
+                q.attempt = 0;
+                self.dns_retry(i, false);
+            }
+            0 | 3 => {
+                // This candidate does not exist: the next search-list name.
+                if q.name_idx + 1 < q.names.len() {
+                    q.name_idx += 1;
+                    q.attempt = 0;
+                    self.dns_retry(i, false);
+                } else {
+                    q.status = DnsStatus::Failed(NetError::NotFound);
+                }
+            }
+            _ => {
+                if q.attempt + 1 < q.attempts() {
+                    self.dns_retry(i, true);
+                } else {
+                    q.status = DnsStatus::Failed(NetError::ConnectionRefused);
+                }
+            }
         }
     }
 
@@ -2212,21 +2412,15 @@ impl Stack {
                 if q.status != DnsStatus::Pending || now < q.deadline {
                     continue;
                 }
-                if q.tries >= DNS_TRIES {
+                if q.attempt + 1 >= q.attempts() {
                     q.status = DnsStatus::Failed(NetError::TimedOut);
                     false
                 } else {
-                    q.tries += 1;
-                    q.deadline = now + DNS_TIMEOUT_MS;
                     true
                 }
             };
             if resend {
-                let txid = self.rng.next_u32() as u16;
-                if let Some(q) = self.dns[i].q.as_mut() {
-                    q.txid = txid;
-                }
-                self.dns_send(i);
+                self.dns_retry(i, true);
             }
         }
     }
@@ -2602,7 +2796,7 @@ impl Stack {
     fn notify_unreachable(&mut self, owner: Owner) {
         match owner {
             Owner::None => {}
-            Owner::Dns(h) => self.dns_fail(h, NetError::HostUnreachable),
+            Owner::Dns(h) => self.dns_server_failed(h, NetError::HostUnreachable),
             Owner::Sock(h) => {
                 match self.slot_mut(h) {
                     Some(Sock::Tcp(t)) => t.tcb.on_unreachable(),
