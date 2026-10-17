@@ -356,7 +356,7 @@ server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding one app, **Chat** (`dev.ecm.chat`):
+"Repositories") holding **Chat** (`dev.ecm.chat`) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
 
 * **Built with the mod.** `scripts/stage-wasm.sh` packs Chat from the staged `chatapp.wasm` the
   way a player does, natively on the same code: `chatapp --source` (the package folder) and

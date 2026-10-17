@@ -92,6 +92,18 @@ fn event_table(lua: &Lua, ev: AppEvent) -> mlua::Result<Table> {
                     d.set("repeat", *repeat)?;
                     Value::Table(d)
                 }
+                // Pixel grids: the changed texels as {x, y, index} lists.
+                EventValue::Texels(ts) => {
+                    let out = lua.create_table_with_capacity(ts.len(), 0)?;
+                    for (n, t) in ts.iter().enumerate() {
+                        let e = lua.create_table_with_capacity(3, 0)?;
+                        e.raw_set(1, t[0] as f64)?;
+                        e.raw_set(2, t[1] as f64)?;
+                        e.raw_set(3, t[2] as f64)?;
+                        out.raw_set(n + 1, e)?;
+                    }
+                    Value::Table(out)
+                }
             };
             vec![s("widget")?, i(e.window as i64), handler, s(e.kind.name())?, value]
         }
@@ -172,7 +184,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     })?)?;
 
     // The state of the widget with this id in a window:
-    // {text, checked, value, selected} (nil if it has none yet).
+    // {text, checked, value, selected, pixels} (nil if it has none yet).
     m.set("widget_state", lua.create_function(|lua, (h, win, id): (i64, u32, String)| {
         let Some(st) = with_app(h, |c| c.window(win).and_then(|w| w.state(&id).cloned()))? else {
             return Ok(Value::Nil);
@@ -182,6 +194,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         d.set("checked", st.checked)?;
         d.set("value", st.value as f64)?;
         d.set("selected", st.selected.map(|x| x as f64))?;
+        let px = lua.create_table_with_capacity(st.pixels.len(), 0)?;
+        for (n, p) in st.pixels.iter().enumerate() {
+            px.raw_set(n + 1, *p as f64)?;
+        }
+        px.set_metatable(Some(crate::values::array_meta(lua)?))?;
+        d.set("pixels", px)?;
         Ok(Value::Table(d))
     })?)?;
 

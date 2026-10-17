@@ -1,7 +1,8 @@
 //! `ecm-ui`: the ECM GUI toolkit (docs/gui/UI_PROTOCOL.md §13).
 //!
 //! * [`element`] — widgets (label, button, text field, list, scroll view,
-//!   checkbox, toggle, slider, tabs, menu, dialog, image, canvas) and layout
+//!   checkbox, toggle, slider, tabs, menu, dialog, image, canvas, pixel grid,
+//!   colour picker) and layout
 //!   containers (row, column, stack, grid, spacer, responsive), described as
 //!   [`Element`] trees.
 //! * [`window`] — widget state, layout at the window's size class, text
@@ -47,8 +48,8 @@ pub use window::{EventValue, PointerEv, PointerInfo, UiEvent, ViewCtx, Window, T
 pub mod prelude {
     pub use crate::app::{App, Ctx};
     pub use crate::element::{
-        board, button, canvas, checkbox, column, custom, dialog, grid, image, label, list, menu, panel, responsive, row, scroll_view,
-        slider, spacer, stack, tabs, text_area, text_field, toggle, wire, Align, Element, EventKind, Handler,
+        board, button, canvas, checkbox, color_picker, column, custom, dialog, grid, image, label, list, menu, panel, pixel_grid, responsive,
+        row, scroll_view, slider, spacer, stack, tabs, text_area, text_field, toggle, wire, Align, Element, EventKind, Handler,
     };
     pub use crate::diff::SceneNode;
     pub use crate::json::Json;

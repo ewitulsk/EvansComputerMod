@@ -700,6 +700,18 @@ impl Ctx<'_> {
         }
     }
 
+    /// The bitmap of the pixel grid with this id (palette indices, `cols * rows`).
+    pub fn pixels(&self, id: &str) -> Vec<u8> {
+        self.state(id).map(|s| s.pixels.clone()).unwrap_or_default()
+    }
+
+    /// Replace the bitmap of the pixel grid with this id.
+    pub fn set_pixels(&mut self, id: &str, pixels: &[u8]) {
+        if let Some(s) = self.state_mut(id) {
+            s.pixels = pixels.to_vec();
+        }
+    }
+
     /// Move keyboard focus to the widget with this id.
     pub fn focus(&mut self, id: &str) {
         if let Some(w) = self.core.window_mut(self.window) {

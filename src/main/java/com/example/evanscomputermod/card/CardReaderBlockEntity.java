@@ -1,7 +1,6 @@
 package com.example.evanscomputermod.card;
 
 //? if <=1.21.1 {
-import com.example.evanscomputermod.radio.cellular.SimCardItem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -44,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
  *   <li>The card leaves: {@code card_removed}. The next card starts held again.</li>
  * </ol>
  */
-public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
+public class CardReaderBlockEntity extends BlockEntity implements MenuProvider, CardHolder {
     private static final Direction[] PUSH_ORDER = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.UP};
     private static final int RETRY_TICKS = 20;
 
@@ -104,7 +103,7 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
     private boolean hadCard;
     private int retry;
 
-    /** Synced to an open screen: 0 auto eject, 1 card state (see {@link #cardState}), 2 released. */
+    /** Synced to an open screen: 0 auto eject, 1 card state (see {@link #cardState}), 2 released, 3 kind ordinal + 1. */
     private final ContainerData data = new ContainerData() {
         @Override
         public int get(int i) {
@@ -112,6 +111,7 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
                 case 0 -> autoEject ? 1 : 0;
                 case 1 -> cardState();
                 case 2 -> released ? 1 : 0;
+                case 3 -> cardKindOrdinal() + 1;
                 default -> 0;
             };
         }
@@ -122,7 +122,7 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
 
         @Override
         public int getCount() {
-            return 3;
+            return 4;
         }
     };
 
@@ -130,9 +130,9 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
         super(CardContent.CARD_READER_BE.get(), pos, state);
     }
 
-    /** Cards this reader takes: the {@code evanscomputermod:cards} item tag (SIM cards). */
+    /** Cards this reader takes: every {@link CardItem} and the {@code evanscomputermod:cards} item tag. */
     public static boolean isCard(ItemStack stack) {
-        return !stack.isEmpty() && (stack.is(CardContent.CARDS) || stack.getItem() instanceof SimCardItem);
+        return CardItem.isCard(stack);
     }
 
     public IItemHandler automation() {
@@ -143,29 +143,38 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
         return peripheral;
     }
 
+    @Override
     public ItemStack card() {
         return slot.getStackInSlot(0);
     }
 
+    @Override
     public boolean hasCard() {
         return !card().isEmpty();
     }
 
+    @Override
     public boolean autoEject() {
         return autoEject;
     }
 
+    @Override
     public boolean released() {
         return released;
     }
 
-    /** 0 no card, 1 blank SIM, 2 written SIM, 3 another card. */
+    /** 0 no card, 1 blank card (no applet written), 2 written card, 3 another item. */
     public int cardState() {
         ItemStack c = card();
         if (c.isEmpty()) return 0;
-        SmartSim s = SimCardItem.card(c);
-        if (s == null) return 3;
-        return s.isBlank() ? 1 : 2;
+        if (CardItem.kindOf(c) == null) return 3;
+        return CardItem.allBlank(c) ? 1 : 2;
+    }
+
+    /** The kind of the card in the slot as an ordinal for the screen (-1 none). */
+    public int cardKindOrdinal() {
+        CardKind k = CardItem.kindOf(card());
+        return k == null ? -1 : k.ordinal();
     }
 
     public void setAutoEject(boolean on) {
@@ -188,7 +197,8 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
      * The computer is done with the card. With Auto Eject Sim it is pushed out now
      * (true if it left); otherwise it waits to be pulled.
      */
-    boolean release() {
+    @Override
+    public boolean release() {
         if (!hasCard()) return false;
         released = true;
         setChanged();
@@ -196,7 +206,8 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     /** Mark that the card was changed in place (written). */
-    void cardChanged() {
+    @Override
+    public void cardChanged() {
         setChanged();
     }
 

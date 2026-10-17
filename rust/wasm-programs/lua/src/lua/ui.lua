@@ -35,7 +35,8 @@ Layout, text wrapping, focus and drawing run in the same Rust toolkit Rust
 apps use, so both look and behave the same.
 
 Widgets: Label, Button, TextField, TextArea, List, ScrollView, Checkbox,
-Toggle, Slider, Tabs, Menu, Dialog, Image, Canvas. Layout: Row, Column, Stack,
+Toggle, Slider, Tabs, Menu, Dialog, Image, Canvas, PixelGrid (an editable
+indexed bitmap: card faces, icons) and ColorPicker. Layout: Row, Column, Stack,
 Grid, Spacer, Responsive (one layout per size class: compact / medium / wide).
 Arguments go in Python's order (ui.Button("Add", {on_click = add})), or all in
 one table (ui.Button{text = "Add", on_click = add}). Common options: id,
@@ -196,6 +197,14 @@ function Widget:_tree(refs)
     body.children = out
   end
   return { [cls.kind] = body }
+end
+
+--- Send the values again at the next sync (after window(), whose
+--- serialisation only declared the surface).
+function Widget:_repush()
+  if rawget(self, "_push") ~= nil then rawset(self, "_push", true) end
+  local kids = self._cls.kids and self._cls.kids(self)
+  for _, c in ipairs(kids or {}) do c:_repush() end
 end
 
 local function text_init(self, kw)
@@ -505,6 +514,129 @@ widget_class("Canvas", {
   fields = function(self) return { resource = self.resource, scale = self.scale } end,
 })
 
+-- One hex digit per texel (indices 0-15), the compact wire form.
+local function hex_texels(values)
+  local out = {}
+  for i, v in ipairs(values) do out[i] = string.format("%x", math.floor(v) % 16) end
+  return table.concat(out)
+end
+
+-- An editable indexed bitmap: width x height texels (not lu), each a palette
+-- index (up to 16 colours, 0xRRGGBB), drawn zoom lu per texel (auto-fit
+-- without zoom). The player paints with the pointer using tool ("pencil",
+-- "fill", "eyedropper" or "line") in palette index .color, mirrored
+-- left-right with mirror_h; texels whose mask entry is non-zero are locked
+-- (drawn hatched, never painted). .pixels follows the edits (on_change gets
+-- the changed texels as {x, y, index} lists); the eyedropper sets .color and
+-- fires on_select with the picked index. ui.PixelGrid(width, height, pixels,
+-- palette, {zoom = 6, color = 1, tool = "fill", mask = {...}, ...}).
+widget_class("PixelGrid", {
+  kind = "pixel_grid", positional = { "width", "height", "pixels", "palette" },
+  props = { "palette", "zoom", "tool", "mirror_h", "grid", "mask", "pixels", "color" },
+  events = { "change", "select" },
+  init = function(self, kw)
+    rawset(self, "cols", math.floor(kw.width or 16))
+    rawset(self, "rows", math.floor(kw.height or 16))
+    rawset(self, "palette", kw.palette and list_copy(kw.palette, math.floor) or nil)
+    rawset(self, "zoom", kw.zoom and math.floor(kw.zoom) or nil)
+    rawset(self, "tool", tostring(kw.tool or "pencil"))
+    rawset(self, "mirror_h", kw.mirror_h and true or false)
+    rawset(self, "grid", kw.grid == nil or kw.grid)
+    rawset(self, "mask", kw.mask and list_copy(kw.mask, math.floor) or nil)
+    rawset(self, "_pixels", {})
+    self.pixels = kw.pixels or {}
+    self.color = math.floor(kw.color or 0)
+    kw.width, kw.height, kw.palette, kw.zoom, kw.tool, kw.mirror_h, kw.grid, kw.mask, kw.pixels, kw.color =
+      nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
+  end,
+  -- width / height are the bitmap's size in texels (the lu size is zoom *
+  -- texels, or the space the layout gives the grid).
+  get = {
+    width = function(self) return rawget(self, "cols") end,
+    height = function(self) return rawget(self, "rows") end,
+    -- The bitmap as a list of palette indices, row by row (width * height).
+    pixels = function(self) return rawget(self, "_pixels") end,
+  },
+  set = {
+    width = function(self, v) rawset(self, "cols", math.floor(v)) end,
+    height = function(self, v) rawset(self, "rows", math.floor(v)) end,
+    pixels = function(self, values)
+      local n = rawget(self, "cols") * rawget(self, "rows")
+      local px = M.array()
+      for i = 1, n do
+        local v = values[i]
+        px[i] = v and (math.floor(v) % 16) or 0
+      end
+      rawset(self, "_pixels", px)
+      rawset(self, "_push", true)
+    end,
+  },
+  fields = function(self)
+    local f = { cols = self.cols, rows = self.rows, tool = self.tool, mirror_h = self.mirror_h, grid = self.grid }
+    if self.palette ~= nil then f.palette = list_copy(self.palette) end
+    if self.zoom ~= nil then f.zoom = self.zoom end
+    if self.mask ~= nil then f.mask = hex_texels(self.mask) end
+    if rawget(self, "_push") then
+      f.pixels = hex_texels(rawget(self, "_pixels"))
+      rawset(self, "_push", false)
+    end
+    return f
+  end,
+  internal = function(self, kind)
+    if kind == "change" then
+      return function(ev)
+        local px, cols = rawget(self, "_pixels"), rawget(self, "cols")
+        for _, t in ipairs(ev.value) do px[t[2] * cols + t[1] + 1] = t[3] end
+      end
+    end
+    return function(ev) rawget(self, "_opts").color = ev.value end
+  end,
+})
+
+--- The palette index at texel (x, y) (0-based, as the toolkit counts).
+function Widget:pixel(x, y)
+  return rawget(self, "_pixels")[y * rawget(self, "cols") + x + 1]
+end
+
+--- Paint texel (x, y) from the program (shown at the next loop turn).
+function Widget:set_pixel(x, y, index)
+  rawget(self, "_pixels")[y * rawget(self, "cols") + x + 1] = math.floor(index) % 16
+  rawset(self, "_push", true)
+end
+
+-- An RGB colour picker: a hue strip, a saturation/value square and an
+-- editable #rrggbb field. .value is the colour as 0xRRGGBB and follows every
+-- drag and valid hex edit (on_change); .hex is "#rrggbb".
+widget_class("ColorPicker", {
+  kind = "color_picker", positional = { "value" }, props = { "value" }, events = { "change" },
+  init = function(self, kw)
+    rawset(self, "_value", math.floor(kw.value or 0) % 0x1000000)
+    rawset(self, "_push", true)
+    kw.value = nil
+  end,
+  get = {
+    value = function(self) return rawget(self, "_value") end,
+    hex = function(self) return string.format("#%06x", rawget(self, "_value")) end,
+  },
+  set = {
+    value = function(self, v)
+      rawset(self, "_value", math.floor(v) % 0x1000000)
+      rawset(self, "_push", true)
+    end,
+  },
+  fields = function(self)
+    local f = {}
+    if rawget(self, "_push") then
+      f.value = rawget(self, "_value")
+      rawset(self, "_push", false)
+    end
+    return f
+  end,
+  internal = function(self)
+    return function(ev) rawset(self, "_value", ev.value) end
+  end,
+})
+
 -- ---------------------------------------------------------------- layouts
 
 local function is_list(t)
@@ -574,7 +706,8 @@ function Layout:set(id, props)
 end
 
 --- What the widget holds now: a text field's text, a checkbox's or toggle's
---- state, a slider's value, a list's / tab's selection.
+--- state, a slider's value, a list's / tab's selection, a pixel grid's bitmap,
+--- a colour picker's 0xRRGGBB.
 function Layout:value(id)
   local kind, node = self:_find(id)
   if node == nil then return nil end
@@ -595,8 +728,18 @@ function Layout:value(id)
     if state then return state.text end
     return node.text or ""
   end
+  if kind == "pixel_grid" then
+    if state then return state.pixels end
+    return node.pixels or M.array()
+  end
+  if kind == "color_picker" then
+    if state then return state.value end
+    return math.floor(node.value or 0)
+  end
   return node.text or ""
 end
+
+function Layout:_repush() end
 
 function Layout:_tree(refs)
   local handlers = self.handlers
@@ -656,6 +799,9 @@ end
 function App:window(title, root)
   local tree, refs = serialise(root)
   local win = native.window(self._h, title, tree)
+  -- The window is drawn after the first step's sync, which serialises again:
+  -- keep the widgets' initial values for it.
+  root:_repush()
   self._windows[win] = root
   self._refs[win] = refs
   return win
@@ -736,9 +882,14 @@ function App:quit() native.quit(self._h) end
 
 function App:_sync()
   for win, root in pairs(self._windows) do
-    local tree, refs = serialise(root)
-    native.set_root(self._h, win, tree)
-    self._refs[win] = refs
+    -- Not configured yet means nothing is drawn: the tree given to window()
+    -- stands and the widgets' pushes wait for the first draw.
+    local w = native.window_size(self._h, win)
+    if w ~= 0 then
+      local tree, refs = serialise(root)
+      native.set_root(self._h, win, tree)
+      self._refs[win] = refs
+    end
   end
   return native.render(self._h)
 end

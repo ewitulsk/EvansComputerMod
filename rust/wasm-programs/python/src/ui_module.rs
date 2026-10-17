@@ -170,6 +170,12 @@ fn event_tuple(ev: AppEvent, vm: &VirtualMachine) -> PyObjectRef {
                     let _ = d.set_item("repeat", vm.ctx.new_bool(*repeat).into(), vm);
                     d.into()
                 }
+                // Pixel grids: the changed texels as (x, y, index) tuples.
+                EventValue::Texels(ts) => {
+                    let items: Vec<PyObjectRef> =
+                        ts.iter().map(|t| vm.ctx.new_tuple(vec![i(t[0] as i64), i(t[1] as i64), i(t[2] as i64)]).into()).collect();
+                    vm.ctx.new_list(items).into()
+                }
             };
             vec![s("widget"), i(e.window as i64), handler, s(e.kind.name()), value]
         }
@@ -262,7 +268,7 @@ pub mod ui_native {
     }
 
     /// The state of the widget with this id in a window:
-    /// {"text", "checked", "value", "selected"} (None if it has none yet).
+    /// {"text", "checked", "value", "selected", "pixels"} (None if it has none yet).
     #[pyfunction]
     fn widget_state(h: i64, win: u32, id: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
         let id = id.str(vm)?.as_str().to_string();
@@ -274,6 +280,8 @@ pub mod ui_native {
         d.set_item("value", vm.ctx.new_int(st.value).into(), vm)?;
         let sel = st.selected.map_or_else(|| vm.ctx.none(), |x| vm.ctx.new_int(x).into());
         d.set_item("selected", sel, vm)?;
+        let px: Vec<PyObjectRef> = st.pixels.iter().map(|p| vm.ctx.new_int(*p).into()).collect();
+        d.set_item("pixels", vm.ctx.new_list(px).into(), vm)?;
         Ok(d.into())
     }
 

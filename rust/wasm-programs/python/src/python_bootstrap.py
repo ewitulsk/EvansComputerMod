@@ -103,6 +103,12 @@ _audio_module.__file__ = '<audio>'
 exec(compile(_peripheral_native._audio_source, '<audio>', 'exec'), _audio_module.__dict__)
 sys.modules['audio'] = _audio_module
 
+# `cards` (card readers, NFC readers, printers, .card designs).
+_cards_module = ModuleType('cards')
+_cards_module.__file__ = '<cards>'
+exec(compile(_peripheral_native._cards_source, '<cards>', 'exec'), _cards_module.__dict__)
+sys.modules['cards'] = _cards_module
+
 # `radio` (SDR flowgraphs) ships inside the native `_radio` module.
 import _radio as _radio_native
 _radio_module = ModuleType('radio')

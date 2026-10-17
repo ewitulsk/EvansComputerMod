@@ -22,7 +22,7 @@ OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
 # each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
 STRUCTURES_1211 = {"ecm_router": ["gametest_switch"], "ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"], "ecm_gui": ["gametest_empty"], "ecm_apps": ["gametest_switch"], "ecm_lua": ["gametest_empty"]}
 # 1.21.1-only structures (features that only exist on 1.21.1): namespace -> {name: size}.
-ONLY_1211 = {"ecm_phone": {"gametest_phone": (56, 10, 16)}, "ecm_gui": {"gametest_gui_desktop": (20, 8, 20)}, "ecm_sensor": {"gametest_sensor": (24, 8, 20)}, "ecm_radio": {"gametest_radio": (40, 16, 40)}, "ecm_cellular": {"gametest_cellular": (48, 12, 36)}, "ecm_cards": {"gametest_cards": (12, 8, 10)}}   # lidar ranges, and the lidar_room scenario
+ONLY_1211 = {"ecm_phone": {"gametest_phone": (56, 10, 16)}, "ecm_gui": {"gametest_gui_desktop": (20, 8, 20)}, "ecm_sensor": {"gametest_sensor": (24, 8, 20)}, "ecm_radio": {"gametest_radio": (40, 16, 40)}, "ecm_cellular": {"gametest_cellular": (48, 12, 36)}, "ecm_cards": {"gametest_cards": (16, 8, 12)}}   # lidar ranges, and the lidar_room scenario
 
 TAG_END, TAG_INT, TAG_STRING, TAG_LIST, TAG_COMPOUND = 0, 3, 8, 9, 10
 

@@ -5,7 +5,7 @@
 //!   engines the Python modules and Rust programs use),
 //! - `_ecm` (a wall clock, sleep, float32 unpacking for the Lua modules),
 //! - the Lua-source modules `peripheral`, `sensors`, `controller`, `audio`,
-//!   `radio` and `ui` (the counterparts of the Python modules of the same
+//!   `cards`, `radio` and `ui` (the counterparts of the Python modules of the same
 //!   names), and the loader that finds them and the computer's own files.
 //!
 //! The binary adds the host-ABI modules (`shell`, `terminal`, `net`,
@@ -24,6 +24,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("sensors", include_str!("lua/sensors.lua")),
     ("controller", include_str!("lua/controller.lua")),
     ("audio", include_str!("lua/audio.lua")),
+    ("cards", include_str!("lua/cards.lua")),
     ("radio", include_str!("lua/radio.lua")),
     ("ui", include_str!("lua/ui.lua")),
 ];

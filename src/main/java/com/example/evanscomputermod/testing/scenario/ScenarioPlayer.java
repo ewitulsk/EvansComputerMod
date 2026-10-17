@@ -345,7 +345,9 @@ public final class ScenarioPlayer {
         hands.gameMode.useItemOn(hands, level, hands.getMainHandItem(), InteractionHand.MAIN_HAND,
                 new BlockHitResult(hit, face, pos, false));
         sneak(false);
-        hands.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        // An empty-hand use that handed the player something (a module taken out of a bay lands in the
+        // first free slot, the main hand) keeps it; otherwise the hand is emptied again.
+        if (!held.isEmpty() || hands.getMainHandItem().isEmpty()) hands.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         return heard();
     }
 

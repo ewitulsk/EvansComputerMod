@@ -1,0 +1,17 @@
+[package]
+name = "ecm-cards"
+version = "0.1.0"
+edition = "2021"
+description = "Card schemes and formats (docs/cards/CARDS.md, docs/cards/NFC_MIX.md): the toy NFC `Mix` and sector auth, NFC air frames, the bank TAG / PIN hash, and the `.card` design file. no_std + alloc; `cardtool` and the card programs drive it."
+
+[lib]
+name = "ecm_cards"
+
+[features]
+default = ["std"]
+# `Design::load` / `Design::save` on files.
+std = []
+
+[dependencies]
+sha2 = { workspace = true }
+hmac = { workspace = true }
