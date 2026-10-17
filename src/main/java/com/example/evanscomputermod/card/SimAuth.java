@@ -35,6 +35,11 @@ public final class SimAuth {
 
     static final byte[] RES_LABEL = "ECM-SIM-RES".getBytes(StandardCharsets.US_ASCII);
     static final byte[] KS_LABEL = "ECM-SIM-KS".getBytes(StandardCharsets.US_ASCII);
+    /** IMS AKA (docs/TELEPHONY.md): the same construction with its own labels, so IMS keys differ from radio keys. */
+    static final byte[] IMS_RES_LABEL = "ECM-IMS-RES".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] IMS_KS_LABEL = "ECM-IMS-KS".getBytes(StandardCharsets.US_ASCII);
+    /** Phone numbers: E.164, '+' and 8-15 digits, not starting 0. */
+    public static final Pattern MSISDN = Pattern.compile("\\+[1-9][0-9]{7,14}");
 
     /** Carrier ids: 1-24 characters of a-z, 0-9, '-' and '_' (same as v1). */
     public static final Pattern CARRIER_ID = Pattern.compile("[a-z0-9_-]{1,24}");
@@ -63,6 +68,25 @@ public final class SimAuth {
         byte[] res = new byte[RES_BYTES];
         System.arraycopy(fullRes, 0, res, 0, RES_BYTES);
         return new Response(res, hmac(key, KS_LABEL, challenge));
+    }
+
+    /** The card's IMS AKA answer: {@code HMAC(K, "ECM-IMS-RES" || RAND)[0..16)} and {@code HMAC(K, "ECM-IMS-KS" || RAND)}. */
+    public static Response respondIms(byte[] key, byte[] challenge) {
+        checkKey(key);
+        if (challenge == null || challenge.length != CHALLENGE_BYTES)
+            throw new IllegalArgumentException("the challenge must be " + CHALLENGE_BYTES + " bytes");
+        byte[] fullRes = hmac(key, IMS_RES_LABEL, challenge);
+        byte[] res = new byte[RES_BYTES];
+        System.arraycopy(fullRes, 0, res, 0, RES_BYTES);
+        return new Response(res, hmac(key, IMS_KS_LABEL, challenge));
+    }
+
+    /** {@code text} as a phone number ("" or null: none); throws with a player-readable reason. */
+    public static String parseMsisdn(String text) {
+        String t = text == null ? "" : text.trim();
+        if (t.isEmpty()) return "";
+        if (!MSISDN.matcher(t).matches()) throw new IllegalArgumentException("a phone number is E.164, like +12145550142, not '" + text + "'");
+        return t;
     }
 
     /** Constant-time check of a card's answer against the expected one. */

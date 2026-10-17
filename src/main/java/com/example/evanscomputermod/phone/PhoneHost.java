@@ -276,6 +276,11 @@ public final class PhoneHost implements IComputerHost {
         public String slotName(int slot) {
             return "module_" + (slot + 1);
         }
+
+        @Override
+        public void wakeForPage() {
+            pageWake();
+        }
     });
 
     PhoneHost(MinecraftServer server, UUID id) {
@@ -1039,6 +1044,19 @@ public final class PhoneHost implements IComputerHost {
         } else if (slot >= 1 && slot <= 6) {
             sink.slot(this, slot, down);
         }
+    }
+
+    /** How long a page wakes a sleeping phone: celld resumes and the call or text comes in; telephonyd then holds a wake lock while it rings. */
+    public static final long PAGE_WAKE_MS = 5000;
+
+    /**
+     * The modem heard a page for this phone (docs/TELEPHONY.md "Reaching a phone that is
+     * asleep"): wake the sleeping computer for {@link #PAGE_WAKE_MS}. Nothing when awake or off.
+     */
+    public void pageWake() {
+        ComputerInstance c = instance();
+        if (state != PhoneState.ASLEEP || c == null) return;
+        c.wakeFor(PAGE_WAKE_MS);
     }
 
     /**
