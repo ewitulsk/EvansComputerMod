@@ -1,0 +1,28 @@
+NAME
+    ps - list running processes
+
+SYNOPSIS
+    ps
+
+DESCRIPTION
+    Lists every program running on the computer, one per line, with its
+    process id (PID), its state and its name. The PID is the number kill
+    and fg take. ps shows all processes, not only the ones started from
+    this shell: background servers, apps on the desktop and programs of
+    other sessions appear too. With nothing running it prints
+    "No processes."
+
+    The state is RUNNING, PAUSED (an app the app manager has paused,
+    for example one in the background on the desktop) or ZOMBIE (a
+    program that has ended but has not been cleaned up yet).
+
+    ps is built into the shell, so it cannot be used in a pipeline.
+
+EXAMPLES
+      ps
+
+      PID  STATE    NAME
+       12  RUNNING  httpd
+
+SEE ALSO
+    kill, jobs, fg, shell

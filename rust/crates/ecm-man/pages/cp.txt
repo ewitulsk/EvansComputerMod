@@ -1,0 +1,21 @@
+NAME
+    cp - copy a file
+
+SYNOPSIS
+    cp source destination
+
+DESCRIPTION
+    Copies the file source to destination. destination is the full name
+    of the new file (not a directory to copy into); an existing file of
+    that name is overwritten. cp copies one file at a time and does not
+    copy directories.
+
+    If source does not exist cp prints
+    "cp: source: No such file or directory" and exits with code 1.
+
+EXAMPLES
+      cp notes.txt notes-backup.txt
+      cp /server-bin/hello.wasm /bin/hello.wasm
+
+SEE ALSO
+    mv, rm, ls, filesystem

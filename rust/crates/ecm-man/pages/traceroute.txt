@@ -1,0 +1,22 @@
+NAME
+    traceroute - show the routers on the way to a computer
+
+SYNOPSIS
+    traceroute <host> [max-hops]
+
+DESCRIPTION
+    Sends ICMP echo probes with a time-to-live of 1, 2, 3, ... Each
+    router that drops a probe because its TTL ran out answers, so every
+    line shows the hop number and the address of one router on the
+    path. A hop that does not answer within one second prints *. It
+    stops when the target itself answers (or reports it unreachable),
+    or after max-hops hops (default 30).
+
+    Addresses are printed as numbers; there are no reverse names yet.
+
+EXAMPLES
+      traceroute 100.72.0.10
+      traceroute web.v8.ring 12
+
+SEE ALSO
+    ping, ip, router, networking

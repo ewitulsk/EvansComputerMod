@@ -1,0 +1,16 @@
+NAME
+    pwd - print the current directory
+
+SYNOPSIS
+    pwd
+
+DESCRIPTION
+    Prints the current directory: the directory relative paths start
+    from, which cd changes. At the root of the computer's storage it
+    prints /. The prompt shows the same directory.
+
+EXAMPLES
+      pwd
+
+SEE ALSO
+    cd, ls, filesystem

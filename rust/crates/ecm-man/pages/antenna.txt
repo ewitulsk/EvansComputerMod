@@ -1,0 +1,81 @@
+NAME
+    antenna - measure the antenna on a feed point next to the computer
+
+SYNOPSIS
+    antenna [summary]
+
+    antenna swr <f1> <f2> [points]
+
+    antenna z <f>
+
+    antenna polar <f> [az|el] [--step D]
+
+    antenna limits [--amp W]
+
+DESCRIPTION
+    Reads the antenna built from wire around a Feed Point that touches
+    the computer (peripheral type antenna), as the Antenna Analyzer
+    does: where it resonates, how well it matches 50 ohms, its gain
+    pattern and how much power it can take. The server solves the wire
+    structure in the background; while it runs the program prints
+    "antenna: solving..." and waits up to --wait seconds, then shows
+    the estimate.
+
+    Frequencies are written 7.1M, 7100k, 7.1e6 or 146.52MHz.
+
+COMMANDS
+    summary
+        The default. Resonant frequency, 2:1 SWR band and power
+        ratings, then the feed point's position and whether the result
+        is solved or an estimate.
+
+    swr <f1> <f2> [points]
+        A text plot of SWR across f1..f2 (points 2-401, default 41),
+        then the lowest SWR, the resonance and the 2:1 band.
+
+    z <f>
+        Impedance (R + jX ohms), SWR and efficiency at f.
+
+    polar <f> [az|el]
+        A polar plot of the gain pattern at f: az is the horizontal cut
+        (north up) through the peak's elevation, el the vertical cut
+        through the peak's bearing. Then the peak gain in dBi, its
+        bearing and elevation, and the polarization.
+
+    limits
+        The power the antenna can take, its weakest part (wire or
+        insulation), and whether the transmitter found on the
+        feedline is within that rating.
+
+OPTIONS
+    --step D
+        polar: angle step, 1-90 degrees. Default 5.
+
+    --amp W
+        limits: check a transmitter of W watts.
+
+    --name P
+        The antenna peripheral to read. Default the first one.
+
+    --wait S
+        How long to wait for the solver. Default 20.
+
+    --gfx, --screen
+        Also draw the plot on the terminal's display (--gfx) or the
+        attached Screen (--screen), for --seconds S (default 15).
+
+EXAMPLES
+      antenna
+      antenna swr 6.8M 7.6M
+      antenna z 7.1M
+      antenna polar 14.2M el --gfx
+      antenna limits --amp 100
+
+NOTES
+    A dipole for f MHz has two arms of about 72 / f blocks each (40 m
+    band: 10 blocks per arm, resonant near 7.2 MHz). "No antenna"
+    errors mean the computer is not touching a Feed Point, or the feed
+    point has no wire to measure.
+
+SEE ALSO
+    radio, tx_tone, peripherals

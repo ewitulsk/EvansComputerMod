@@ -1,0 +1,40 @@
+NAME
+    iqrec - record raw IQ samples from an SDR to a file
+
+SYNOPSIS
+    iqrec <freq> <file.cf32|file.cs16> [--seconds S] [--rate SPS]
+    [--gain DB] [--sdr NAME]
+
+DESCRIPTION
+    Records what the SDR receives around freq as raw IQ samples, plus a
+    SigMF metadata file next to it (file.sigmf-meta) with the rate,
+    frequency and SDR tier. The format follows the file name: .cs16
+    (16-bit integers, 4 bytes per sample) or .cf32 (32-bit floats, 8
+    bytes per sample; also the default for other names). Recordings
+    open in inspectrum, GQRX and Universal Radio Hacker, and play back
+    with iqplay or the radio module's file_source.
+
+    Prints "iqrec: N samples (format) -> file + file.sigmf-meta".
+
+OPTIONS
+    --seconds S
+        Length, up to 600 seconds. Default 5.
+
+    --rate SPS
+        Sample rate. Default 48000.
+
+    --gain DB
+        Fixed receiver gain. Default: automatic gain (AGC).
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+EXAMPLES
+      iqrec 144.39M /aprs.cf32 --seconds 10
+      iqrec 100M /fm.cs16 --rate 250k --seconds 3
+
+NOTES
+    One second at 48000 S/s is 384 KB as cf32, 192 KB as cs16.
+
+SEE ALSO
+    iqplay, waterfall, afsk1200, radio

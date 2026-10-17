@@ -1,0 +1,135 @@
+NAME
+    filesystem - the computer's storage and where things live
+
+DESCRIPTION
+    Each computer has its own storage, kept by the server. All of it
+    hangs from one root, /. A path that starts with / starts at the
+    root; any other path starts at the current directory (see cd and
+    pwd). .. is the parent directory and . the current one. Names are
+    separated by /.
+
+    There are no owners or permissions on the files themselves: every
+    program can read and write everything except /server-bin. (Apps
+    installed with pkg are confined by the app manager.) Deleted files
+    cannot be recovered.
+
+    To bring a file in from your real computer, use upload. The Files
+    app on the desktop (files) shows the same storage.
+
+DIRECTORIES
+    /
+        The root. Holds the directories below and a few system files.
+
+    /bin
+        Your own programs (.wasm files). The shell looks here before
+        /server-bin, so a program here replaces a shipped one with the
+        same name. It may not exist until you make it (mkdir /bin).
+
+    /server-bin
+        The programs that come with the server: ls, cat, python, ...
+        Read-only, shared by every computer, and updated with the mod.
+        Copy a program out with cp if you want a changed copy.
+
+    /home
+        Your documents. upload saves here by default, video and Video
+        Player look for videos in /home and /home/videos, and sshd reads
+        a user's keys from /home/<user>/.ssh/authorized_keys.
+
+    /etc
+        Configuration files (see below). Plain text: change them with
+        edit.
+
+    /apps, /var/apps
+        Apps installed with pkg, and each app's own data.
+
+    /var/lib, /var/log
+        Program state (the pkg cache, the app database) and logs.
+
+    /dev
+        Devices, not files on disk: /dev/audio is the speaker, /dev/sdr
+        the radio, and so on.
+
+    /usr/share/man
+        Extra manual pages. A file /usr/share/man/<name>.txt is shown
+        by man <name> and help <name>, in place of a built-in page of
+        the same name. See man man for the format.
+
+SYSTEM FILES
+    /services.cfg
+        Commands run at boot, one per line: lines ending in & start in
+        the background (sshd &), and switch on / router on start those
+        services. # starts a comment.
+
+    /network.cfg
+        The saved network configuration (addresses, routes), restored at
+        boot. Written by ifconfig, ip and the other network tools.
+
+CONFIGURATION IN /etc
+    /etc/hosts
+        Host names and their addresses, looked at before DNS.
+
+    /etc/resolv.conf
+        The DNS servers to ask (resolvectl changes it).
+
+    /etc/passwd
+        Users who may log in over SSH, with their passwords (passwd sets
+        root's).
+
+    /etc/ssh/
+        sshd's host key (ssh_host_ed25519_key and its .pub).
+
+    /etc/ui.toml
+        The desktop: which shell and theme, and autostart = true to start
+        the GUI at boot.
+
+    /etc/chat.conf
+        The chat server chat connects to when none is given.
+
+    /etc/disco.conf
+        The services disco serve announces on the network, and relaying.
+
+    /etc/dhcpd.conf
+        Address pools and options of the DHCP server dhcpd.
+
+    /etc/wpa_supplicant.conf
+        Wi-Fi networks and their passwords (wifi, wpa_cli).
+
+    /etc/pkg/repos
+        The package repositories added with pkg repo add.
+
+    /etc/pkg/signing.key
+        The key pkg keygen makes for signing packages.
+
+    /etc/named.conf, /etc/named/
+        The DNS server named: its settings and its zone files.
+
+    /etc/domain.auth
+        Who you are logged in as at the domain registrar (domain login).
+
+    /etc/registryd.conf, /etc/registry.db
+        The domain registry server registryd: settings and database.
+
+    /etc/registrard.conf, /etc/registrar.db
+        The domain registrar server registrard: settings and database.
+
+    /etc/ianad.conf, /etc/ianad.db
+        The root naming authority server ianad: settings and database.
+
+    /etc/celld.toml
+        A phone's cellular settings, such as data roaming.
+
+    /etc/celld-site.toml
+        A cell site's settings.
+
+    /etc/cored.toml, /etc/cored.db
+        A carrier core: program settings and the network's database.
+
+EXAMPLES
+      ls /
+      ls server-bin
+      cat /etc/resolv.conf
+      edit /services.cfg
+      mkdir -p /usr/share/man
+
+SEE ALSO
+    ls, cd, pwd, cp, mv, rm, mkdir, upload, files, shell, pkg

@@ -1,0 +1,61 @@
+NAME
+    disco - find services on the network (chat servers, app repos)
+
+SYNOPSIS
+    disco [TYPE] [--wait MS]
+    disco serve [-v]
+
+DESCRIPTION
+    disco finds services without anyone typing an address, the way
+    Bonjour finds printers. A search sends one UDP query (port 5354)
+    to this computer, to every connected segment (multicast group
+    224.0.0.254) and to the default gateway, collects the answers for
+    1.5 seconds and prints one line per service: type, address:port
+    and name. TYPE limits it to one type: discord or chat (a discordd),
+    pkg (a pkg
+    serve repository) or any lower-case name of your own; the default
+    is every type.
+
+    disco serve is the responder: run it with disco serve & (or put it
+    in /services.cfg) on every computer that offers services. It
+    answers for what servers on this computer announce (discordd, and
+    pkg serve with --name, write files in /run/disco) and for what
+    /etc/disco.conf lists. Multicast never crosses a router, so a
+    router runs disco serve with relay gateway to pass searches from
+    its LAN on to the next router (at most three routers up).
+
+    chat with no server, the Discord app, the App Store and pkg discover
+    all use the same search.
+
+OPTIONS
+    --wait MS
+        Collect answers for MS milliseconds instead of 1500.
+
+    -v
+        With serve: log every query.
+
+FILES
+    /etc/disco.conf
+        Lines for disco serve:
+
+      service <type> <port> [name]         on this computer
+      record <type> <host> <port> [name]   a service elsewhere
+      relay gateway | relay <address>      pass searches on
+
+    /run/disco/
+        What running servers announce.
+
+EXAMPLES
+      disco
+      disco chat
+      disco pkg --wait 3000
+      disco serve &
+      edit /etc/disco.conf
+
+NOTES
+    Nothing found means no responder answered: the server's computer
+    needs disco serve &, and every router in between needs disco serve
+    with relay gateway. Answers are not authenticated.
+
+SEE ALSO
+    chat, discordd, discord, pkg, ip, networking

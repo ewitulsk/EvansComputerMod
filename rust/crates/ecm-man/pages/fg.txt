@@ -1,0 +1,26 @@
+NAME
+    fg - bring a background or stopped job to the foreground
+
+SYNOPSIS
+    fg [%job | pid]
+
+DESCRIPTION
+    Moves a job of this shell to the foreground: the shell waits for it
+    to finish before showing the prompt again, your typing goes to its
+    input, and Ctrl+C or Ctrl+T stops it (Ctrl+Z pauses it again). A
+    stopped job (paused with Ctrl+Z) goes on running. Name the job by its
+    number with a % in front (as jobs shows it), or by the PID of one of
+    its processes; without an argument fg takes the newest job. It prints
+    the job's command line.
+
+    If there is no such job, fg prints "fg: no such job".
+
+EXAMPLES
+      discordd &
+      [1] 5
+      fg %1
+      fg 5
+      fg
+
+SEE ALSO
+    jobs, bg, kill, keys, shell

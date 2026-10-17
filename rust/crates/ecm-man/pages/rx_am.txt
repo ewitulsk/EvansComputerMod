@@ -1,0 +1,57 @@
+NAME
+    rx_am - listen to AM radio through a Speaker
+
+SYNOPSIS
+    rx_am <freq> [--squelch DB] [--gain DB] [--sdr NAME] [--rate SPS]
+    [--speaker SIDE] [--volume 0-100] [--seconds S]
+    [--wav FILE [--no-speaker]] [--audio-rate HZ]
+
+DESCRIPTION
+    Tunes the SDR next to the computer to freq, demodulates AM
+    (broadcast stations, shortwave, aviation) and plays the audio on a
+    Speaker touching the computer. The audio band is 4.5 kHz.
+
+    It prints one line saying what it receives, then every 2 seconds the
+    signal level in dBFS, and runs until Ctrl+T (or --seconds). With
+    --seconds it ends with a summary of the strongest audio tone heard.
+
+OPTIONS
+    --squelch DB
+        Mute the audio while the signal is below DB (dBFS). Off by
+        default.
+
+    --gain DB
+        Fixed receiver gain in dB. Default: automatic gain (AGC).
+
+    --sdr NAME
+        Which SDR: empty (the first), 0 / sdr0 / sdr_0, a side of the
+        computer (left, top, ...) or a /dev/sdr path.
+
+    --rate SPS
+        Sample rate. Default 48000.
+
+    --speaker SIDE, --volume 0-100
+        Which Speaker to use and its volume.
+
+    --seconds S
+        Stop after S seconds of samples.
+
+    --wav FILE
+        Also write the audio to a WAV file. With --no-speaker, only to
+        the file.
+
+    --audio-rate HZ
+        Audio sample rate, 8000-48000. Default 24000.
+
+EXAMPLES
+      rx_am 11.6M
+      rx_am 1.2M --volume 80
+      rx_am 7.1M --seconds 20 --wav /am.wav --no-speaker
+
+NOTES
+    The Basic SDR tunes 0.5-1700 MHz, the Standard 10 kHz-6 GHz and
+    the Advanced 1 kHz-6 GHz. For HF (3-30 MHz) a real antenna on coax
+    hears far more than the SDR's built-in whip.
+
+SEE ALSO
+    rx_fm, rx_ssb, radio_station, scan, radio

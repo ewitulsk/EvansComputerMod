@@ -22,6 +22,8 @@ test = false
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+# The line editor (shared with the shell) for the REPL and input().
+ecm-lineedit = { path = "../../crates/ecm-lineedit" }
 ecm-radio = { workspace = true }
 ecm-dsp = { workspace = true }
 ecm-ui = { workspace = true }

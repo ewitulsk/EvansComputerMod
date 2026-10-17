@@ -1,0 +1,100 @@
+NAME
+    visual - the Visual Programmer: build programs and apps from blocks
+
+SYNOPSIS
+    visual [FILE.vpl | FILE.ui.json]
+    visual --install-samples
+    visual --python FILE.vpl
+    visual --run FILE.vpl
+    visual --package FILE.vpl
+
+DESCRIPTION
+    Without options visual opens the Visual Programmer window (needs the
+    GUI), optionally with a program or layout file. You build a program
+    by placing blocks on a board and wiring them together; it is turned
+    into Python and run. With a layout designed on the Design page the
+    program becomes a GUI app that Package turns into an installable
+    app. The other forms work in the console.
+
+    Program page. On the left is the block palette, one section per
+    category; click a header to open or fold it. Control, Output,
+    Timing, Math, Compare and Constants start open; Redstone, Events,
+    Convert, App and one category per attached peripheral type start
+    folded. The ? beside a block (or on a placed block) explains it:
+    what it does, its inputs and outputs, an example and its Python.
+
+    Design page. Drag widgets from the palette into a live preview;
+    click one to select it and edit its properties in the inspector
+    (id, text, style, size, ...). With nothing selected the inspector
+    edits the window title and the app's id, name and version. Each
+    event a widget sends has an "Add blocks when clicked" (changed,
+    submitted, selected) button that jumps to its When Widget block.
+
+    Toolbar: Program / Design, the program's name, New, Open (lists the
+    .vpl and .ui.json files in /visual), Save (needs a name), Run /
+    Stop, Package and zoom. Run opens a panel with the program's output
+    and a field that sends a line to its input.
+
+MOUSE AND KEYS
+    Place
+        Pick a block in the palette, then click the board.
+
+    Wire
+        Drag from a port to a port: an output to an input of the same
+        type (any matches every type). An input takes one wire.
+
+    Move
+        Drag a block; it comes to the front.
+
+    Delete
+        Right-click a block, or select it and press Delete. Right-click
+        a port to cut its wires. On the Design page, Delete (the key or
+        the button) removes the selected widget.
+
+    Pan and zoom
+        Drag the empty board, or drag with the middle button, to pan.
+        The mouse wheel or the - and + buttons zoom.
+
+    Esc
+        Cancel placing a block or a drag.
+
+OPTIONS
+    --install-samples
+        Write the sample programs (hello, a counter app, ...) into
+        /visual.
+
+    --python FILE.vpl
+        Print the Python the program turns into.
+
+    --run FILE.vpl
+        Run the program here and show its output. GUI apps can't run
+        this way: run them from the window.
+
+    --package FILE.vpl
+        Write a GUI app's folder, /visual/apps/ID: app.toml, main.py,
+        main.ui.json and icon.png. Build it with pkg build. The
+        permissions are worked out from the blocks used (peripherals,
+        redstone, notifications, network).
+
+FILES
+    /visual/NAME.vpl
+        A program (the block graph).
+
+    /visual/NAME.ui.json
+        Its window layout, for GUI apps.
+
+    /visual/NAME.py
+        The Python Run writes and runs.
+
+    /visual/apps/ID/
+        What Package writes.
+
+EXAMPLES
+      visual --install-samples
+      visual /visual/hello.vpl
+      visual --run /visual/hello.vpl
+      visual --package /visual/counter.vpl
+      pkg build /visual/apps/dev.visual.counter
+
+SEE ALSO
+    python, scripting, pkg, store, files

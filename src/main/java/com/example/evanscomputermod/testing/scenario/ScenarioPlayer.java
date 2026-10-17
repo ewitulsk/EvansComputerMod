@@ -534,6 +534,15 @@ public final class ScenarioPlayer {
         return ok;
     }
 
+    /**
+     * What the client sends right before a paste key: the player's real
+     * clipboard ({@code ClipboardPackets.Push}, through its server handler).
+     */
+    public boolean pushClipboard(UUID computer, int display, String text) {
+        return com.example.evanscomputermod.network.ClipboardPackets.Push.deliver(hands,
+                new com.example.evanscomputermod.network.ClipboardPackets.Push(computer, (byte) display, text));
+    }
+
     /** HID usage of Enter, Backspace and the letter keys. */
     public static final int HID_ENTER = 0x28, HID_BACKSPACE = 0x2A;
 

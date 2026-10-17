@@ -1,0 +1,32 @@
+NAME
+    chooser - asks which app opens a file
+
+SYNOPSIS
+    chooser --req TOKEN --path FILE
+
+DESCRIPTION
+    When you open a file (in Files, or an app opens one) that several
+    installed apps can open and none of them is the default for its
+    type, the GUI starts chooser. You don't type it yourself.
+
+    The window asks: Open "NAME" with, and lists the apps (the default,
+    if there is one, already selected). Tick "Always use this app for
+    .EXT files" to make your choice the default. Open starts the chosen
+    app with the file; Cancel, or closing the window, opens nothing.
+
+    The chosen app may read and write that one file. Change or remove a
+    default later in Settings > Apps.
+
+OPTIONS
+    --req TOKEN
+        The request's token (required).
+
+    --path FILE
+        The file to open; must be an absolute path.
+
+NOTES
+    pkg open, typed in a terminal, can't show the chooser: it prints
+    "pick one with: pkg open <path> --with <id>".
+
+SEE ALSO
+    files, picker, settings, pkg

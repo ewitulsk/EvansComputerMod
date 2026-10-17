@@ -1,0 +1,43 @@
+NAME
+    ianad - IANA's desk: adds new top-level domains to the root zone
+
+SYNOPSIS
+    ianad [-c FILE]
+    ianad list
+    ianad revoke TLD
+
+DESCRIPTION
+    ianad runs on the computer that keeps the root zone (iana.ring). It
+    takes TLD applications over HTTP (a page at /, and POST /api, which
+    domain tld uses). For each application it checks the label (2-63
+    letters, digits and hyphens, not all digits, not reserved, not
+    taken), then asks every nameserver given for the TLD's SOA; each
+    must answer authoritatively. If all pass it adds the delegation
+    (NS records and glue) to the root zone, raises the serial and has
+    the local named reload, which NOTIFYs the root servers.
+
+    It runs until you stop it with Ctrl+T; start it with ianad &.
+
+COMMANDS
+    list
+        The TLDs IANA has delegated.
+
+    revoke TLD
+        Take a TLD out of the root zone (the operator's command; no
+        account needed at the IANA console).
+
+FILES
+    /etc/ianad.conf
+        One setting per line, # comments; all optional:
+
+      zone /etc/named/root.zone
+      port 80
+      db /etc/ianad.db
+
+EXAMPLES
+      ianad &
+      ianad list
+      ianad revoke base
+
+SEE ALSO
+    domain, named, dig, networking

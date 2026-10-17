@@ -1,0 +1,91 @@
+NAME
+    peripheral - attached blocks and modules, and using them from scripts
+
+DESCRIPTION
+    A peripheral is something the computer can talk to besides its
+    disk: a block placed against it (a Speaker, an SDR, an antenna, a
+    Redstone Link ...) or a module installed in one of its bays (a Wi-Fi
+    Module, a modem, a Wired Sensor Module ...). Each has an attachment
+    name (where it is) and a type (what it is), and offers methods that
+    programs call.
+
+    Type peripherals to list what is attached, and peripherals NAME to
+    list one peripheral's methods.
+
+ATTACHING
+    Blocks
+        Place the block against a side of the computer. Its name is the
+        side: front, back, left, right, top or bottom (left and right
+        as for redstone sides).
+
+    Modules
+        Right-click the computer with a Module Expansion Card, then put
+        modules in the bays. The bay slots are named left_bay_1,
+        left_bay_2, right_bay_1 and right_bay_2. An ePhone's two module
+        slots are module_1 and module_2.
+
+    Controllers
+        A paired Wireless Xbox Controller is attached as controller_1
+        to controller_4, by player number.
+
+    ePhone
+        Every ePhone also has phone (type ephone: battery, state,
+        info), sim (its SIM tray) and speaker.
+
+    Some types: sdr, antenna, amplifier, dish, microwave_radio, wifi,
+    framed_radio, speaker, redstone_link,
+    wired_sensors, card_reader, controller_receiver, xbox_controller,
+    ephone, sim.
+
+FROM A SCRIPT
+    The peripheral module (Python and Lua alike):
+
+      peripheral.names()            ['left', 'left_bay_1']
+      peripheral.attached()         [(name, type), ...]
+      p = peripheral.find("speaker")    first of a type, or None
+      peripheral.find_all("antenna")    every one of a type
+      p = peripheral.wrap("left")   by attachment name, or None
+      p.methods()                   its method names
+      p.METHOD(args...)             call a method
+      peripheral.call("left", "METHOD", args...)
+      peripheral.pull_event(filter, timeout)
+
+    A call the peripheral rejects raises peripheral.PeripheralError in
+    Python and a Lua error in Lua (catch it with pcall). In Lua,
+    p:METHOD(args) works too.
+
+    sensors, controller, audio and radio are friendlier modules over
+    the same peripherals (see scripting).
+
+EVENTS
+    pull_event waits for the next event (only events named filter, if
+    given; others are dropped while waiting). timeout is in seconds: none
+    waits forever, 0 only checks. It returns (event, attachment, args...)
+    in Python, the same as several values in Lua, or None / nil on
+    timeout. Every computer posts:
+
+      ("peripheral", name, type)     something was attached
+      ("peripheral_detach", name)    it went away
+
+    Peripherals add their own (a Redstone Link's channel changes, a
+    controller's buttons, ...).
+
+EXAMPLES
+      import peripheral
+      link = peripheral.find("redstone_link")
+      link.set_channel(0, "minecraft:red_dye", "minecraft:red_dye", "tx")
+      link.set_output(0, 15)
+      ev = peripheral.pull_event("redstone_link", timeout=5)
+
+      p = peripheral.find("ephone")
+      print(p.battery(), p.state())
+
+NOTES
+    Programs typed in a terminal may use every peripheral. An installed
+    app must be allowed: radio hardware (sdr, antenna, amplifier, dish,
+    microwave_radio, wifi) needs radio, modems need cellular,
+    controllers need controller, anything else peripherals:TYPE. Answer
+    the app's question, or change it in Settings > Apps.
+
+SEE ALSO
+    peripherals, scripting, python, lua, controllertest, settings

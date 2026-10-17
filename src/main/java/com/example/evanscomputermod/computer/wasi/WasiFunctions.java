@@ -72,6 +72,9 @@ public class WasiFunctions {
         public int pid;
         /** Permission checks for apps; null = unconfined (docs/gui/APPS.md). */
         public ProcessSandbox sandbox;
+        /** The keyboard (what the shell sends this program), for /dev/tty
+         *  when stdin is a pipe or a file. */
+        public WasiPipe keyboard;
 
         public WasiState(FdTable fdTable, String[] argv, Path storagePath,
                          java.util.Map<String, String> envVars) {
@@ -149,7 +152,10 @@ public class WasiFunctions {
                     || (statDesc instanceof DeviceFd d && d.isNonBlocking())) {
                 mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
             }
-            if (fd <= 2 || statDesc instanceof DeviceFd) {
+            if (fd <= 2 && statDesc instanceof SharedFd.Handle h) {
+                // A shell redirect or pipe: a file, or a stream to another program.
+                mem.writeByte(bufPtr, (byte) (h.shared().inner() instanceof VfsFileFd ? 4 : 6));
+            } else if (fd <= 2 || statDesc instanceof DeviceFd) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
             } else if (fd == 3) {
                 mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY
@@ -321,6 +327,11 @@ public class WasiFunctions {
                 return retI32(ERRNO_NOENT);
             }
 
+            // /dev/tty: the keyboard, even when stdin is a pipe (less at the end of a pipeline).
+            if (pathStr.equals("dev/tty") && state.keyboard != null) {
+                mem.writeInt(fdOutPtr, state.fdTable.allocate(new PipeFd(state.keyboard, true).tty()));
+                return retI32(ERRNO_SUCCESS);
+            }
             // /dev: devices of the computer (speakers), not files.
             if (pathStr.startsWith("dev/")) {
                 String devPerm = ProcessSandbox.devicePermission(pathStr.substring(4));

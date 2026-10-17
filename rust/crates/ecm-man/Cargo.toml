@@ -1,0 +1,14 @@
+[package]
+name = "ecm-man"
+version = "0.1.0"
+edition = "2021"
+description = "The computer's manual: the built-in pages (pages/*.txt), their renderer, the help index and the pager shared by man, help and less."
+build = "build.rs"
+
+[lib]
+name = "ecm_man"
+
+[features]
+default = ["pages"]
+# Compile the built-in pages in (`less` does without them).
+pages = []

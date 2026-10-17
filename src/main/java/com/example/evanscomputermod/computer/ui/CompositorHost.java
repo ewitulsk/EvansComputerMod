@@ -56,6 +56,12 @@ public interface CompositorHost {
     /** A message for the log / diagnostics. */
     default void log(String msg) {}
 
+    /** An app put something on the clipboard (copy): mirror text to the player's real clipboard. */
+    default void clipboardChanged(String mime, byte[] data) {}
+
+    /** The desktop asked to go back to the console (its launcher's Console item). */
+    default void showConsole() {}
+
     // App platform wiring (P4/P5): the computer's app manager answers these; tests use the defaults.
 
     /** Saved state to hand an app right after Welcome ({@code Restore}, §11), or null. */

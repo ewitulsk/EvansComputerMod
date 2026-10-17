@@ -1,0 +1,37 @@
+NAME
+    player - play an MP4 video without sound (simple player)
+
+SYNOPSIS
+    player file.mp4 [--size WxH]
+    player screen file.mp4
+
+DESCRIPTION
+    Plays a video file, picture only, at its own speed, then prints how
+    many frames it showed. The host decodes the video, so the server
+    needs the FFmpeg add-on (evanscomputermod-ffmpeg); without it player
+    says video isn't installed.
+
+    Without screen the picture goes to the terminal's graphics layer,
+    320x200 unless --size says otherwise. With screen it goes to the
+    Screen wall attached to the computer, at the wall's own pixel size.
+
+    video play does the same with sound, seeking and looping, and is
+    usually the better choice.
+
+OPTIONS
+    --size WxH
+        The picture size on the terminal, each side 1 to 4096. Not
+        allowed with screen.
+
+NOTES
+    The file name is taken from the root of the computer's storage, not
+    from the current directory: write home/clip.mp4 or /home/clip.mp4
+    even when you are in /home. Ctrl+T stops playback.
+
+EXAMPLES
+      player /home/clip.mp4
+      player /home/clip.mp4 --size 160x100
+      player screen /home/clip.mp4
+
+SEE ALSO
+    video, videoplayer, gfxtest, upload

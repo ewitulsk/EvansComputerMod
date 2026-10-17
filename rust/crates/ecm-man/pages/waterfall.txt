@@ -1,0 +1,54 @@
+NAME
+    waterfall - live spectrum and waterfall of an SDR
+
+SYNOPSIS
+    waterfall <freq> [--screen | --text] [--size WxH] [--min DB]
+    [--max DB] [--gain DB] [--rate SPS] [--sdr NAME] [--seconds S]
+
+DESCRIPTION
+    Shows the radio signals around freq: rate/2 below to rate/2 above
+    it (48 kHz wide by default). The newest spectrum is the trace on
+    top; the rows below scroll down, one per tenth of a second, colour
+    showing strength. Signals appear as bright vertical lines.
+
+    By default it draws on the terminal's graphics display (256x160).
+    It runs until Ctrl+T (or --seconds), then prints how many rows it
+    drew and the strongest signal: its level and frequency.
+
+OPTIONS
+    --screen
+        Draw on the Screen attached to the computer, at the Screen's
+        own size, instead of the terminal.
+
+    --text
+        No graphics: print one line of shade characters per tenth of a
+        second (at most 78 columns), each followed by the strongest
+        level and its frequency. Works over ssh and on any terminal.
+
+    --size WxH
+        Size of the terminal plot, 16-1024 each way. Default 256x160.
+
+    --min DB, --max DB
+        The levels drawn darkest and brightest. Default -110 and -20.
+
+    --gain DB
+        Fixed receiver gain. Default: automatic gain (AGC).
+
+    --rate SPS
+        Sample rate, which is also the width shown. Default 48000; a
+        Standard SDR goes to 250000, an Advanced one to 1000000.
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side such as left, or a
+        /dev/sdr path).
+
+    --seconds S
+        Stop after S seconds.
+
+EXAMPLES
+      waterfall 146.52M
+      waterfall 7.1M --text
+      waterfall 100M --rate 250k --screen --min -100 --max -30
+
+SEE ALSO
+    scan, rx_fm, iqrec, radio

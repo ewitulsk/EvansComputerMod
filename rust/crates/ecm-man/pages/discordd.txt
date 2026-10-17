@@ -1,0 +1,29 @@
+NAME
+    discordd - a Discord backend: servers, text and voice channels
+
+SYNOPSIS
+    discordd [PORT] [--name NAME] [--data DIR]
+
+DESCRIPTION
+    Hosts Discord servers for the Discord app and the chat command: TCP
+    PORT (default 7777) for both, UDP PORT+1 for voice. A backend hosts
+    up to 32 servers. Its home server, named NAME (default Discord), is
+    joined by every user on their first visit and owned by nobody; chat
+    users talk in its first text channel, #general.
+
+    Servers, channels, members and the last 50 messages of every text
+    channel are kept in DIR/state (default /var/discord), written on
+    every change. Voice frames are forwarded to everyone else in the
+    channel.
+
+    It announces itself to disco serve (as discord and chat), so run
+    disco serve & on the same computer for apps to find it. Stop it with
+    Ctrl+C; start it with & to keep the shell.
+
+EXAMPLES
+      discordd &
+      discordd 7790 --name Village --data /var/village &
+      disco serve &
+
+SEE ALSO
+    discord, chat, disco, networking
