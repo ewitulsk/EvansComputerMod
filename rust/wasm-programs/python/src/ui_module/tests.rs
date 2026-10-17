@@ -298,3 +298,177 @@ fn a_visual_programmer_counter_app_counts_clicks() {
     });
     assert!(shown, "no TreeOps set the label to Count: 2");
 }
+
+/// The card widgets through `import ui`: a PixelGrid's .pixels follows the
+/// player's painting (and the eyedropper sets .color), pushes from Python
+/// reach the screen, a locked texel stays, and a ColorPicker's .value follows
+/// drags and typed hex while pushes from Python restyle it.
+#[test]
+fn python_pixel_grid_and_color_picker_follow_input_and_push_changes() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false)]);
+    let handle = register_mock(mock.clone());
+    let interp = interpreter();
+    interp.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+        run(vm, &scope, &format!("{SETUP}_ui.use_mock({handle})\n"));
+        run(
+            vm,
+            &scope,
+            r##"
+import ui
+log = []
+mask = [0] * 32
+mask[5] = 1
+grid = ui.PixelGrid(width=8, height=4, zoom=10, color=3, mask=mask, id="grid",
+                    palette=[0x000000, 0xffffff, 0xff0000, 0x3d8bfd],
+                    on_change=lambda e: log.append(("change", e.value)),
+                    on_select=lambda e: log.append(("select", e.value)))
+pick = ui.ColorPicker(value=0xff0000, id="pick", width=120, on_change=lambda e: log.append(("color", e.value)))
+app = ui.App("dev.test.cards")
+win = app.window("Cards", ui.Column(gap=0, children=[grid, pick]))
+assert grid.width == 8 and grid.height == 4 and len(grid.pixels) == 32
+APP = app._h
+"##,
+        );
+        let app_h: i64 = scope.globals.get_item("APP", vm).unwrap().try_into_value(vm).unwrap();
+        let step = |msgs: Vec<Message>| {
+            mock.push(&msgs);
+            run(vm, &scope, "app.step(0)\napp.step(0)\n");
+        };
+        step(vec![Message::Configure(ecm_ui_proto::Configure { surface: 1, serial: 1, w: 200, h: 300, states: ecm_ui_proto::window_states::ACTIVATED })]);
+        // Texel (2, 1) is at (25, 15); the locked texel (5, 0) at (55, 5).
+        step(click(hit(app_h, "grid"), 25, 15));
+        step(click(hit(app_h, "grid"), 55, 5));
+        run(
+            vm,
+            &scope,
+            r##"
+assert grid.pixel(2, 1) == 3, grid.pixels
+assert grid.pixel(5, 0) == 0, grid.pixels
+assert log == [("change", [(2, 1, 3)])], log
+grid.tool = "eyedropper"
+app.step(0)
+"##,
+        );
+        step(click(hit(app_h, "grid"), 25, 15));
+        run(
+            vm,
+            &scope,
+            r##"
+assert log[-1] == ("select", 3), log
+assert grid.color == 3
+grid.tool = "fill"
+grid.color = 1
+grid.set_pixel(0, 0, 2)
+app.step(0)
+"##,
+        );
+        let pushed = with_core(app_h, |c| c.window(1).unwrap().pixels("grid")).unwrap();
+        assert_eq!(pushed[0], 2, "set_pixel reached the toolkit");
+        assert_eq!(pushed[10], 3);
+        step(click(hit(app_h, "grid"), 15, 5));
+        run(
+            vm,
+            &scope,
+            r##"
+assert grid.pixel(1, 0) == 1 and grid.pixel(7, 3) == 1 and grid.pixel(0, 0) == 2 and grid.pixel(5, 0) == 0, grid.pixels
+assert log[-1][0] == "change" and len(log[-1][1]) == 32 - 3, len(log[-1][1])
+"##,
+        );
+        // The colour picker: a press on its hue strip, then a pushed value.
+        let (hue, _, field) = with_core(app_h, |c| c.window(1).unwrap().picker_hit_ids("pick")).flatten().unwrap();
+        let initial = with_core(app_h, |c| c.window(1).unwrap().state("pick").unwrap().value).unwrap();
+        assert_eq!(initial, 0xff0000, "the constructor's value reached the toolkit");
+        step(click(hue, 120 - 8, 40 + 58));
+        run(
+            vm,
+            &scope,
+            r##"
+assert log[-1][0] == "color" and log[-1][1] == pick.value, (log[-1], pick.value)
+assert pick.value != 0xff0000 and (pick.value >> 16) == 0, hex(pick.value)
+pick.value = 0x123456
+app.step(0)
+assert pick.hex == "#123456"
+"##,
+        );
+        let v = with_core(app_h, |c| c.window(1).unwrap().state("pick").unwrap().value).unwrap();
+        assert_eq!(v, 0x123456);
+        step(click(field, 60, 40 + 130));
+        for _ in 0..7 {
+            step(vec![Message::Key(ecm_ui_proto::Key { surface: 1, key: 0x2A, mods: 0, down: true, repeat: false })]);
+        }
+        step(vec![Message::Text(ecm_ui_proto::Text { surface: 1, text: "#00ff00".into() })]);
+        run(vm, &scope, "assert pick.value == 0x00ff00, hex(pick.value)\nassert log[-1] == ('color', 0x00ff00), log[-1]\n_ui.use_mock(None)\n");
+    });
+    let sent = mock.sent_messages();
+    assert!(sent.iter().any(|m| matches!(m, Message::TreeOps(_))));
+}
+
+/// The canvas API (protocol v2 timed frames): app.canvas, put, commit_at,
+/// queue_flush, the content hint and ui.now_us; the same script runs in Lua
+/// (lua/src/tests.rs) and both send these messages.
+#[test]
+fn python_canvases_put_commit_at_flush_and_hint() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false), Message::QueueLimits(ecm_ui_proto::QueueLimits { max_queue_frames: 12, max_queue_ms: 500 })]);
+    let handle = register_mock(mock.clone());
+    let interp = interpreter();
+    interp.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+        run(vm, &scope, &format!("{SETUP}_ui.use_mock({handle})\n"));
+        run(
+            vm,
+            &scope,
+            r#"
+import ui
+app = ui.App("dev.test.video")
+cv = app.canvas(4, 2, "rgb565")
+assert cv.resource == 1 and cv.width == 4 and cv.height == 2 and cv.scale == 1
+assert cv.content == "auto"
+win = app.window("Video", ui.Column(children=[cv]))
+cv.content = "motion"
+assert cv.content == "motion"
+try:
+    cv.content = "blurry"
+    raise AssertionError("bad hint accepted")
+except ValueError:
+    pass
+try:
+    ui.Canvas(resource=5).put(b"")
+    raise AssertionError("an unbound canvas has no pixels")
+except RuntimeError:
+    pass
+t0 = ui.now_us()
+assert isinstance(t0, int) and ui.now_us() >= t0
+"#,
+        );
+        let step = |msgs: Vec<Message>| {
+            mock.push(&msgs);
+            run(vm, &scope, "app.step(0)\napp.step(0)\n");
+        };
+        step(vec![Message::Configure(ecm_ui_proto::Configure { surface: 1, serial: 1, w: 200, h: 100, states: 0 })]);
+        let sent = mock.sent_messages();
+        assert!(sent.iter().any(|m| matches!(m, Message::ResourceCreate(r) if r.id == 1 && r.kind == ecm_ui_proto::ResourceKind::Canvas && r.format == ecm_ui_proto::PixelFormat::Rgb565 && r.w == 4)));
+        assert!(sent.iter().any(|m| matches!(m, Message::SurfaceSetContent(c) if c.surface == 1 && c.resource == 1 && c.hint == 2)));
+        // An untimed put: shown with the next loop turn's Commit.
+        mock.clear_sent();
+        run(vm, &scope, "cv.put(bytes(16), [(0, 0, 2, 1)])\napp.step(0)\n");
+        let sent = mock.sent_messages();
+        assert!(sent.iter().any(|m| matches!(m, Message::Commit(_))), "{sent:?}");
+        // A timed one: CommitAt instead, then QueueFlush.
+        mock.clear_sent();
+        run(vm, &scope, "cv.put(b'\x01' * 16)\ncv.commit_at(t0 + 250000)\napp.step(0)\ncv.queue_flush()\n_ui.use_mock(None)\n");
+        let sent = mock.sent_messages();
+        let t0: i64 = scope.globals.get_item("t0", vm).unwrap().try_into_value(vm).unwrap();
+        let names: Vec<&str> = sent.iter().map(|m| m.name()).collect();
+        assert_eq!(names, vec!["CommitAt", "QueueFlush"], "{sent:?}");
+        assert!(matches!(sent[0], Message::CommitAt(ecm_ui_proto::CommitAt { surface: 1, pts_us }) if pts_us == t0 as u64 + 250_000));
+    });
+    let px = &mock.state.borrow().pixels;
+    assert_eq!(px.len(), 2);
+    assert_eq!((px[0].0, px[0].1.len(), px[0].2.clone()), (1, 16, vec![[0, 0, 2, 1]]));
+    assert_eq!(px[1].1, vec![1u8; 16]);
+}

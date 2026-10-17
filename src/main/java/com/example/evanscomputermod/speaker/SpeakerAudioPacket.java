@@ -3,23 +3,51 @@ package com.example.evanscomputermod.speaker;
 import com.example.evanscomputermod.EvansComputerMod;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
+
+import org.jetbrains.annotations.Nullable;
+import java.util.UUID;
 
 /**
  * Server to client: one block of a speaker's audio, {@code samples} mono
  * samples at {@code rate} Hz, IMA ADPCM ({@link ImaAdpcm}). {@code seq}
  * counts blocks per speaker so the client can tell a gap from a reorder.
+ *
+ * <p>{@code ptsUs} is when the block's first sample plays on the server's
+ * display clock (DISPLAY_PIPELINE_SPEC.md Part E2): the speaker's own queue
+ * says how much is still ahead of it. {@code computer} is the computer the
+ * speaker is attached to (null: none); while that computer streams timed
+ * frames, the client plays the block with the same playout delay as the
+ * picture, so sound and picture stay together.
  */
-public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data)
+public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data, long ptsUs,
+                                 @Nullable UUID computer, int flags)
         implements CustomPacketPayload {
+
+    /** Live audio (a call): the client plays it at once, never on the picture's delay. Other bits reserved (0). */
+    public static final int FLAG_LIVE = 1;
+
+    public SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data, long ptsUs, @Nullable UUID computer) {
+        this(pos, seq, rate, samples, data, ptsUs, computer, 0);
+    }
+
+    public boolean live() {
+        return (flags & FLAG_LIVE) != 0;
+    }
 
     public static final Type<SpeakerAudioPacket> TYPE =
             new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "speaker_audio"));
 
     /** Largest block accepted (samples). */
     public static final int MAX_SAMPLES = 8192;
+
+    /** An untimed block of no computer (as before Part E2). */
+    public SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, byte[] data) {
+        this(pos, seq, rate, samples, data, 0, null, 0);
+    }
 
     public static final StreamCodec<ByteBuf, SpeakerAudioPacket> STREAM_CODEC = new StreamCodec<>() {
         @Override
@@ -34,7 +62,10 @@ public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, b
             }
             byte[] data = new byte[len];
             buf.readBytes(data);
-            return new SpeakerAudioPacket(pos, seq, rate, samples, data);
+            long pts = buf.readLong();
+            UUID computer = buf.readBoolean() ? UUIDUtil.STREAM_CODEC.decode(buf) : null;
+            int flags = buf.readUnsignedByte();
+            return new SpeakerAudioPacket(pos, seq, rate, samples, data, pts, computer, flags);
         }
 
         @Override
@@ -45,6 +76,10 @@ public record SpeakerAudioPacket(BlockPos pos, int seq, int rate, int samples, b
             buf.writeShort(p.samples());
             buf.writeShort(p.data().length);
             buf.writeBytes(p.data());
+            buf.writeLong(p.ptsUs());
+            buf.writeBoolean(p.computer() != null);
+            if (p.computer() != null) UUIDUtil.STREAM_CODEC.encode(buf, p.computer());
+            buf.writeByte(p.flags());
         }
     };
 

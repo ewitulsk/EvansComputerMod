@@ -41,16 +41,16 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *   <li>Breaking a span cuts that BGP edge and traffic takes the long way round the ring;
  *       replacing it repairs the edge. Breaking the in-building cable from the router's
  *       eth3 to its panel does the same, and putting it back repairs it.
- *   <li>A house PC in each village chats with the other through the ring's chat server.
+ *   <li>A house PC in each village chats with the other through the ring's Discord backend (the chat command).
  *   <li>The carrier network (Cellular v2 phase 5): both villages' Phone Stores and the core's
  *       database (TechCellChecks), every cell site on the chord, then the player-real
  *       {@code cell_tech_village} scenario: a display phone attaches at village a, browses the
- *       Data Center over LTE, installs Chat from the village repository its App Store already
+ *       Data Center over LTE, installs Discord from the village repository its App Store already
  *       lists and chats, keeps its address riding the chord to village b; a chest SIM in a
  *       second phone attaches there.
  *   <li>The Tech Village package repository on a store phone: the joined (real) player takes
  *       another display phone in village a's Phone Store and uses it; the hidden client opens it
- *       and taps the App Store, which lists Chat from Tech-Village-Apps (not installed); Chat's
+ *       and taps the App Store, which lists Discord from Tech-Village-Apps (not installed); Discord's
  *       page says Verified publisher; then Repos (the repository with its pinned key): both
  *       photographed.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
@@ -394,7 +394,7 @@ public final class TechServerChecks {
       // relays it to the ISP router, which answers for the ring's chat server and repository.
       String scr = screen(pc);
       var chat = java.util.regex.Pattern.compile("chat\\s+" + java.util.regex.Pattern.quote(WorldNetwork.chatAddress(data.chatVillage()) + ":"
-          + WorldNetwork.CHAT_PORT) + "\\s+Tech Village chat");
+          + WorldNetwork.CHAT_PORT) + "\\s+Tech Village");
       var pkg = java.util.regex.Pattern.compile("pkg\\s+" + java.util.regex.Pattern.quote(data.repo(level).address() + ":" + VillageRepo.PORT)
           + "\\s+" + VillageRepo.NAME);
       if (chat.matcher(scr).find() && pkg.matcher(scr).find()) {
@@ -1041,7 +1041,7 @@ public final class TechServerChecks {
    * The joined player takes a second display phone in village a's Phone Store (hits its frame,
    * picks it up, uses it): it is the phone generation provisioned (its computer fixed by the
    * seed, the Tech Village repository in /etc/pkg/repos). Once it is on LTE the hidden client
-   * opens it and taps the App Store: Chat is listed from the repository with Install (nothing
+   * opens it and taps the App Store: Discord is listed from the repository with Install (nothing
    * installed it), its page says Verified publisher; then Repos lists Tech-Village-Apps with its pinned key. Both views
    * are photographed through the real client's phone screen.
    */
@@ -1104,7 +1104,7 @@ public final class TechServerChecks {
         var comp = phoneComp(server);
         if (c == null || comp == null || !comp.shellConnected() || comp.locateLayerText("home", "App Store", false) == null) return;
         if (!c.getUiManager().control("phone").contains("\ncarrier " + plan.carrier + "\n")) return;   // on LTE
-        check(c.getAppManager().manifest(TechCellChecks.CHAT_APP) == null, "the store phone has Chat installed already");
+        check(c.getAppManager().manifest(TechCellChecks.CHAT_APP) == null, "the store phone has Discord installed already");
         player.sendSystemMessage(Component.literal("ECMPHONE open"));
         phoneOpened = false;
         step = 3;
@@ -1115,18 +1115,18 @@ public final class TechServerChecks {
         step = 4;
       }
       case 4 -> {
-        // The list (compact: one app per row) has Chat with Install; its page shows the publisher badge.
+        // The list (compact: one app per row) has Discord with Install; its page shows the publisher badge.
         var t = storeTexts(server);
-        if (t == null || !(t.contains("Chat") && t.contains("Install") && t.contains("1 apps from 1 repository"))) return;
+        if (t == null || !(t.contains("Discord") && t.contains("Install") && t.contains("1 apps from 1 repository"))) return;
         LOG.info("Store phone App Store list: {}", t);
-        tapOnClient(player, phoneComp(server).findText("App Store", "Chat"));
+        tapOnClient(player, phoneComp(server).findText("App Store", "Discord"));
         step = 40;
       }
       case 40 -> {
         var t = storeTexts(server);
         if (t == null || !(t.contains("Verified publisher") && t.contains("Install"))) return;
         pass("store_phone_app_store", "phone=" + storePhone + " repo=" + VillageRepo.NAME + " " + repo.url()
-            + ": Chat, Verified publisher, Install (not installed); texts=" + t);
+            + ": Discord, Verified publisher, Install (not installed); texts=" + t);
         phoneShot = "store_phone_app_store";
         player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
         step = 5;

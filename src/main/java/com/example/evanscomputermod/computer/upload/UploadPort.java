@@ -83,6 +83,12 @@ public final class UploadPort {
         operatorSupport = b == null ? SUPPORT_NONE : support(b, player);
     }
 
+    /** Is {@code player} already the operator noted through {@code via}? Any thread (input off the server thread checks it). */
+    public boolean isOperator(ServerPlayer player, IComputerHost via) {
+        var o = operator;
+        return o != null && o.get() == player && operatorHost == via;
+    }
+
     private static int support(UploadBackend b, ServerPlayer player) {
         if (!b.canUpload(player)) return SUPPORT_NO_CLIENT;
         if (!b.permitted(player)) return SUPPORT_NOT_PERMITTED;

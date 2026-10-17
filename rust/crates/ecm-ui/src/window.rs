@@ -7,6 +7,21 @@
 //! carry a `hit_id`, so a `Pointer` event names the widget it hit and no
 //! hit-testing happens here (§7).
 //!
+//! Client feedback (protocol v2, DISPLAY_PIPELINE_SPEC.md part F): nodes also
+//! say what the toolkit itself would draw a moment later, so a client can
+//! show it at once. Every node of a widget with a hover or pressed look
+//! carries the widget's hit id and `HoverFill` / `PressedFill` (rects),
+//! `HoverBorderColor` / `PressedBorderColor` (bordered rects) and
+//! `HoverColor` / `PressedColor` (texts): the look while the hit id under the
+//! pointer is the node's own, and while the left button went down on it. They
+//! are always present (equal to the normal look where nothing changes), so a
+//! node never drops them. A scroll view's viewport group carries `Scroll`,
+//! `ContentW` / `ContentH` and `ScrollX` / `ScrollY` (the offset its content
+//! is laid out at) and takes `Scrolled` back ([`Window::scrolled`]). The
+//! focused text field's text node carries `Caret` (key `<field>:typing`, so
+//! the prop goes away with the node) and its caret rect `CaretOf`. None of
+//! this changes what the server draws.
+//!
 //! Text fields and text areas keep a caret and a selection (an anchor and
 //! the caret, in characters). Their clipboard keys (Ctrl+C / X / V, Ctrl+A,
 //! Shift+Insert, …) don't touch the clipboard themselves: they leave an
@@ -90,6 +105,8 @@ pub enum EventValue {
     /// board (presses and repeats): HID usage, `mods` bits, pressed /
     /// released, auto-repeat.
     Key { key: u16, mods: u16, down: bool, repeat: bool },
+    /// Pixel grids (`on_change`): the texels that changed, `[x, y, index]` each.
+    Texels(Vec<[i32; 3]>),
 }
 
 /// Something a widget wants done outside the window (by `Core`).
@@ -140,6 +157,11 @@ pub struct WidgetState {
     pub scroll_x: i32,
     /// Scroll so the caret shows at the next render (after typing or moving it).
     pub follow: bool,
+    /// Pixel grids: the bitmap (palette indices, `cols * rows`).
+    pub pixels: Vec<u8>,
+    /// Colour pickers: hue 0-359, saturation and value 0-255 (kept next to
+    /// `value`, so a grey keeps its hue while dragging).
+    pub hsv: [i32; 3],
 }
 
 impl WidgetState {
@@ -193,6 +215,10 @@ enum Part {
     Thumb,
     /// The scrollbar's track around the thumb: a press pages towards it.
     Track,
+    /// A colour picker's hue strip, saturation/value square and hex field.
+    Hue,
+    Sv,
+    Field,
 }
 
 /// What input routing needs to know about a painted widget.
@@ -218,7 +244,61 @@ struct Info {
     secret: bool,
     /// Boards: grab every press inside.
     capture: bool,
+    /// Pixel grids: what painting needs to know.
+    grid: GridInfo,
+    /// Colour pickers: the hue strip, the SV square and the hex field (absolute).
+    picker: [Rect; 3],
 }
+
+/// A pixel grid's painting geometry and rules at the last render.
+#[derive(Clone, Debug, Default)]
+struct GridInfo {
+    cols: i32,
+    rows: i32,
+    zoom: i32,
+    /// Locked texels (non-zero), `cols * rows` (shorter = unlocked).
+    mask: Vec<u8>,
+    tool: Tool,
+    mirror: bool,
+    /// The palette index to paint with: the `color` prop, else the last eyedropped index.
+    color: Option<u8>,
+    colors: u8,
+}
+
+/// Pixel grid tools.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+enum Tool {
+    #[default]
+    Pencil,
+    Fill,
+    Eyedropper,
+    Line,
+}
+
+impl Tool {
+    fn from_name(s: Option<&str>) -> Tool {
+        match s {
+            Some("fill") => Tool::Fill,
+            Some("eyedropper") | Some("pick") => Tool::Eyedropper,
+            Some("line") => Tool::Line,
+            _ => Tool::Pencil,
+        }
+    }
+}
+
+/// The palette a pixel grid uses when the app gives none (`0xRRGGBB`).
+pub const DEFAULT_PALETTE: [u32; 16] = [
+    0x000000, 0xffffff, 0xe5534b, 0xff9f1c, 0xffd400, 0x4caf50, 0x00bcd4, 0x3d8bfd, 0x7e57c2, 0xf06292, 0x8d6e63, 0x9e9e9e, 0x424242,
+    0x1e3a5f, 0xc8e6c9, 0xffe0b2,
+];
+
+/// A colour picker's layout: the hue strip is this wide, with `PICKER_GAP`
+/// to the SV square and above the hex field.
+pub const HUE_STRIP_W: i32 = 16;
+pub const PICKER_GAP: i32 = 4;
+/// Hue bands drawn in the strip and cells per side of the SV square.
+const HUE_BANDS: i32 = 24;
+const SV_CELLS: i32 = 16;
 
 /// A pointer drag in progress.
 #[derive(Clone, Debug, PartialEq)]
@@ -229,6 +309,13 @@ enum Drag {
     Thumb { key: String, y0: i32, scroll0: i32 },
     Content { key: String, y0: i32, scroll0: i32 },
     Custom(String),
+    /// Painting a pixel grid with the pencil (`cursor` holds the last texel).
+    Paint(String),
+    /// Dragging a pixel grid's line tool (`anchor` .. `cursor` is the preview).
+    Line(String),
+    /// Dragging a colour picker's hue strip / SV square.
+    Hue(String),
+    Sv(String),
 }
 
 /// One built widget: an element with its key, laid out.
@@ -272,6 +359,10 @@ impl ViewCtx<'_> {
     /// The whole state of the widget with this id.
     pub fn state(&self, id: &str) -> Option<&WidgetState> {
         self.states.get(&key_for(id))
+    }
+    /// The bitmap of the pixel grid with this id (palette indices, `cols * rows`).
+    pub fn pixels(&self, id: &str) -> Vec<u8> {
+        self.states.get(&format!("#{id}")).map(|s| s.pixels.clone()).unwrap_or_default()
     }
 }
 
@@ -420,7 +511,7 @@ impl Window {
     /// Does the focused widget show a caret (text fields and areas)?
     pub fn caret_shown(&self) -> bool {
         self.activated
-            && self.focus.as_ref().and_then(|f| self.info.get(f)).is_some_and(|i| matches!(i.kind, Kind::TextField | Kind::TextArea))
+            && self.focus.as_ref().and_then(|f| self.info.get(f)).is_some_and(|i| matches!(i.kind, Kind::TextField | Kind::TextArea | Kind::ColorPicker))
     }
 
     /// The hit id of a widget's main interactive part (tests, tools).
@@ -445,6 +536,14 @@ impl Window {
         let key = key_for(id_or_key);
         let find = |part: Part| self.hits.iter().find(|(_, (k, p))| *k == key && *p == part).map(|(id, _)| *id);
         Some((find(Part::Track)?, find(Part::Thumb)?))
+    }
+
+    /// The hit ids of a colour picker's parts: `(hue strip, SV square, hex
+    /// field)` (tests, tools).
+    pub fn picker_hit_ids(&self, id_or_key: &str) -> Option<(u32, u32, u32)> {
+        let key = key_for(id_or_key);
+        let find = |part: Part| self.hits.iter().find(|(_, (k, p))| *k == key && *p == part).map(|(id, _)| *id);
+        Some((find(Part::Hue)?, find(Part::Sv)?, find(Part::Field)?))
     }
 
     /// The hit id of row / tab / item `i` of a list, tabs or menu (tests, tools).
@@ -741,7 +840,15 @@ impl Window {
                     return out;
                 }
                 let kind = self.info[&key].kind;
-                if matches!(kind, Kind::TextField | Kind::TextArea | Kind::Slider | Kind::List | Kind::Tabs | Kind::Menu) {
+                if matches!(
+                    kind,
+                    Kind::TextField | Kind::TextArea | Kind::Slider | Kind::List | Kind::Tabs | Kind::Menu | Kind::PixelGrid | Kind::ColorPicker
+                ) {
+                    if self.focus.as_deref() != Some(key.as_str()) && kind == Kind::ColorPicker {
+                        // Focus lands in the hex field: it starts from the current colour.
+                        let v = self.states.get(&key).map_or(0, |s| s.value);
+                        self.states.entry(key.clone()).or_default().text = hex_of(v);
+                    }
                     self.focus = Some(key.clone());
                 }
                 let double = match (&self.last_click, now_ms) {
@@ -790,6 +897,15 @@ impl Window {
                         self.drag = Some(Drag::Slider(key.clone()));
                         out.extend(self.slide_to(&key, x));
                     }
+                    (Kind::PixelGrid, Part::Main) => out.extend(self.grid_press(&key, x, y)),
+                    (Kind::ColorPicker, Part::Hue) => {
+                        self.drag = Some(Drag::Hue(key.clone()));
+                        out.extend(self.hue_to(&key, y));
+                    }
+                    (Kind::ColorPicker, Part::Sv) => {
+                        self.drag = Some(Drag::Sv(key.clone()));
+                        out.extend(self.sv_to(&key, x, y));
+                    }
                     _ => {}
                 }
                 if double {
@@ -818,9 +934,23 @@ impl Window {
                     self.set_scroll(&key, s);
                 }
                 Some(Drag::Content { key, y0, scroll0 }) => self.set_scroll(&key, scroll0 - (y - y0)),
+                Some(Drag::Paint(key)) => out.extend(self.grid_drag(&key, x, y)),
+                Some(Drag::Line(key)) => {
+                    let i = self.texel_at(&key, x, y);
+                    let st = self.states.entry(key).or_default();
+                    if st.cursor != i {
+                        st.cursor = i;
+                        self.dirty = true;
+                    }
+                }
+                Some(Drag::Hue(key)) => out.extend(self.hue_to(&key, y)),
+                Some(Drag::Sv(key)) => out.extend(self.sv_to(&key, x, y)),
                 _ => {}
             },
             PointerKind::Up => {
+                if let Some(Drag::Line(key)) = self.drag.clone() {
+                    out.extend(self.grid_line_done(&key, x, y));
+                }
                 self.drag = None;
                 let pressed = self.pressed.take();
                 if pressed.is_some() {
@@ -865,6 +995,26 @@ impl Window {
         st.scroll = i32::MAX / 2;
         st.follow = false;
         self.dirty = true;
+    }
+
+    /// The client scrolled scroll container `node` (a scroll view's viewport
+    /// group) to `(x, y)` lu (`Scrolled`, protocol v2): lay its content out
+    /// there. False when no scroll view has that node.
+    pub fn scrolled(&mut self, node: u32, _x: i32, y: i32) -> bool {
+        let key = self
+            .info
+            .iter()
+            .filter(|(_, i)| i.kind == Kind::ScrollView)
+            .map(|(k, _)| k)
+            .find(|k| self.tree.id_of(&format!("{k}:vp")) == Some(node))
+            .cloned();
+        match key {
+            Some(k) => {
+                self.set_scroll(&k, y);
+                true
+            }
+            None => false,
+        }
     }
 
     fn set_scroll(&mut self, key: &str, s: i32) {
@@ -959,6 +1109,7 @@ impl Window {
         match self.kind_of(&key) {
             Some(Kind::TextField | Kind::TextArea) => self.insert_text(&key, s),
             Some(Kind::Custom) => self.event(&key, EventKind::Text, EventValue::Text(s.to_string())).into_iter().collect(),
+            Some(Kind::ColorPicker) => self.picker_text(&key, s),
             _ => vec![],
         }
     }
@@ -968,6 +1119,7 @@ impl Window {
         match self.kind_of(key) {
             Some(Kind::TextField | Kind::TextArea) if self.enabled(key) => self.insert_text(key, s),
             Some(Kind::Custom) => self.event(key, EventKind::Paste, EventValue::Text(s.to_string())).into_iter().collect(),
+            Some(Kind::ColorPicker) if self.enabled(key) => self.picker_text(key, s),
             _ => vec![],
         }
     }
@@ -1037,6 +1189,7 @@ impl Window {
         let enter = key_code == keys::ENTER || key_code == keys::KP_ENTER;
         match info.kind {
             Kind::TextField | Kind::TextArea => self.text_key(&key, &info, key_code, mods),
+            Kind::ColorPicker => self.picker_key(&key, key_code, mods),
             Kind::Board => {
                 let ev = self.event(&key, EventKind::Key, EventValue::Key { key: key_code, mods, down, repeat });
                 let used = ev.is_some();
@@ -1217,6 +1370,319 @@ impl Window {
         (vec![], true)
     }
 
+    // ---------------------------------------------------------- pixel grids
+
+    /// The bitmap of the pixel grid with this id or key (empty if none).
+    pub fn pixels(&self, id_or_key: &str) -> Vec<u8> {
+        self.states.get(&key_for(id_or_key)).map(|s| s.pixels.clone()).unwrap_or_default()
+    }
+
+    /// Replace the bitmap of the pixel grid with this id or key (`cols *
+    /// rows` palette indices; shorter is padded with 0).
+    pub fn set_pixels(&mut self, id_or_key: &str, pixels: &[u8]) {
+        let st = self.state_mut(id_or_key);
+        st.pixels = pixels.to_vec();
+    }
+
+    /// The texel index under absolute `(x, y)` of a pixel grid, clamped into the grid.
+    fn texel_at(&self, key: &str, x: i32, y: i32) -> usize {
+        let Some(i) = self.info.get(key) else { return 0 };
+        let g = &i.grid;
+        let z = g.zoom.max(1);
+        let tx = ((x - i.rect.x).div_euclid(z)).clamp(0, g.cols - 1);
+        let ty = ((y - i.rect.y).div_euclid(z)).clamp(0, g.rows - 1);
+        (ty * g.cols + tx) as usize
+    }
+
+    /// Is absolute `(x, y)` inside the texels of the grid (not the leftover space)?
+    fn texel_inside(&self, key: &str, x: i32, y: i32) -> bool {
+        let Some(i) = self.info.get(key) else { return false };
+        let g = &i.grid;
+        let (lx, ly) = (x - i.rect.x, y - i.rect.y);
+        lx >= 0 && ly >= 0 && lx < g.cols * g.zoom && ly < g.rows * g.zoom
+    }
+
+    /// Paint texel `i` (and its mirror) of grid `key` with `color`; the texels that changed.
+    fn paint_texel(&mut self, key: &str, i: usize, color: u8, changed: &mut Vec<[i32; 3]>) {
+        let Some(info) = self.info.get(key) else { return };
+        let g = info.grid.clone();
+        let st = self.states.entry(key.to_string()).or_default();
+        let n = (g.cols * g.rows) as usize;
+        if st.pixels.len() != n {
+            st.pixels.resize(n, 0);
+        }
+        let (x, y) = (i as i32 % g.cols, i as i32 / g.cols);
+        let mut targets = vec![(x, y)];
+        if g.mirror {
+            targets.push((g.cols - 1 - x, y));
+        }
+        for (tx, ty) in targets {
+            let j = (ty * g.cols + tx) as usize;
+            if j >= n || g.mask.get(j).is_some_and(|m| *m != 0) || st.pixels[j] == color {
+                continue;
+            }
+            st.pixels[j] = color;
+            changed.push([tx, ty, color as i32]);
+        }
+    }
+
+    /// Paint every texel of the line from texel `a` to texel `b` (Bresenham).
+    fn paint_line(&mut self, key: &str, a: usize, b: usize, color: u8, changed: &mut Vec<[i32; 3]>) {
+        let cols = self.info.get(key).map_or(1, |i| i.grid.cols.max(1));
+        for (x, y) in bresenham((a as i32 % cols, a as i32 / cols), (b as i32 % cols, b as i32 / cols)) {
+            self.paint_texel(key, (y * cols + x) as usize, color, changed);
+        }
+    }
+
+    fn grid_changed(&mut self, key: &str, changed: Vec<[i32; 3]>) -> Option<UiEvent> {
+        if changed.is_empty() {
+            return None;
+        }
+        self.dirty = true;
+        self.event(key, EventKind::Change, EventValue::Texels(changed))
+    }
+
+    /// The palette index a grid paints with.
+    fn paint_color(&self, key: &str) -> u8 {
+        let Some(i) = self.info.get(key) else { return 0 };
+        let st = self.states.get(key);
+        let c = i.grid.color.or_else(|| st.and_then(|s| s.selected).map(|s| s as u8)).unwrap_or(0);
+        c.min(i.grid.colors.saturating_sub(1))
+    }
+
+    /// A press on a pixel grid: paint, fill, pick or start a line.
+    fn grid_press(&mut self, key: &str, x: i32, y: i32) -> Vec<UiEvent> {
+        if !self.texel_inside(key, x, y) {
+            return vec![];
+        }
+        let i = self.texel_at(key, x, y);
+        let Some(info) = self.info.get(key) else { return vec![] };
+        let tool = info.grid.tool;
+        let color = self.paint_color(key);
+        match tool {
+            Tool::Pencil => {
+                let mut changed = Vec::new();
+                self.paint_texel(key, i, color, &mut changed);
+                self.states.entry(key.to_string()).or_default().cursor = i;
+                self.drag = Some(Drag::Paint(key.to_string()));
+                self.grid_changed(key, changed).into_iter().collect()
+            }
+            Tool::Fill => {
+                let changed = self.flood(key, i, color);
+                self.grid_changed(key, changed).into_iter().collect()
+            }
+            Tool::Eyedropper => {
+                let st = self.states.entry(key.to_string()).or_default();
+                let picked = st.pixels.get(i).copied().unwrap_or(0);
+                st.selected = Some(picked as usize);
+                self.dirty = true;
+                self.event(key, EventKind::Select, EventValue::Index(picked as usize)).into_iter().collect()
+            }
+            Tool::Line => {
+                let st = self.states.entry(key.to_string()).or_default();
+                st.anchor = Some(i);
+                st.cursor = i;
+                self.drag = Some(Drag::Line(key.to_string()));
+                self.dirty = true;
+                vec![]
+            }
+        }
+    }
+
+    /// The pencil moved: paint from the last texel to this one.
+    fn grid_drag(&mut self, key: &str, x: i32, y: i32) -> Vec<UiEvent> {
+        let i = self.texel_at(key, x, y);
+        let last = self.states.get(key).map_or(i, |s| s.cursor);
+        if last == i {
+            return vec![];
+        }
+        let color = self.paint_color(key);
+        let mut changed = Vec::new();
+        self.paint_line(key, last, i, color, &mut changed);
+        self.states.entry(key.to_string()).or_default().cursor = i;
+        self.grid_changed(key, changed).into_iter().collect()
+    }
+
+    /// The line tool was released: paint the line.
+    fn grid_line_done(&mut self, key: &str, x: i32, y: i32) -> Vec<UiEvent> {
+        let end = self.texel_at(key, x, y);
+        let Some(start) = self.states.get(key).and_then(|s| s.anchor) else { return vec![] };
+        let color = self.paint_color(key);
+        let mut changed = Vec::new();
+        self.paint_line(key, start, end, color, &mut changed);
+        let st = self.states.entry(key.to_string()).or_default();
+        st.anchor = None;
+        st.cursor = end;
+        self.dirty = true;
+        self.grid_changed(key, changed).into_iter().collect()
+    }
+
+    /// Flood-fill the texels connected to `i` with its colour (and the
+    /// mirrored area with `mirror_h`); locked texels are walls.
+    fn flood(&mut self, key: &str, i: usize, color: u8) -> Vec<[i32; 3]> {
+        let Some(info) = self.info.get(key) else { return vec![] };
+        let g = info.grid.clone();
+        let (cols, rows) = (g.cols, g.rows);
+        let n = (cols * rows) as usize;
+        let st = self.states.entry(key.to_string()).or_default();
+        if st.pixels.len() != n {
+            st.pixels.resize(n, 0);
+        }
+        let mut changed = Vec::new();
+        let mut seeds = vec![i];
+        if g.mirror {
+            let (x, y) = (i as i32 % cols, i as i32 / cols);
+            seeds.push((y * cols + cols - 1 - x) as usize);
+        }
+        for seed in seeds {
+            if seed >= n || g.mask.get(seed).is_some_and(|m| *m != 0) {
+                continue;
+            }
+            let from = st.pixels[seed];
+            if from == color {
+                continue;
+            }
+            let mut stack = vec![seed];
+            while let Some(j) = stack.pop() {
+                if st.pixels[j] != from || g.mask.get(j).is_some_and(|m| *m != 0) {
+                    continue;
+                }
+                st.pixels[j] = color;
+                let (x, y) = (j as i32 % cols, j as i32 / cols);
+                changed.push([x, y, color as i32]);
+                if x > 0 {
+                    stack.push(j - 1);
+                }
+                if x + 1 < cols {
+                    stack.push(j + 1);
+                }
+                if y > 0 {
+                    stack.push(j - cols as usize);
+                }
+                if y + 1 < rows {
+                    stack.push(j + cols as usize);
+                }
+            }
+        }
+        changed
+    }
+
+    // ------------------------------------------------------- colour pickers
+
+    /// Set a picker's colour from its HSV state; a `Change` event if it changed.
+    fn picker_apply(&mut self, key: &str, hsv: [i32; 3]) -> Option<UiEvent> {
+        self.picker_set(key, hsv, hsv_to_rgb(hsv[0], hsv[1], hsv[2]))
+    }
+
+    /// Set a picker's colour (its HSV and the exact RGB); a `Change` event if it changed.
+    fn picker_set(&mut self, key: &str, hsv: [i32; 3], rgb: i32) -> Option<UiEvent> {
+        let st = self.states.entry(key.to_string()).or_default();
+        let changed = st.value != rgb;
+        st.hsv = hsv;
+        st.value = rgb;
+        st.text = hex_of(rgb);
+        self.dirty = true;
+        if changed {
+            self.event(key, EventKind::Change, EventValue::Int(rgb))
+        } else {
+            None
+        }
+    }
+
+    fn hue_to(&mut self, key: &str, y: i32) -> Option<UiEvent> {
+        let strip = self.info.get(key)?.picker[0];
+        // The first row is hue 0, the last 359 (the marker uses the inverse mapping).
+        let h = ((y - strip.y).clamp(0, strip.h.max(1) - 1) as i64 * 359 / (strip.h.max(2) - 1) as i64) as i32;
+        let mut hsv = self.states.get(key).map_or([0, 0, 0], |s| s.hsv);
+        hsv[0] = h.clamp(0, 359);
+        self.picker_apply(key, hsv)
+    }
+
+    fn sv_to(&mut self, key: &str, x: i32, y: i32) -> Option<UiEvent> {
+        let sq = self.info.get(key)?.picker[1];
+        let s = ((x - sq.x).clamp(0, sq.w.max(1) - 1) as i64 * 255 / (sq.w.max(2) - 1) as i64) as i32;
+        let v = 255 - ((y - sq.y).clamp(0, sq.h.max(1) - 1) as i64 * 255 / (sq.h.max(2) - 1) as i64) as i32;
+        let mut hsv = self.states.get(key).map_or([0, 0, 0], |s| s.hsv);
+        hsv[1] = s.clamp(0, 255);
+        hsv[2] = v.clamp(0, 255);
+        self.picker_apply(key, hsv)
+    }
+
+    /// Typed text for a colour picker's hex field: hex digits (and a leading `#`).
+    fn picker_text(&mut self, key: &str, s: &str) -> Vec<UiEvent> {
+        let st = self.states.entry(key.to_string()).or_default();
+        for c in s.chars() {
+            let c = c.to_ascii_lowercase();
+            if c == '#' && st.text.is_empty() {
+                st.text.push('#');
+            } else if c.is_ascii_hexdigit() {
+                if !st.text.starts_with('#') {
+                    st.text.insert(0, '#');
+                }
+                if st.text.len() < 7 {
+                    st.text.push(c);
+                }
+            }
+        }
+        st.cursor = st.text.chars().count();
+        self.dirty = true;
+        self.picker_parse(key, false).into_iter().collect()
+    }
+
+    /// Apply the hex field when it holds a whole colour (`force`: Enter,
+    /// which also puts the field back to the current colour).
+    fn picker_parse(&mut self, key: &str, force: bool) -> Option<UiEvent> {
+        let text = self.states.get(key).map(|s| s.text.clone()).unwrap_or_default();
+        match parse_hex(&text) {
+            Some(rgb) => {
+                let cur = self.states.get(key).map_or(0, |s| s.value);
+                if rgb == cur {
+                    return None;
+                }
+                let hsv = rgb_to_hsv(rgb, self.states.get(key).map_or(0, |s| s.hsv[0]));
+                self.picker_set(key, hsv, rgb)
+            }
+            None if force => {
+                let v = self.states.get(key).map_or(0, |s| s.value);
+                self.states.entry(key.to_string()).or_default().text = hex_of(v);
+                self.dirty = true;
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn picker_key(&mut self, key: &str, code: u16, mods: u16) -> (Vec<UiEvent>, bool) {
+        let ctrl = mods & ecm_ui_proto::mods::CTRL != 0;
+        let shift = mods & ecm_ui_proto::mods::SHIFT != 0;
+        if (ctrl && code == keys::V) || (shift && code == keys::INSERT) {
+            self.effects.push(Effect::Paste(key.to_string()));
+            return (vec![], true);
+        }
+        if (ctrl && code == keys::C) || (ctrl && code == keys::INSERT) {
+            let v = self.states.get(key).map_or(0, |s| s.value);
+            self.effects.push(Effect::Copy(hex_of(v)));
+            return (vec![], true);
+        }
+        match code {
+            keys::BACKSPACE => {
+                let st = self.states.entry(key.to_string()).or_default();
+                st.text.pop();
+                st.cursor = st.text.chars().count();
+                self.dirty = true;
+                (vec![], true)
+            }
+            keys::ENTER | keys::KP_ENTER => (self.picker_parse(key, true).into_iter().collect(), true),
+            keys::ESCAPE => {
+                let v = self.states.get(key).map_or(0, |s| s.value);
+                self.states.entry(key.to_string()).or_default().text = hex_of(v);
+                self.dirty = true;
+                (vec![], true)
+            }
+            _ => (vec![], false),
+        }
+    }
+
     fn cycle_focus(&mut self, back: bool) {
         let order: Vec<&String> = self.focus_order.iter().filter(|k| self.enabled(k)).collect();
         if order.is_empty() {
@@ -1358,6 +1824,95 @@ fn byte_at(s: &str, chars: usize) -> usize {
     s.char_indices().nth(chars).map_or(s.len(), |(i, _)| i)
 }
 
+/// `#rrggbb` of an `0xRRGGBB` colour.
+pub fn hex_of(rgb: i32) -> String {
+    format!("#{:06x}", rgb as u32 & 0xff_ffff)
+}
+
+/// `0xRRGGBB` of `#rrggbb` / `rrggbb` (`#rgb` too); None otherwise.
+pub fn parse_hex(s: &str) -> Option<i32> {
+    let h = s.trim().strip_prefix('#').unwrap_or(s.trim());
+    if h.is_empty() || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match h.len() {
+        6 => i32::from_str_radix(h, 16).ok(),
+        3 => {
+            let v = i32::from_str_radix(h, 16).ok()?;
+            let (r, g, b) = ((v >> 8) & 15, (v >> 4) & 15, v & 15);
+            Some((r * 17) << 16 | (g * 17) << 8 | b * 17)
+        }
+        _ => None,
+    }
+}
+
+/// HSV (hue 0-359, saturation and value 0-255) to `0xRRGGBB`, in integers.
+pub fn hsv_to_rgb(h: i32, s: i32, v: i32) -> i32 {
+    let (h, s, v) = (h.rem_euclid(360), s.clamp(0, 255), v.clamp(0, 255));
+    let region = h / 60;
+    let rem = h % 60;
+    let p = v * (255 - s) / 255;
+    let q = v * (255 * 60 - s * rem) / (255 * 60);
+    let t = v * (255 * 60 - s * (60 - rem)) / (255 * 60);
+    let (r, g, b) = match region {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    r << 16 | g << 8 | b
+}
+
+/// `0xRRGGBB` to HSV; a grey keeps `keep_hue`.
+pub fn rgb_to_hsv(rgb: i32, keep_hue: i32) -> [i32; 3] {
+    let (r, g, b) = ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let v = max;
+    let s = if max == 0 { 0 } else { d * 255 / max };
+    let h = if d == 0 {
+        keep_hue.rem_euclid(360)
+    } else if max == r {
+        (60 * (g - b) / d).rem_euclid(360)
+    } else if max == g {
+        60 * (b - r) / d + 120
+    } else {
+        60 * (r - g) / d + 240
+    };
+    [h, s, v]
+}
+
+/// The texels of a line from `a` to `b` (Bresenham), `a` first.
+fn bresenham(a: (i32, i32), b: (i32, i32)) -> Vec<(i32, i32)> {
+    let (mut x0, mut y0) = a;
+    let (x1, y1) = b;
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    let mut out = Vec::new();
+    loop {
+        out.push((x0, y0));
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+    out
+}
+
 fn key_for(id_or_key: &str) -> String {
     if id_or_key.starts_with('/') || id_or_key.starts_with('#') {
         id_or_key.to_string()
@@ -1413,6 +1968,32 @@ fn build<'e>(el: &'e Element, parent: &str, index: usize, class: SizeClass, stat
         Kind::List | Kind::Tabs | Kind::Menu => {
             if let Some(s) = p.selected {
                 states.entry(key.clone()).or_default().selected = Some(s);
+            }
+        }
+        Kind::PixelGrid => {
+            let st = states.entry(key.clone()).or_default();
+            let n = p.cols.unwrap_or(16) as usize * p.rows.unwrap_or(16) as usize;
+            if !p.pixels.is_empty() && st.pixels != p.pixels {
+                st.pixels = p.pixels.clone();
+            }
+            if st.pixels.len() != n {
+                st.pixels.resize(n, 0);
+            }
+        }
+        Kind::ColorPicker => {
+            let fresh = !states.contains_key(&key);
+            let st = states.entry(key.clone()).or_default();
+            if let Some(v) = p.value {
+                let v = v & 0xff_ffff;
+                if st.value != v {
+                    st.value = v;
+                    st.hsv = rgb_to_hsv(v, st.hsv[0]);
+                    st.text = hex_of(v);
+                }
+            }
+            if fresh {
+                // The hex field starts out showing the colour (the player may empty it while editing).
+                st.text = hex_of(st.value);
             }
         }
         _ => {}
@@ -1502,6 +2083,8 @@ impl Layout<'_> {
             (Kind::ScrollView | Kind::TextArea, Axis::V) if el.props.height.is_none() => 1,
             (Kind::Board, Axis::H) if el.props.width.is_none() => 1,
             (Kind::Board, Axis::V) if el.props.height.is_none() => 1,
+            (Kind::PixelGrid, Axis::H) if el.props.width.is_none() && el.props.zoom.is_none() => 1,
+            (Kind::PixelGrid, Axis::V) if el.props.height.is_none() && el.props.zoom.is_none() => 1,
             _ => 0,
         }
     }
@@ -1629,6 +2212,17 @@ impl Layout<'_> {
             }
             Kind::Responsive => w.children.first().map_or((0, 0), |c| self.measure(c, avail)),
             Kind::Board | Kind::Wire => (0, 0),
+            Kind::PixelGrid => {
+                let (cols, rows) = (p.cols.unwrap_or(16) as i32, p.rows.unwrap_or(16) as i32);
+                match p.zoom {
+                    Some(z) => (cols * z as i32, rows * z as i32),
+                    None => {
+                        let w = p.width.unwrap_or(avail).max(1);
+                        (w, (w as i64 * rows as i64 / cols.max(1) as i64) as i32)
+                    }
+                }
+            }
+            Kind::ColorPicker => (120, 140),
             Kind::Panel => {
                 let pad = self.pad(el);
                 let mut s = (0, 0);
@@ -1881,7 +2475,9 @@ impl Layout<'_> {
             | Kind::Image
             | Kind::Canvas
             | Kind::Spacer
-            | Kind::Wire => {}
+            | Kind::Wire
+            | Kind::PixelGrid
+            | Kind::ColorPicker => {}
         }
     }
 }
@@ -2022,6 +2618,8 @@ impl Painter<'_> {
                 geom: (1, 1, 1, 0),
                 secret: p.password.unwrap_or(false),
                 capture: el.kind == Kind::Board && p.capture.unwrap_or(false),
+                grid: GridInfo::default(),
+                picker: [Rect::default(); 3],
             },
         );
         if el.kind.focusable() && enabled {
@@ -2044,7 +2642,9 @@ impl Painter<'_> {
         out.push(self.rect(format!("{k}:track"), Rect::new(r.x + r.w - bar, r.y, bar, view), local, 0, 0, None, track));
         let hit = self.hit(&format!("{k}:bar"), k, Part::Thumb);
         let hovered = self.hovered(k, &Part::Thumb);
-        out.push(self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit));
+        let thumb = self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit);
+        // Hovered it lights up; while dragged (pressed) it is drawn as normal.
+        out.push(thumb.with([Prop::HoverFill(t.text_muted), Prop::PressedFill(t.border)]));
         if let Some(i) = self.info.get_mut(k) {
             i.geom = (view, content, bh, r.y);
         }
@@ -2089,9 +2689,17 @@ impl Painter<'_> {
                     _ => (if hovered { t.hover } else { t.button }, t.text),
                 };
                 let fill = if self.pressed == Some(k.as_str()) { t.surface_alt } else { fill };
+                // The looks the client may show before the app answers: hovered and pressed.
+                let (hover_fill, pressed_fill) = match (enabled, p.style.as_deref()) {
+                    (false, _) => (t.surface, t.surface),
+                    (true, Some("primary")) => (t.accent_hover, t.surface_alt),
+                    (true, Some("danger")) => (t.danger, t.surface_alt),
+                    (true, Some("flat")) => (t.hover, t.surface_alt),
+                    _ => (t.hover, t.surface_alt),
+                };
                 let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
                 let border = self.focus_border(k, None);
-                out.push(self.rect(format!("{k}:bg"), r, o, fill, t.radius, border, hit));
+                out.push(self.rect(format!("{k}:bg"), r, o, fill, t.radius, border, hit).with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                 // Text wider than the whole button (a grown or fixed-width
                 // button in a narrow place) is cut with "..." inside its
                 // padding instead of running out; text that only eats into the
@@ -2101,7 +2709,8 @@ impl Painter<'_> {
                 let s = cut.as_deref().unwrap_or(full);
                 let tx = r.x + (r.w - f.text_width(s)) / 2;
                 let ty = r.y + (r.h - f.line_height()) / 2;
-                out.push(self.text(format!("{k}:text"), tx - o.0, ty - o.1, s, &f, fg));
+                // The label carries the button's hit id, so it keeps the button's look under the pointer.
+                out.push(self.text(format!("{k}:text"), tx - o.0, ty - o.1, s, &f, fg).with([Prop::HitId(hit), Prop::HoverColor(fg), Prop::PressedColor(fg)]));
             }
             Kind::TextField => {
                 let f = self.face(el);
@@ -2138,15 +2747,26 @@ impl Painter<'_> {
                     let sr = Rect::new(r.x + px - sx + x0, r.y + ty, x1 - x0, f.line_height());
                     g.children.push(self.rect(format!("{k}:sel"), sr, local, t.selection, 0, None, 0));
                 }
+                // Typing can be shown by the client at once (Caret / CaretOf) in a
+                // focused field with text, no selection and nothing masked. The
+                // text node then has its own key, so the prop leaves with it.
+                let cursor = self.states.get(k).map_or(0, |s| s.cursor);
+                let typing = focused && self.activated && enabled && !secret && !value.is_empty() && sel.is_none();
+                let text_key = if typing { format!("{k}:typing") } else { format!("{k}:text") };
                 if value.is_empty() {
                     let ph = p.placeholder.as_deref().unwrap_or("");
-                    g.children.push(self.text(format!("{k}:text"), px, ty, ph, &f, t.text_muted));
+                    g.children.push(self.text(text_key.clone(), px, ty, ph, &f, t.text_muted));
                 } else {
-                    g.children.push(self.text(format!("{k}:text"), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted }));
+                    let tn = self.text(text_key.clone(), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted });
+                    g.children.push(if typing { tn.with([Prop::Caret(cursor as u32)]) } else { tn });
                 }
                 if focused && self.activated && self.caret_on {
                     let cr = Rect::new(r.x + px - sx + caret_x, r.y + ty, 1, f.line_height());
-                    g.children.push(self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0));
+                    let mut caret = self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0);
+                    if typing {
+                        caret.caret_of = Some(text_key);
+                    }
+                    g.children.push(caret);
                 }
                 out.push(g);
             }
@@ -2173,7 +2793,10 @@ impl Painter<'_> {
                     let b = Rect::new(r.x, by, lh, lh);
                     let hovered = enabled && self.hovered(k, &Part::Main);
                     let border = self.focus_border(k, Some((t.border_w, if on || hovered { t.accent } else { t.border })));
-                    out.push(self.rect(format!("{k}:box"), b, o, if on { t.accent } else { t.surface }, 2, border, 0));
+                    // Hovered (enabled) the border turns accent; pressed it is drawn unhovered.
+                    let look = |h: bool| if self.focused(k) { t.focus } else if on || (h && enabled) { t.accent } else { t.border };
+                    let bx = self.rect(format!("{k}:box"), b, o, if on { t.accent } else { t.surface }, 2, border, hit);
+                    out.push(bx.with([Prop::HoverBorderColor(look(true)), Prop::PressedBorderColor(look(false))]));
                     if on {
                         let s = lh as f32 / 12.0;
                         let pt = |x: f32, y: f32| Point { x: b.x - o.0 + (x * s) as i32, y: b.y - o.1 + (y * s) as i32 };
@@ -2235,7 +2858,13 @@ impl Painter<'_> {
                     } else {
                         0
                     };
-                    rg.children.push(self.rect(format!("{}:rowbg", c.key), row, (row.x, row.y), fill, t.radius, None, hit));
+                    let (hover_fill, pressed_fill) = match (sel == Some(i), enabled) {
+                        (true, _) => (t.surface_alt, t.surface_alt),
+                        (false, true) => (t.row_hover, 0),
+                        (false, false) => (0, 0),
+                    };
+                    let bg = self.rect(format!("{}:rowbg", c.key), row, (row.x, row.y), fill, t.radius, None, hit);
+                    rg.children.push(bg.with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                     self.paint(c, Some(k), (row.x, row.y), &mut rg.children);
                     g.children.push(rg);
                 }
@@ -2253,7 +2882,9 @@ impl Painter<'_> {
                     let hit = self.hit(&format!("{k}:i{i}"), k, Part::Row(i));
                     let hovered = enabled && self.hovered(k, &Part::Row(i));
                     let fill = if sel == Some(i) || hovered { t.surface_alt } else { 0 };
-                    g.children.push(self.rect(format!("{k}:i{i}"), row, local, fill, 0, None, hit));
+                    let normal = if sel == Some(i) { t.surface_alt } else { 0 };
+                    let bg = self.rect(format!("{k}:i{i}"), row, local, fill, 0, None, hit);
+                    g.children.push(bg.with([Prop::HoverFill(if enabled { t.surface_alt } else { normal }), Prop::PressedFill(normal)]));
                     g.children.push(self.text(format!("{k}:t{i}"), row.x + px - r.x, row.y + py - r.y, item, &f, t.text));
                 }
                 out.push(g);
@@ -2275,9 +2906,12 @@ impl Painter<'_> {
                     } else {
                         0
                     };
-                    g.children.push(self.rect(format!("{k}:tab{i}"), tr, local, fill, 0, border, hit));
+                    let (hover_fill, pressed_fill, pressed_color) = if i == sel { (t.surface, t.surface, t.text) } else { (t.row_hover, 0, t.text_muted) };
+                    let tab = self.rect(format!("{k}:tab{i}"), tr, local, fill, 0, border, hit);
+                    g.children.push(tab.with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                     let color = if i == sel || hovered { t.text } else { t.text_muted };
-                    g.children.push(self.text(format!("{k}:tt{i}"), tr.x + px - r.x, tr.y + py - r.y, title, &f, color));
+                    let tt = self.text(format!("{k}:tt{i}"), tr.x + px - r.x, tr.y + py - r.y, title, &f, color);
+                    g.children.push(tt.with([Prop::HitId(hit), Prop::HoverColor(t.text), Prop::PressedColor(pressed_color)]));
                 }
                 let hh = f.line_height() + 2 * py;
                 g.children.push(self.rect(format!("{k}:div"), Rect::new(r.x, r.y + hh, r.w, 1), local, t.border, 0, None, 0));
@@ -2295,11 +2929,22 @@ impl Painter<'_> {
                 let hit = self.hit(&format!("{k}:hit"), k, Part::Main);
                 g.children.push(self.rect(format!("{k}:hit"), r, local, 0, 0, None, hit));
                 let inner = w.inner;
-                let mut content = self.group(format!("{k}:content"), inner, local, false);
+                // The viewport: a scroll container (v2) the client may scroll at
+                // once; its content is laid out at ScrollY.
+                let s = (r.y - inner.y).max(0);
+                let mut vp = self.group(format!("{k}:vp"), r, local, true).with([
+                    Prop::Scroll(2),
+                    Prop::ContentW(inner.w.max(0)),
+                    Prop::ContentH(inner.h.max(0)),
+                    Prop::ScrollX(0),
+                    Prop::ScrollY(s),
+                ]);
+                let mut content = self.group(format!("{k}:content"), inner, (r.x, r.y), false);
                 for c in &w.children {
                     self.paint(c, Some(k), (inner.x, inner.y), &mut content.children);
                 }
-                g.children.push(content);
+                vp.children.push(content);
+                g.children.push(vp);
                 if inner.h > r.h && r.h > 0 {
                     let s = r.y - inner.y;
                     self.scrollbar(k, r, local, r.h, inner.h, s, &mut g.children);
@@ -2413,8 +3058,191 @@ impl Painter<'_> {
                     ));
                 }
             }
+            Kind::PixelGrid => self.paint_pixel_grid(w, o, out),
+            Kind::ColorPicker => self.paint_color_picker(w, o, out),
             Kind::Spacer => {}
         }
+    }
+
+    /// A pixel grid: runs of equal texels as rects, the line tool's preview,
+    /// hatched locked texels and gridlines.
+    fn paint_pixel_grid(&mut self, w: &W, o: (i32, i32), out: &mut Vec<SceneNode>) {
+        let el = w.el;
+        let p = &el.props;
+        let t = self.theme;
+        let r = w.rect;
+        let k = &w.key;
+        let (cols, rows) = (p.cols.unwrap_or(16).max(1) as i32, p.rows.unwrap_or(16).max(1) as i32);
+        let zoom = match p.zoom {
+            Some(z) => z.max(1) as i32,
+            None => (r.w / cols).min(r.h / rows).max(1),
+        };
+        let palette: Vec<u32> = if p.palette.is_empty() { DEFAULT_PALETTE.to_vec() } else { p.palette.iter().take(16).copied().collect() };
+        let color_of = |i: u8| palette.get(i as usize).copied().unwrap_or(0) << 8 | 0xff;
+        let local = (r.x, r.y);
+        let mut g = self.group(format!("{k}:g"), r, o, true);
+        // The texel area (the layout may give the grid more room than it fills).
+        let area = Rect::new(r.x, r.y, cols * zoom, rows * zoom);
+        let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
+        let border = self.focus_border(k, Some((t.border_w, t.border)));
+        g.children.push(self.rect(format!("{k}:bg"), area, local, t.surface, 0, border, hit));
+        let st = self.states.entry(k.clone()).or_default();
+        let n = (cols * rows) as usize;
+        if st.pixels.len() != n {
+            st.pixels.resize(n, 0);
+        }
+        let pixels = st.pixels.clone();
+        let preview: Option<(usize, usize)> = st.anchor.map(|a| (a, st.cursor));
+        let selected = st.selected;
+        // Runs of equal colour per row.
+        for y in 0..rows {
+            let mut x = 0;
+            while x < cols {
+                let i = (y * cols + x) as usize;
+                let c = pixels[i];
+                let mut end = x + 1;
+                while end < cols && pixels[(y * cols + end) as usize] == c {
+                    end += 1;
+                }
+                let rr = Rect::new(r.x + x * zoom, r.y + y * zoom, (end - x) * zoom, zoom);
+                g.children.push(self.rect(format!("{k}:y{y}x{x}"), rr, local, color_of(c), 0, None, 0));
+                x = end;
+            }
+        }
+        // The line tool's preview in the paint colour.
+        if let Some((a, b)) = preview {
+            let color = p.color.map(|c| c.min(255) as u8).or(selected.map(|s| s as u8)).unwrap_or(0).min(palette.len().saturating_sub(1) as u8);
+            for (i, (x, y)) in bresenham((a as i32 % cols, a as i32 / cols), (b as i32 % cols, b as i32 / cols)).into_iter().enumerate() {
+                let rr = Rect::new(r.x + x * zoom, r.y + y * zoom, zoom, zoom);
+                g.children.push(self.rect(format!("{k}:pv{i}"), rr, local, color_of(color), 0, None, 0));
+            }
+        }
+        // Locked texels: a translucent wash and a diagonal hatch per run.
+        for y in 0..rows {
+            let mut x = 0;
+            while x < cols {
+                if p.mask.get((y * cols + x) as usize).is_some_and(|m| *m != 0) {
+                    let mut end = x + 1;
+                    while end < cols && p.mask.get((y * cols + end) as usize).is_some_and(|m| *m != 0) {
+                        end += 1;
+                    }
+                    let rr = Rect::new(r.x + x * zoom, r.y + y * zoom, (end - x) * zoom, zoom);
+                    g.children.push(self.rect(format!("{k}:m{y}x{x}"), rr, local, t.masked, 0, None, 0));
+                    if zoom >= 3 {
+                        let mut pts = Vec::new();
+                        for i in 0..(end - x).min(127) {
+                            pts.push(Point { x: rr.x - r.x + i * zoom, y: rr.y - r.y + zoom - 1 });
+                            pts.push(Point { x: rr.x - r.x + (i + 1) * zoom - 1, y: rr.y - r.y });
+                        }
+                        g.children.push(node(format!("{k}:mh{y}x{x}"), NodeKind::Line, vec![Prop::Points(pts), Prop::Width(1), Prop::Color(t.bg)]));
+                    }
+                    x = end;
+                } else {
+                    x += 1;
+                }
+            }
+        }
+        if p.grid.unwrap_or(true) && zoom >= 4 {
+            for x in 1..cols {
+                g.children.push(self.rect(format!("{k}:gv{x}"), Rect::new(r.x + x * zoom, r.y, 1, rows * zoom), local, t.grid_line, 0, None, 0));
+            }
+            for y in 1..rows {
+                g.children.push(self.rect(format!("{k}:gh{y}"), Rect::new(r.x, r.y + y * zoom, cols * zoom, 1), local, t.grid_line, 0, None, 0));
+            }
+        }
+        if let Some(i) = self.info.get_mut(k) {
+            i.grid = GridInfo {
+                cols,
+                rows,
+                zoom,
+                mask: p.mask.clone(),
+                tool: Tool::from_name(p.tool.as_deref()),
+                mirror: p.mirror_h.unwrap_or(false),
+                color: p.color.map(|c| c.min(255) as u8),
+                colors: palette.len() as u8,
+            };
+        }
+        out.push(g);
+    }
+
+    /// A colour picker: the SV square (cells), the hue strip (bands), their
+    /// markers, and the hex field with a swatch.
+    fn paint_color_picker(&mut self, w: &W, o: (i32, i32), out: &mut Vec<SceneNode>) {
+        let el = w.el;
+        let p = &el.props;
+        let t = self.theme;
+        let r = w.rect;
+        let k = &w.key;
+        let enabled = p.enabled.unwrap_or(true);
+        let f = self.face(el);
+        let lh = f.line_height();
+        let (px, py) = (t.px(), t.py());
+        let field_h = lh + 2 * py;
+        let sv = Rect::new(r.x, r.y, r.w - HUE_STRIP_W - PICKER_GAP, r.h - field_h - PICKER_GAP);
+        let hue = Rect::new(r.x + r.w - HUE_STRIP_W, r.y, HUE_STRIP_W, sv.h);
+        let field = Rect::new(r.x, r.y + r.h - field_h, r.w, field_h);
+        let local = (r.x, r.y);
+        let mut g = self.group(format!("{k}:g"), r, o, true);
+        let st = self.states.entry(k.clone()).or_default();
+        let (hsv, value, text) = (st.hsv, st.value, st.text.clone());
+        // The SV square at the current hue.
+        let sv_hit = self.hit(&format!("{k}:sv"), k, Part::Sv);
+        g.children.push(self.rect(format!("{k}:sv"), sv, local, 0, 0, None, sv_hit));
+        for j in 0..SV_CELLS {
+            for i in 0..SV_CELLS {
+                let cell = Rect::new(
+                    sv.x + i * sv.w / SV_CELLS,
+                    sv.y + j * sv.h / SV_CELLS,
+                    (i + 1) * sv.w / SV_CELLS - i * sv.w / SV_CELLS,
+                    (j + 1) * sv.h / SV_CELLS - j * sv.h / SV_CELLS,
+                );
+                let c = hsv_to_rgb(hsv[0], i * 255 / (SV_CELLS - 1), 255 - j * 255 / (SV_CELLS - 1)) as u32;
+                g.children.push(self.rect(format!("{k}:c{i}_{j}"), cell, local, c << 8 | 0xff, 0, None, 0));
+            }
+        }
+        let hue_hit = self.hit(&format!("{k}:hue"), k, Part::Hue);
+        g.children.push(self.rect(format!("{k}:hue"), hue, local, 0, 0, None, hue_hit));
+        for i in 0..HUE_BANDS {
+            let band = Rect::new(hue.x, hue.y + i * hue.h / HUE_BANDS, hue.w, (i + 1) * hue.h / HUE_BANDS - i * hue.h / HUE_BANDS);
+            let c = hsv_to_rgb(i * 360 / HUE_BANDS, 255, 255) as u32;
+            g.children.push(self.rect(format!("{k}:h{i}"), band, local, c << 8 | 0xff, 0, None, 0));
+        }
+        // Markers.
+        let my = hue.y + (hsv[0] as i64 * (hue.h.max(2) - 1) as i64 / 359) as i32;
+        g.children.push(self.rect(format!("{k}:hm"), Rect::new(hue.x - 1, my - 1, hue.w + 2, 3), local, 0, 0, Some((1, t.text)), 0));
+        let mx = sv.x + (hsv[1] as i64 * (sv.w.max(2) - 1) as i64 / 255) as i32;
+        let mv = sv.y + ((255 - hsv[2]) as i64 * (sv.h.max(2) - 1) as i64 / 255) as i32;
+        g.children.push(self.rect(format!("{k}:svm"), Rect::new(mx - 3, mv - 3, 7, 7), local, 0, 3, Some((1, t.text)), 0));
+        g.children.push(self.rect(format!("{k}:svm2"), Rect::new(mx - 2, mv - 2, 5, 5), local, 0, 2, Some((1, t.bg)), 0));
+        // The hex field with a swatch.
+        let focused = self.focused(k);
+        let field_hit = self.hit(&format!("{k}:field"), k, Part::Field);
+        let border = self.focus_border(k, Some((t.border_w, t.border)));
+        g.children.push(self.rect(format!("{k}:fbg"), field, local, t.surface, t.radius, border, field_hit));
+        let sw = lh;
+        g.children.push(self.rect(
+            format!("{k}:swatch"),
+            Rect::new(field.x + px / 2, field.y + py, sw, sw),
+            local,
+            (value as u32) << 8 | 0xff,
+            2,
+            Some((1, t.border)),
+            0,
+        ));
+        let shown = if focused { text.clone() } else { hex_of(value) };
+        let tx = field.x + px / 2 + sw + px / 2;
+        let ty = field.y + (field.h - lh) / 2;
+        g.children.push(self.text(format!("{k}:ftext"), tx - r.x, ty - r.y, &shown, &f, if enabled { t.text } else { t.text_muted }));
+        if focused && self.activated && self.caret_on {
+            let cx = tx + f.text_width(&shown);
+            g.children.push(self.rect(format!("{k}:caret"), Rect::new(cx, ty, 1, lh), local, t.text, 0, None, 0));
+        }
+        if let Some(i) = self.info.get_mut(k) {
+            i.picker = [hue, sv, field];
+            i.text_x = tx;
+            i.text_y = ty;
+        }
+        out.push(g);
     }
 
     /// A text area: visible lines only, a line-number gutter, the selection,

@@ -24,7 +24,9 @@ import java.util.UUID;
 public record TerminalReadyPacket(
         UUID computerId,
         byte displayId,
-        long lastGeneration
+        long lastGeneration,
+        /** When the client received the acked frame, on its own clock (µs; 0 = unknown). Feeds RTT/jitter (Part B2). */
+        long clientRecvUs
 ) implements CustomPacketPayload {
 
     public static final Type<TerminalReadyPacket> TYPE =
@@ -34,22 +36,27 @@ public record TerminalReadyPacket(
             UUIDUtil.STREAM_CODEC, TerminalReadyPacket::computerId,
             ByteBufCodecs.BYTE, TerminalReadyPacket::displayId,
             ByteBufCodecs.VAR_LONG, TerminalReadyPacket::lastGeneration,
+            ByteBufCodecs.VAR_LONG, TerminalReadyPacket::clientRecvUs,
             TerminalReadyPacket::new
     );
+
+    public TerminalReadyPacket(UUID computerId, byte displayId, long lastGeneration) {
+        this(computerId, displayId, lastGeneration, 0);
+    }
 
     @Override
     public Type<? extends CustomPacketPayload> type() {
         return TYPE;
     }
 
+    /** Network thread (Part A3): straight to the host's sync hub, checked against its viewer snapshot. */
     public static void handle(TerminalReadyPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            if (context.player() instanceof ServerPlayer player) {
-                IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
-                if (host != null) {
-                    host.onDisplayAck(player, packet.displayId(), packet.lastGeneration());
-                }
-            }
-        });
+        if (!(context.player() instanceof ServerPlayer player)) return;
+        ComputerTargets.offThread(player, packet.computerId(), packet.displayId(), false,
+                host -> host.onDisplayAck(player.getUUID(), packet.displayId(), packet.lastGeneration(), packet.clientRecvUs()),
+                () -> {
+                    IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
+                    if (host != null) host.onDisplayAck(player, packet.displayId(), packet.lastGeneration());
+                });
     }
 }

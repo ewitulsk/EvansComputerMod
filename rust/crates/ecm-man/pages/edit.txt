@@ -1,0 +1,92 @@
+NAME
+    edit - the console text editor
+
+SYNOPSIS
+    edit file
+
+DESCRIPTION
+    Opens file in a full-screen text editor. If the file does not exist
+    the editor starts empty ("New file") and saving creates it. There
+    are no modes: type to insert text at the cursor and use the Ctrl
+    keys below for everything else.
+
+    The screen shows the text with line numbers on the left (~ marks
+    rows past the end of the file), a status bar with the file name,
+    [+] when there are unsaved changes, [ALL] while everything is
+    selected, and the cursor's line and column (L3/40 C7), and under it
+    a message line. When you leave, the shell's screen comes back as it
+    was.
+
+KEYS
+    Arrow keys
+        Move the cursor.
+
+    Home, End
+        Go to the start or end of the line.
+
+    Page Up, Page Down
+        Move one screen up or down.
+
+    Enter
+        Split the line at the cursor.
+
+    Backspace
+        Delete the character left of the cursor; at the start of a line,
+        join it to the line above.
+
+    Delete
+        Delete the character under the cursor; at the end of a line,
+        join the next line to it.
+
+    Tab
+        Insert four spaces.
+
+    Ctrl+S
+        Save the file.
+
+    Ctrl+E
+        Exit. With unsaved changes it asks "Save changes? (y/n)": y saves
+        and exits, n exits without saving, Esc goes back to editing
+        (at the Terminal block Esc closes the screen: press Shift+Esc).
+
+    Ctrl+R
+        Save and exit.
+
+    Ctrl+F
+        Find: type the text and press Enter to jump to the next place it
+        appears after the cursor, wrapping around to the top. Esc
+        (Shift+Esc at the Terminal block) cancels. The search is
+        case-sensitive.
+
+    Ctrl+X
+        Cut the current line (copy it, then delete it).
+
+    Ctrl+C
+        Copy the current line.
+
+    Ctrl+V
+        Paste the copied line below the current one.
+
+    Ctrl+D
+        Delete the current line.
+
+    Ctrl+K
+        Clear the current line (empty it, keep the line).
+
+    Ctrl+A
+        Select all. Then Backspace deletes all the text, and typing a
+        character or Enter replaces all of it. Moving the cursor cancels
+        the selection.
+
+NOTES
+    The editor holds at most 500 lines of at most 256 characters; longer
+    files are cut when opened. Only plain ASCII characters can be
+    typed. Ctrl+T, as everywhere, stops the editor at once without
+    saving.
+
+EXAMPLES
+      edit notes.txt
+      edit /etc/ui.toml
+
+SEE ALSO
+    cat, touch, keys, filesystem

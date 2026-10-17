@@ -1,0 +1,87 @@
+NAME
+    domain - register .ecm names and apply for your own TLD
+
+SYNOPSIS
+    domain account create HANDLE PASSWORD
+    domain login HANDLE PASSWORD
+    domain check|register|show|delete NAME.ecm
+    domain set NAME.ecm NAME TYPE DATA [TTL]
+    domain del NAME.ecm NAME TYPE [DATA]
+    domain ns NAME.ecm NS[=ADDRESS]... | --hosted
+    domain list
+    domain tld apply TLD NS[=ADDRESS]...
+    domain tld show TLD | list | revoke TLD
+
+DESCRIPTION
+    domain talks to the registrar at http://nic.ring/ (for names under
+    .ecm) and to IANA at http://iana.ring/ (for new top-level domains)
+    over their plain-text web API, and prints what they answer.
+
+    A domain is either hosted (its records live in the .ecm zone at the
+    registry) or delegated to nameservers you run yourself with named.
+    Registration is free and does not expire. Labels are 3-63 letters,
+    digits and hyphens; some names are reserved. An account can hold
+    five domains and one TLD. TTLs must be at least 60.
+
+COMMANDS
+    account create HANDLE PASSWORD
+        Make an account and remember it in /etc/domain.auth.
+
+    login HANDLE PASSWORD
+        Check and remember an existing account.
+
+    check NAME.ecm
+        Is the name free?
+
+    register NAME.ecm
+        Register it to your account.
+
+    set NAME.ecm NAME TYPE DATA [TTL]
+        Add a record to a hosted domain. NAME is a label or @ for the
+        domain itself; TYPE is A, CNAME, MX or TXT.
+
+    del NAME.ecm NAME TYPE [DATA]
+        Remove records.
+
+    ns NAME.ecm NS[=ADDRESS]...
+        Delegate the domain to your own nameservers. Give the address
+        (glue) for nameservers inside the domain itself.
+
+    ns NAME.ecm --hosted
+        Back to records at the registry.
+
+    show NAME.ecm, list, delete NAME.ecm
+        One domain, all of yours, or give one up.
+
+    tld apply TLD NS[=ADDRESS]...
+        Ask IANA to put a new TLD in the root zone. Every nameserver
+        must already answer for the TLD (with a named that has its
+        zone); IANA checks them before adding it.
+
+    tld show TLD, tld list, tld revoke TLD
+        One TLD, all delegated TLDs, or give yours up.
+
+OPTIONS
+    --registrar URL
+        Another registrar (default http://nic.ring/).
+
+    --iana URL
+        Another IANA (default http://iana.ring/).
+
+    --handle H --password P
+        Use this account instead of the saved one.
+
+FILES
+    /etc/domain.auth
+        The saved handle and password.
+
+EXAMPLES
+      domain account create alice pw1234
+      domain register mybase.ecm
+      domain set mybase.ecm www A 100.70.0.120
+      domain set mybase.ecm @ MX 10 mail.mybase.ecm.
+      domain ns mybase.ecm ns1.mybase.ecm=10.200.3.10
+      domain tld apply base ns1.base=10.200.4.1 ns2.base=10.200.4.10
+
+SEE ALSO
+    whois, named, dig, registrard, ianad, networking

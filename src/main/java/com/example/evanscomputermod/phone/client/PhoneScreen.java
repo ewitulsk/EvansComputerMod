@@ -160,6 +160,12 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
      */
     private void rawKey(int key, int mods, boolean down) {
         if (phone == null) return;
+        if (down && (((mods & 2) != 0 && key == 86) || ((mods & 1) != 0 && key == 260))) {
+            // A paste key: the phone's paste reads the player's real clipboard, sent first.
+            String clip = net.minecraft.client.Minecraft.getInstance().keyboardHandler.getClipboard();
+            if (clip != null) PacketDistributor.sendToServer(new com.example.evanscomputermod.network.ClipboardPackets.Push(
+                    phone, (byte) IComputerHost.DISPLAY_OWN, clip));
+        }
         int hid = com.example.evanscomputermod.computer.ui.HidKeys.fromGlfw(key);
         byte action;
         if (down) {
@@ -171,6 +177,8 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
         }
         if (hid == 0) return;
         keysSent++;
+        com.example.evanscomputermod.computer.ui.ClientUiScenes.key(phone, IComputerHost.DISPLAY_OWN, hid,
+                action != com.example.evanscomputermod.network.KeyInputPacket.UP, System.nanoTime() / 1_000_000L);
         PacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(phone,
                 (byte) IComputerHost.DISPLAY_OWN, action, hid, mods & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
     }
@@ -201,6 +209,8 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
     public boolean charTyped(char c, int mods) {
         if (c >= 32 && c != 127) {
             type(String.valueOf(c));
+            if (phone != null) com.example.evanscomputermod.computer.ui.ClientUiScenes.typed(phone, IComputerHost.DISPLAY_OWN,
+                    String.valueOf(c), System.nanoTime() / 1_000_000L);
             if (phone != null) PacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.text(phone,
                     (byte) IComputerHost.DISPLAY_OWN, String.valueOf(c)));
         }
@@ -260,6 +270,13 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
     private void pointer(byte kind, double mx, double my, int button, byte scroll) {
         int[] p = pixel(mx, my);
         if (p == null || phone == null) return;
+        var sc = com.example.evanscomputermod.computer.ui.ClientUiScenes.pointer(phone, IComputerHost.DISPLAY_OWN, kind, p[0], p[1],
+                button, scroll, System.nanoTime() / 1_000_000L);
+        if (sc != null) {
+            PacketDistributor.sendToServer(new com.example.evanscomputermod.network.UiScrollPacket(phone,
+                    (byte) IComputerHost.DISPLAY_OWN, sc.surface(), sc.node(), sc.x(), sc.y()));
+            return;
+        }
         PacketDistributor.sendToServer(new MouseInputPacket(phone, (byte) IComputerHost.DISPLAY_OWN, kind, (short) p[0], (short) p[1],
                 buttons, (byte) button, scroll));
     }
@@ -287,6 +304,8 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
         int[] p = pixel(mx, my);
         buttons &= (byte) ~bit(button);
         if (p != null && phone != null) {
+            com.example.evanscomputermod.computer.ui.ClientUiScenes.pointer(phone, IComputerHost.DISPLAY_OWN, MouseInputPacket.KIND_UP,
+                    p[0], p[1], button, 0, System.nanoTime() / 1_000_000L);
             PacketDistributor.sendToServer(new MouseInputPacket(phone, (byte) IComputerHost.DISPLAY_OWN, MouseInputPacket.KIND_UP,
                     (short) p[0], (short) p[1], buttons, (byte) button, (byte) 0));
         }

@@ -11,7 +11,7 @@
 //!   shell       — terminal I/O, files and redstone (`terminal` is the same module)
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
 //!   peripheral  — attached blocks and bay modules (lua/peripheral.lua over `_peripheral`)
-//!   sensors, controller, audio — lidars, Xbox controllers, the Speaker
+//!   sensors, controller, audio, cards — lidars, Xbox controllers, the Speaker, card readers and printers
 //!   radio       — SDR flowgraphs (lua/radio.lua over `_radio`)
 //!   ui          — GUI apps (lua/ui.lua over `_ui` and ecm-ui)
 //! `require` also finds the computer's own files (a/b.lua or a/b/init.lua).
@@ -105,11 +105,7 @@ fn shell_module(lua: &Lua) -> mlua::Result<Table> {
     })?)?;
     // Read a line of input, echoing it as it's typed. nil at end of input.
     m.set("input", lua.create_function(|_, prompt: Option<String>| {
-        if let Some(p) = prompt {
-            print!("{p}");
-            io::stdout().flush()?;
-        }
-        Ok(read_line_echo())
+        Ok(read_line_echo(prompt.as_deref().unwrap_or("")))
     })?)?;
 
     // Files, by path from the computer's root ("/etc/x" and "etc/x" are the same).
@@ -197,17 +193,20 @@ fn compile(lua: &Lua, code: &str) -> Chunk {
 fn repl(lua: &Lua) {
     println!("{} (PUC-Rio, via mlua)", lua.globals().get::<String>("_VERSION").unwrap_or_default());
     println!("Type 'exit' or Ctrl+D to exit.");
-    println!("Modules: shell, net, peripheral, sensors, controller, audio, radio, ui (as in Python).");
+    println!("Modules: shell, net, peripheral, sensors, controller, audio, cards, radio, ui (as in Python).");
     println!();
 
     let mut buffer = String::new();
+    load_repl_history();
     loop {
-        print!("{}", if buffer.is_empty() { "> " } else { ">> " });
-        let _ = io::stdout().flush();
-        // The terminal doesn't echo a program's input: echo it here, so you see what you type.
-        let Some(line) = read_line_echo() else {
-            println!();
-            break;
+        let line = match read_repl_line(if buffer.is_empty() { "> " } else { ">> " }) {
+            // Ctrl+C: forget a half-typed block.
+            Err(()) => {
+                buffer.clear();
+                continue;
+            }
+            Ok(None) => break,
+            Ok(Some(line)) => line,
         };
         if buffer.is_empty() && matches!(line.trim(), "exit" | "exit()" | "quit" | "quit()") {
             break;
@@ -286,49 +285,43 @@ fn rel(p: &str) -> &str {
     p.trim_start_matches('/')
 }
 
-/// Read a line from stdin, echoing printable characters (and backspace) as they arrive,
-/// since the terminal doesn't echo a running program's input. None at end of input.
-fn read_line_echo() -> Option<String> {
-    use std::io::Read;
-    let mut buf: Vec<u8> = Vec::new();
-    let stdin = io::stdin();
-    let mut lock = stdin.lock();
-    let mut byte = [0u8; 1];
-    let mut got_any = false;
-    loop {
-        match lock.read(&mut byte) {
-            Ok(0) | Err(_) => {
-                if !got_any {
-                    return None;
-                }
-                break;
-            }
-            Ok(_) => {
-                got_any = true;
-                match byte[0] {
-                    b'\n' | b'\r' => {
-                        println!();
-                        let _ = io::stdout().flush();
-                        break;
-                    }
-                    4 if buf.is_empty() => return None, // Ctrl+D on an empty line
-                    8 | 127 => {
-                        if buf.pop().is_some() {
-                            print!("\x08 \x08");
-                            let _ = io::stdout().flush();
-                        }
-                    }
-                    b if (32..127).contains(&b) => {
-                        buf.push(b);
-                        print!("{}", b as char);
-                        let _ = io::stdout().flush();
-                    }
-                    _ => {}
-                }
-            }
+thread_local! {
+    /// The line editor (cursor keys, history, Ctrl+R) for the REPL and input().
+    static EDITOR: std::cell::RefCell<ecm_lineedit::Editor> = std::cell::RefCell::new(ecm_lineedit::Editor::new());
+}
+
+/// Where the REPL keeps its history.
+const HISTORY_FILE: &str = "/.lua_history";
+
+/// Read a line with the line editor, which draws `prompt` and echoes what is
+/// typed (the terminal doesn't echo a running program's input). Ctrl+C stops
+/// the program as usual. None at end of input.
+fn read_line_echo(prompt: &str) -> Option<String> {
+    EDITOR.with(|e| match ecm_lineedit::stdio::read_line(&mut e.borrow_mut(), prompt, false) {
+        ecm_lineedit::stdio::Input::Line(l) => Some(l),
+        ecm_lineedit::stdio::Input::Interrupt => Some(String::new()),
+        ecm_lineedit::stdio::Input::Eof => None,
+    })
+}
+
+/// A REPL line: like [`read_line_echo`], but Ctrl+C gives up the line
+/// (Err) instead of stopping the program, and the history is saved.
+fn read_repl_line(prompt: &str) -> Result<Option<String>, ()> {
+    EDITOR.with(|e| {
+        let mut ed = e.borrow_mut();
+        let r = ecm_lineedit::stdio::read_line(&mut ed, prompt, true);
+        ecm_lineedit::stdio::save_history(&mut ed, HISTORY_FILE);
+        match r {
+            ecm_lineedit::stdio::Input::Line(l) => Ok(Some(l)),
+            ecm_lineedit::stdio::Input::Interrupt => Err(()),
+            ecm_lineedit::stdio::Input::Eof => Ok(None),
         }
-    }
-    Some(String::from_utf8(buf).unwrap_or_default())
+    })
+}
+
+/// Load the REPL's saved history.
+fn load_repl_history() {
+    EDITOR.with(|e| ecm_lineedit::stdio::load_history(&mut e.borrow_mut(), HISTORY_FILE));
 }
 
 fn main() {

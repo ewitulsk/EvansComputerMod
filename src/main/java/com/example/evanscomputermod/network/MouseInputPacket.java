@@ -84,14 +84,21 @@ public record MouseInputPacket(
         return true;
     }
 
+    /** Network thread (DISPLAY_PIPELINE_SPEC.md Part A3): straight to the compositor or the mouse ring. */
     public static void handle(MouseInputPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            try {
-                if (!(context.player() instanceof ServerPlayer player)) return;
-                deliver(player, packet);
-            } catch (Throwable e) {
-                EvansComputerMod.LOGGER.error("Error handling mouse input packet", e);
-            }
-        });
+        try {
+            if (!(context.player() instanceof ServerPlayer player)) return;
+            ComputerTargets.input(player, packet.computerId(), packet.displayId(),
+                    c -> c.handlePointerInput(packet.displayId(), packet.kind(), packet.x(), packet.y(),
+                            packet.buttons(), packet.buttonCode(), packet.scrollDir()), () -> {
+                        try {
+                            deliver(player, packet);
+                        } catch (Throwable e) {
+                            EvansComputerMod.LOGGER.error("Error handling mouse input packet", e);
+                        }
+                    });
+        } catch (Throwable e) {
+            EvansComputerMod.LOGGER.error("Error handling mouse input packet", e);
+        }
     }
 }

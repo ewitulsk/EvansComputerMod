@@ -1,0 +1,25 @@
+NAME
+    carrier - the Carrier Console app: manage this computer's core
+
+SYNOPSIS
+    carrier
+
+DESCRIPTION
+    Opens the Carrier Console (dev.ecm.carrier) for the carrier core
+    (cored) on this computer. It appears in Apps once /etc/cored.db or
+    /etc/cored.toml exists. It needs the GUI (start it with gui); in
+    the console use cored status instead.
+
+    Subscribers: write a new SIM (label, quota, Write SIM, with a blank
+    card in the Card Reader/Writer), the list with label, IMSI,
+    address, usage and state, and for the chosen one Revoke or
+    Reinstate, Set quota and Release. Sites: connected or not, cells,
+    last heartbeat; Add site prints the credential and the celld-site
+    line to type. Phones: live sessions with site and cell. Handovers:
+    the handover log. Core: settings and counters.
+
+    It talks to cored's admin socket (127.0.0.1:7711, or admin_port in
+    /etc/cored.toml), reconnecting when the core restarts.
+
+SEE ALSO
+    cored, cellsite, cardtool, cellular, gui

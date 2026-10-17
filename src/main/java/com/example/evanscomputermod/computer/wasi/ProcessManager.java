@@ -147,6 +147,20 @@ public class ProcessManager {
     }
 
     private int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group, boolean detached) {
+        return spawn(wasmPath, argv, envVars, group, detached, null);
+    }
+
+    /**
+     * As {@link #spawn(Path, String[], java.util.Map, int)}, with stdin, stdout
+     * and stderr taken from {@code stdio} where an entry isn't null (a shell
+     * redirect or pipe: the kernel's {@link SharedFd}s). The others are the
+     * terminal.
+     */
+    public int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group, SharedFd[] stdio) {
+        return spawn(wasmPath, argv, envVars, group, false, stdio);
+    }
+
+    private int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group, boolean detached, SharedFd[] stdio) {
         if (!Files.exists(wasmPath)) {
             EvansComputerMod.LOGGER.warn("WASI spawn: file not found: {}", wasmPath);
             return -1;
@@ -161,7 +175,7 @@ public class ProcessManager {
         childInputPipes.put(pid, stdinPipe);
 
         FdTable fdTable = new FdTable();
-        fdTable.insertAt(0, new PipeFd(stdinPipe, true));
+        fdTable.insertAt(0, new PipeFd(stdinPipe, true).tty());
         String name = wasmPath.getFileName().toString();
         CountDownLatch exitLatch = new CountDownLatch(1);
         ProcessEntry entry = new ProcessEntry(pid, name, exitLatch);
@@ -170,8 +184,13 @@ public class ProcessManager {
             fdTable.insertAt(1, entry.log);
             fdTable.insertAt(2, entry.log);
         } else {
-            fdTable.insertAt(1, new PipeFd(stdoutPipe, false));
-            fdTable.insertAt(2, new PipeFd(stdoutPipe, false));
+            fdTable.insertAt(1, new PipeFd(stdoutPipe, false).tty());
+            fdTable.insertAt(2, new PipeFd(stdoutPipe, false).tty());
+        }
+        if (stdio != null) {
+            for (int i = 0; i < 3 && i < stdio.length; i++) {
+                if (stdio[i] != null) fdTable.insertAt(i, stdio[i].open());
+            }
         }
         entry.group = group > 0 ? group : pid;
         if (pausedGroups.contains(entry.group)) entry.gate.pause(PauseGate.REASON_PROCESS);
@@ -558,6 +577,7 @@ public class ProcessManager {
         }
 
         WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
+        state.keyboard = childInputPipes.get(pid);
         state.pid = pid;
         state.sandbox = sandbox;
         WasmInstance instance = null;

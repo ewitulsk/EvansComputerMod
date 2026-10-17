@@ -415,6 +415,45 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The DragWindow props (protocol v2) the TreeOps for `surface` in `msgs` set, in order.
+fn drag_props(msgs: &[Message], surface: u32) -> Vec<u32> {
+    let mut v = Vec::new();
+    for m in msgs {
+        if let Message::TreeOps(t) = m {
+            if t.surface != surface {
+                continue;
+            }
+            for op in &t.ops {
+                let props = match op {
+                    proto::TreeOp::Create { props, .. } | proto::TreeOp::Set { props, .. } => props,
+                    _ => continue,
+                };
+                v.extend(props.iter().filter_map(|p| if let proto::Prop::DragWindow(w) = p { Some(*w) } else { None }));
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn the_title_bar_drags_its_window_on_the_client_but_not_maximized() {
+    let root = temp_root("desk5");
+    let (mut desk, _) = Desk::new(&[], &root, 640, 400);
+    let out = desk.open(1, 2, "terminal", "Terminal");
+    let fs = desk.surface_titled("frame:1");
+    assert_eq!(drag_props(&out, fs), vec![1], "the title bar moves app window 1 with the frame");
+    let xb = hit(&desk.d.app, fs, "max");
+    let mut out = desk.step(click(fs, xb));
+    let p = places(&out);
+    out.extend(desk.step(vec![configure(fs, 2, p[&2].2, p[&2].3, 0)]));
+    assert_eq!(drag_props(&out, fs), vec![0], "maximized: no client drag");
+    let mut out = desk.step(click(fs, xb));
+    let p = places(&out);
+    out.extend(desk.step(vec![configure(fs, 3, p[&2].2, p[&2].3, 0)]));
+    assert_eq!(drag_props(&out, fs), vec![1], "restored: draggable again");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn compact_displays_maximize_windows() {
     let root = temp_root("desk4");
@@ -450,7 +489,7 @@ fn terminal_shows_the_session_types_into_it_and_pastes() {
     let out = run(&mut app, &m, &mut t, vec![key(1, 0x19, proto::mods::CTRL | proto::mods::SHIFT)]);
     assert!(out.iter().any(|x| matches!(x, Message::ClipboardRequest(r) if r.mime == TEXT_MIME)));
     run(&mut app, &m, &mut t, vec![Message::ClipboardData(proto::ClipboardData { mime: TEXT_MIME.into(), data: b"echo pasted\n".to_vec() })]);
-    assert!(sys.state.borrow().session_in.ends_with(b"echo pasted\r"));
+    assert!(sys.state.borrow().session_in.ends_with(b"\x1b[200~echo pasted\r\x1b[201~"), "a paste is bracketed");
     // Output arrives and is drawn; selecting a line and Ctrl+Shift+C copies it.
     sys.state.borrow_mut().session_out = b"\r\npasted\r\n/ > ".to_vec();
     run(&mut app, &m, &mut t, vec![]);
@@ -757,6 +796,43 @@ fn settings_apps_section_at_every_size() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn settings_sound_picks_default_devices_and_sets_the_gain() {
+    use ecm_apps::sys::SoundDevice;
+    let root = temp_root("sound");
+    let m = mock("settings", 600, 400);
+    let sys = settings_sys(&root);
+    {
+        let mut s = sys.state.borrow_mut();
+        s.sound = vec![
+            SoundDevice { name: "left".into(), input: false, volume: 80 },
+            SoundDevice { name: "back".into(), input: true, volume: 50 },
+            SoundDevice { name: "top".into(), input: true, volume: 40 },
+        ];
+        s.mic_levels = vec![("back".into(), -23), ("top".into(), -40)];
+    }
+    let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("sound")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 380, proto::window_states::ACTIVATED)]);
+    for want in ["Sound", "Output", "left", "Input", "back", "top", "Input volume", "Input level"] {
+        assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+    }
+    // Pick the second microphone: it becomes the default in /etc/sound.conf.
+    let first = app.core.window(1).unwrap().hit_id_of_row("inputs", 1).unwrap();
+    run(&mut app, &m, &mut t, click(1, first));
+    let conf = std::fs::read_to_string(root.join("etc/sound.conf")).unwrap();
+    assert_eq!(ecm_audio::parse_sound_conf(&conf, "input").as_deref(), Some("top"), "{conf}");
+    assert!(t.has(1, "Default input: top"), "{:?}", t.of(1));
+    // Drag the input volume to the far right: the microphone's gain is 100.
+    let vol = hit(&app, 1, "input_volume");
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Down, 10_000, 5, vol, proto::Button::Left)]);
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Up, 10_000, 5, vol, proto::Button::Left)]);
+    assert!(sys.state.borrow().log.contains(&"gain top 100".to_string()), "{:?}", sys.state.borrow().log);
+    assert_eq!(settings::meter(-30), "||||||||||..........");
+    assert_eq!(settings::meter(-99), "....................");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// What celld says on a phone attached to cell 1 of cell-red (two cells heard).
 fn celld_cell() -> CellState {
     let st = celld::ctl::Status::parse(
@@ -811,6 +887,52 @@ fn settings_cellular_shows_celld_and_sends_roaming_and_power() {
         run(&mut app, &m, &mut t, click(1, power));
         assert!(sys.state.borrow().log.contains(&"cell down".to_string()));
         assert!(t.has(1, "Turn on") && t.has(1, "switched off"), "{:?}", t.of(1));
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn settings_bluetooth_pairs_airpods_and_shows_where_sound_goes() {
+    use ecm_apps::sys::{BtDevice, BtState};
+    for w in [240, 600] {
+        let root = temp_root(&format!("bt{w}"));
+        let m = mock("settings", w, 400);
+        let sys = settings_sys(&root);
+        // Control: a computer without a radio says so.
+        {
+            let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("bluetooth")).unwrap();
+            let mut t = Texts::default();
+            run(&mut app, &m, &mut t, vec![configure(1, 1, w, 380, proto::window_states::ACTIVATED)]);
+            assert!(t.has(1, "This computer has no Bluetooth radio."), "{:?}", t.of(1));
+        }
+        let m = mock("settings", w, 400);
+        sys.state.borrow_mut().bluetooth = BtState {
+            present: true,
+            powered: true,
+            name: "Alex's ePhone".into(),
+            address: "12:34:56:78:9A:BC".into(),
+            audio: "speaker".into(),
+            nearby: vec![BtDevice { address: "AC:DE:48:00:11:22".into(), name: "Alex's AirPods".into(), pairable: true, battery: Some(90), ..Default::default() }],
+            ..Default::default()
+        };
+        let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("bluetooth")).unwrap();
+        let mut t = Texts::default();
+        run(&mut app, &m, &mut t, vec![configure(1, 1, w, 380, proto::window_states::ACTIVATED)]);
+        for want in ["MY DEVICES", "No devices paired yet.", "OTHER DEVICES", "Alex's AirPods", "ready to pair", "Sound plays on: this phone's speaker"] {
+            assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+        }
+        let pair = hit(&app, 1, "bt_pair:0");
+        run(&mut app, &m, &mut t, click(1, pair));
+        assert!(sys.state.borrow().log.contains(&"bt pair AC:DE:48:00:11:22".to_string()), "{:?}", sys.state.borrow().log);
+        for want in ["Connected", "Sound plays on: Alex's AirPods"] {
+            assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+        }
+        let off = hit(&app, 1, "bt_disconnect:0");
+        run(&mut app, &m, &mut t, click(1, off));
+        assert!(t.has(1, "Not Connected"), "{:?}", t.of(1));
+        let forget = hit(&app, 1, "bt_forget:0");
+        run(&mut app, &m, &mut t, click(1, forget));
+        assert!(sys.state.borrow().bluetooth.devices.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 }

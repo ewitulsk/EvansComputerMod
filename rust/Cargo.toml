@@ -14,14 +14,18 @@ members = [
     "crates/ecm-dsp",
     "crates/ecm-radio",
     "crates/ecm-cell",
+    "crates/ecm-cards",
     "crates/ecm-cell-net",
     "crates/ecm-cell-ui",
     "crates/ecm-chat",
+    "crates/ecm-discord",
     "crates/ecm-disco",
     "crates/ecm-dns",
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
     "crates/ecm-vte",
+    "crates/ecm-lineedit",
+    "crates/ecm-man",
     "crates/ecm-apps",
     "crates/ecm-apps-ui",
     "crates/ecm-web",
@@ -37,6 +41,8 @@ members = [
     "wasm-programs/echo",
     "wasm-programs/ls",
     "wasm-programs/help",
+    "wasm-programs/man",
+    "wasm-programs/less",
     "wasm-programs/clear",
     "wasm-programs/pwd",
     "wasm-programs/mkdir",
@@ -69,6 +75,7 @@ members = [
     "wasm-programs/controllertest",
     "wasm-programs/beep",
     "wasm-programs/aplay",
+    "wasm-programs/arecord",
     "wasm-programs/gba",
     "wasm-programs/phone",
     "wasm-programs/gba-app",
@@ -103,16 +110,17 @@ members = [
     "wasm-programs/wifi",
     "wasm-programs/cell",
     "wasm-programs/celld",
-    "wasm-programs/simtool",
+    "wasm-programs/cardtool",
     "wasm-programs/celld-site",
     "wasm-programs/cored",
     "wasm-programs/cellsite",
     "wasm-programs/carrier",
     "wasm-programs/iw",
     "wasm-programs/antenna",
-    "wasm-programs/chatd",
+    "wasm-programs/discordd",
     "wasm-programs/chat",
-    "wasm-programs/chatapp",
+    "wasm-programs/discord",
+    "wasm-programs/bluetoothctl",
     "wasm-programs/pkg",
     "wasm-programs/apptest",
     "wasm-programs/visual",
@@ -143,12 +151,16 @@ ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
 ecm-radio = { path = "crates/ecm-radio" }
 ecm-cell = { path = "crates/ecm-cell" }
+ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
+ecm-discord = { path = "crates/ecm-discord" }
 ecm-disco = { path = "crates/ecm-disco" }
 ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
+ecm-lineedit = { path = "crates/ecm-lineedit" }
+ecm-man = { path = "crates/ecm-man" }
 ecm-apps = { path = "crates/ecm-apps" }
 ecm-web = { path = "crates/ecm-web" }
 ecm-js = { path = "crates/ecm-js" }

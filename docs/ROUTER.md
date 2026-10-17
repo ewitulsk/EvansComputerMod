@@ -54,7 +54,7 @@ also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
 | `router_fiber` | Inspect the patch panel with a free-floating fiber riser on it and the installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. The riser joins the panel below and has no open arm at its top. Connection properties survive block-state serialization. |
 | `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the web server hangs off the ISP's UP face (the data center LAN). The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
-| `router_chat` | `chatd` on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
+| `router_chat` | `discordd` (a Discord backend) on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
 | `router_player_fiber` | Built by hand: a Fiber Patch Panel on two PCs' UP faces (eth1) and a run of Fiber Span between them. Ping crosses the fiber; breaking a span stops it and placing it back repairs it. Control: copper cable touching the fiber (not through a panel) is not connected. |
 | `router_fiber_tap` | Tapping a fiber, built by hand: ISP A (AS 65101) and ISP B (AS 65102) sit on patch panels at the ends of a 13-block fiber run, both with open peering on `172.30.50.0/28` like the village ISPs. You place a Fiber Patch Panel on the middle span under your router, `tcpdump -i eth0 -c 2` shows the ISPs' keepalives (`.1`/`.2`), you take `172.30.50.5/28` and peer from AS 65200 with both. Your LAN pings both ISPs' servers; on ISP B you are a `*` dynamic neighbor with 1 prefix, while your hijack of `100.81.0.128/25` and your default route are filtered. Control: break the span toward ISP A: that session times out, ISP B still works; put the span back and the session returns. |
 | `router_ports_follow_facing` | Ports are relative to the screen. An east-facing PC's back (its west face) is cabled to a server's bottom; `ifconfig eth2` on the PC and ping reaches the server. The player then breaks the PC and places it facing south, west and north; each time the Interface Probe (sneak-right-click) reads bottom eth0, top eth1, back eth2, left eth3, right eth4. Control: the screen face has no port. |
@@ -696,7 +696,8 @@ Templates contain role markers, not computer UUIDs. The provisioning processor (
 Data Center) and the village network piece (houses) derive stable identities from
 world seed, village number and role (`isp.router`, `datacenter.web`,
 `datacenter.chat`, `house<k>.router`, `house<k>.pc`), write missing configuration
-files (including `/etc/chat.conf`), and set `wasRunning`. Existing configuration files
+files (including `/etc/chat.conf`, and a house PC's `/etc/browser.conf`: the Browser's home page, the village's
+website), and set `wasRunning`. Existing configuration files
 are kept. Regenerate the five ISP and Data Center templates, pools and structures with
 `py -3 scripts/gen-tech-village.py`; generate models/recipes with
 `py -3 scripts/gen-tech-assets.py`.
@@ -714,7 +715,7 @@ default; the ring learns your LAN prefix. Without access to an ISP router you ca
 a fiber instead: the ISPs accept dynamic neighbors on both ring links
 ([tapping the ring](TECH_VILLAGE_NETWORK.md#c-tapping-the-ring)).
 
-## Always-On computers, saves and the Windows uplink
+## Always-On computers, saves and the internet uplink
 
 Install a Module Expansion Card and an Always-On Module in a terminal bay. On
 chunk unload its instance detaches, keeps its worker, network state and processes,
@@ -728,7 +729,14 @@ Server launch properties:
 ```text
 -Devanscomputermod.headlessCap=64
 -Devanscomputermod.techVillages=true
--Devanscomputermod.internetProxy=true
+```
+
+With the internet sidecar installed (below), also:
+
+```text
+-Devanscomputermod.internetProxy=false        # no host sockets at all (default: on)
+-Devanscomputermod.internet.allowLan=true     # also reach private/LAN addresses (default: blocked)
+-Devanscomputermod.tap=tap0                   # Linux: also bridge to this TAP device (default: none)
 ```
 
 The cap bounds detached player computers; if it is reached, additional terminals
@@ -743,16 +751,34 @@ The old directory is retained, and existing world files are not overwritten.
 port counts, last-known cables/NIC positions, removed fiber positions and cuts. Unloaded cable regions retain
 their last topology snapshot; loaded regions refresh it.
 
-On Windows, the unprivileged Java socket proxy supplies gateway `10.0.0.1`.
-It answers ARP and DHCP and bridges TCP/UDP over ordinary host sockets. Village
-1's WAN connects to it through a logical gateway segment. A normal terminal can
-also use a cable segment reaching the Internet Gateway block at world origin.
-The host OS supplies outbound connectivity and firewall policy. UDP allows DNS;
-TCP allows plain HTTP. The proxy bounds flows to 256 and receive queues to 256
-frames; TCP buffers are bounded and replies are acknowledged/retransmitted.
-It does not emulate raw ICMP echo to the real internet, inbound public listeners,
-IPv6 or fragmented IP. Use `curl`/DNS to check external access. Linux retains the
-existing TAP setup in `scripts/setup-tap.sh`.
+The Internet Gateway reaches the real internet only with the optional,
+server-side **internet sidecar** (`evanscomputermod-internet-mc<version>.jar`,
+built by `copy-jar.sh`, in the server's `mods/` folder). The main mod opens no
+host sockets and starts no processes: without the sidecar the gateway is offline
+and in-game networks only reach each other. The sidecar plugs in through
+`api/internet/InternetUplinkProvider` (ServiceLoader, like the FFmpeg sidecar's
+video backend).
+
+With the sidecar, an unprivileged Java socket proxy supplies gateway `10.0.0.1`
+on every OS. It answers ARP (not DHCP: use a static address or a DHCP server a
+player runs) and bridges TCP/UDP over ordinary host sockets. Village 1's WAN
+connects to it through a logical gateway segment. A normal terminal can also use
+a cable segment reaching the Internet Gateway block at world origin. The host OS
+supplies outbound connectivity and firewall policy. UDP allows DNS; TCP allows
+plain HTTP. Only public destinations are reached: loopback, link-local, multicast
+and `0.0.0.0/8` never, and private/LAN ranges (`10/8`, `172.16/12`,
+`192.168/16`, `100.64/10`) only with `-Devanscomputermod.internet.allowLan=true`;
+a TCP connection to a blocked address is refused at once (curl prints `Failed to
+connect`). The proxy bounds flows to 256 and receive queues to 256 frames; TCP
+buffers are bounded and replies are acknowledged/retransmitted. It does not
+emulate raw ICMP echo to the real internet, inbound public listeners, IPv6 or
+fragmented IP. Use `curl`/DNS to check external access.
+
+Linux TAP mode is off unless the server names a device with
+`-Devanscomputermod.tap=<device>` (a name matching `^[A-Za-z0-9_.-]{1,15}$`,
+created beforehand with `scripts/setup-tap.sh`); the sidecar then starts a
+`python3` helper that opens `/dev/net/tun` and relays the gateway's frames to it,
+beside the socket proxy.
 
 The compiled kernel is cached by file content hash. Chicory shares its compiled
 module across instances. The pinned Wasmtime Java binding cannot serialize
@@ -783,8 +809,9 @@ with increasing TTL; `*` means no matching response within the receive timeout.
 | `CableRouter` / `IspCabling` | The ISP router's cable runs for any rotation, kept apart (plain Java router + template glue) |
 | `SegmentGraph` / `RingPieces` | Pure segment computation (flood fill + union-find; copper/fiber/panel rules, carrier) and the ring's pieces, breaks and taps (JUnit `SegmentGraphTest`) |
 | `CableNetworkManager` | World glue: block codes, last-known topology, one coalesced recompute per tick, snapshots for worker threads |
-| `rust/crates/ecm-chat`, `chatd`, `chat` | Chat protocol, room and client logic (host-tested); the server and client programs |
-| `InternetProxy` | Ethernet/host TCP and UDP adapter, ARP/DHCP and bounded flow state |
+| `rust/crates/ecm-chat`, `chat` | The chat command's protocol and client logic (host-tested); the backend is `discordd` (docs/DISCORD.md) |
+| `api/internet/*` | The Internet Gateway's uplink interface; `NetworkHub` uses the installed provider, if any |
+| `evanscomputermod-internet` sidecar: `InternetProxy`, `TapBridge` | Ethernet/host TCP and UDP adapter (ARP, LAN blocking, bounded flow state) and the optional Linux TAP helper |
 
 All protocol engines use caller-supplied time and bounded state. Pure tests and
 the simulator use virtual time. The kernel owns networking; Java supplies NIC
@@ -801,7 +828,8 @@ scripts/Test.ps1 -Area tech-world -GameTests ecm_router,ecm_router_scenarios -Mc
 scripts/Test.ps1 -Area tech-client -ClientChecks -ClientSuite tech
 scripts/Test.ps1 -Area tech-client-flat -ClientChecks -ClientSuite tech -LevelType flat
 scripts/Test.ps1 -Area fiber-line -JUnit FiberLineTest,SegmentGraphTest -McVersion 26.1
-scripts/Test.ps1 -Area proxy -JUnit InternetProxyTest -McVersion 26.1
+scripts/Test.ps1 -Area proxy -Internet -JUnit InternetProxyTest -McVersion 26.1
+scripts/Test.ps1 -Area internet -Internet -GameTests ecm_internet
 scripts/Test.ps1 -Area host -JUnit KernelHostIntegrationTest -McVersion 26.1
 scripts/Test.ps1 -Area cancellation -Wasmtime -JUnit InterruptIsolationTest -McVersion 26.1
 ```

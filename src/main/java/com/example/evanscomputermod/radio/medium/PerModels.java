@@ -13,7 +13,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Maps the CONTRACTS modulation names to packet error rate and spectral mask:
  * {@code DSSS-1/2}, {@code CCK-5.5/11} and {@code OFDM-6..54} and {@code HT-MCSn}
  * through {@link WifiMcs}; {@code CHIRP-SFn} (LoRa), {@code AFSK1200}, {@code FSK},
- * {@code BPSK}, {@code QPSK}, {@code OOK} through {@link Modulation} BER with
+ * {@code BPSK}, {@code QPSK}, {@code OOK}, {@code NF-106} (near-field ASK, 106 kb/s nominal,
+ * OOK BER) through {@link Modulation} BER with
  * E<sub>b</sub>/N<sub>0</sub> = SINR · B / R; {@code CTRL} and anything unknown
  * through {@link BasicRadioMedium#packetErrorRate}. Parsed once per name.
  */
@@ -73,6 +74,7 @@ public final class PerModels {
             if (m.startsWith("BPSK")) return digital(Modulation.BPSK, 0);
             if (m.startsWith("QPSK")) return digital(Modulation.QPSK, 0);
             if (m.startsWith("OOK")) return digital(Modulation.OOK, 0);
+            if (m.startsWith("NF-")) return digital(Modulation.OOK, Double.parseDouble(m.substring(3)) * 1e3);
         } catch (RuntimeException ignored) {
             // malformed name: fall through to the logistic model
         }

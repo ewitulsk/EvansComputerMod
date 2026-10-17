@@ -1,0 +1,28 @@
+NAME
+    notes - a small note list app (GUI)
+
+SYNOPSIS
+    notes
+
+DESCRIPTION
+    Opens the Notes window: a "New note" text field, an Add button and
+    the list of notes below them. Type a note and press Add to put it at
+    the end of the list. Needs the GUI.
+
+    Notes is the toolkit's sample app, and it is short enough to read:
+    the same app written in Python is the example at the top of the ui
+    module's help (see scripting).
+
+    On an ePhone Notes is a built-in app (dev.ecm.notes). It claims
+    hotkey slot 1 as "Add note", so the slot adds what is typed while
+    the phone is in your hand. Its notes are kept in the app's saved
+    state, so they survive the phone going to sleep and a cold boot.
+    Started as a plain program on a Terminal, the list lasts only while
+    the window is open.
+
+EXAMPLES
+      notes
+      gui launch notes
+
+SEE ALSO
+    editor, phone-guide, scripting, gui

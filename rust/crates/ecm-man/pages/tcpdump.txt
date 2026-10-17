@@ -1,0 +1,57 @@
+NAME
+    tcpdump - watch the packets on a network interface
+
+SYNOPSIS
+    tcpdump [-i iface] [-v[v]] [-x] [-c count] [-w file] [filter]
+
+DESCRIPTION
+    Prints one line for every frame seen on an interface: the time,
+    then ARP, IPv4 with ICMP, IGMP, UDP or TCP (addresses, ports,
+    flags, lengths). The interface is put in promiscuous mode, so you
+    also see traffic between other computers on the same cable or
+    fiber segment; the computer keeps handling its own traffic
+    normally. Without -i the first interface is used. It runs until
+    Ctrl+T or until -c packets were captured.
+
+    With -i wlan0, tcpdump captures 802.11 radio frames instead. The
+    Wi-Fi interface must be in monitor mode first
+    (iw dev wlan0 set type monitor); you see the frames on its channel.
+
+OPTIONS
+    -i iface
+        The interface to listen on (eth0, eth1, ..., or wlan0).
+
+    -v, -vv
+        More protocol detail (-vv adds checksums).
+
+    -x
+        Also print each packet's bytes in hex.
+
+    -c count
+        Stop after count packets.
+
+    -w file
+        Write the packets to a pcap file instead of printing them
+        (Ethernet, or 802.11 with radiotap for wlan0); open it later in
+        Wireshark.
+
+FILTER
+    Words after the options; a packet is shown only if it matches every
+    term (they may be joined with and):
+
+      tcp  udp  icmp  igmp  arp   that protocol
+      multicast                   IP packets to 224.0.0.0/4
+      port N                      TCP or UDP from or to port N
+      host A.B.C.D                from or to that address
+
+    The filter does not apply to wlan0 captures.
+
+EXAMPLES
+      tcpdump
+      tcpdump -i eth0 -c 2 tcp port 179
+      tcpdump -i eth1 icmp and host 10.0.0.5
+      tcpdump -i eth0 -w /tmp/cap.pcap -c 100
+      tcpdump -i wlan0 -c 20
+
+SEE ALSO
+    ip, ping, iw, networking

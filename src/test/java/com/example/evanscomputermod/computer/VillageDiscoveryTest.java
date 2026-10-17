@@ -16,7 +16,8 @@ class VillageDiscoveryTest {
     void theIspAnswersForTheRingsServices() {
         VillageRepo repo = VillageRepo.of(73198425L, 4);
         String conf = VillageDiscovery.ispConf("100.68.0.20", 7777, repo);
-        assertTrue(conf.contains("\nrecord chat 100.68.0.20 7777 Tech Village chat\n"), conf);
+        assertTrue(conf.contains("\nrecord discord 100.68.0.20 7777 Tech Village\n"), conf);
+        assertTrue(conf.contains("\nrecord chat 100.68.0.20 7777 Tech Village\n"), conf);
         assertTrue(conf.contains("\nrecord pkg 100.68.0.21 8080 Tech-Village-Apps\n"), conf);
         assertFalse(conf.contains("relay"), "the ISP is the end of the line: " + conf);
         for (String l : conf.split("\n"))

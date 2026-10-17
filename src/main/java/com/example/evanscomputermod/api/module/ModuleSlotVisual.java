@@ -15,6 +15,9 @@ public enum ModuleSlotVisual implements StringRepresentable {
     REDSTONE_LINK,
     /** Wired Sensor Module: a cartridge with a wire connector (1.21.1). */
     WIRED_SENSOR;
+    // Every value here multiplies the Terminal's block states by (n+1)^4/n^4 (four slot properties): two more
+    // visuals took the multipart from ~20k to ~100k states and the client out of a 2 GB heap while baking.
+    // Modules without a strong visual reason use GENERIC.
 
     @Override
     public String getSerializedName() {

@@ -12,7 +12,8 @@
 //! A node is an object with one key, the widget kind (`label`, `button`,
 //! `textfield`, `list`, `scroll`, `checkbox`, `toggle`, `slider`, `tabs`,
 //! `menu`, `dialog`, `image`, `canvas`, `row`, `column`, `stack`, `grid`,
-//! `spacer`, `responsive`, `textarea`, `custom`, `panel`, `board`, `wire`), whose value holds its props:
+//! `spacer`, `responsive`, `textarea`, `custom`, `panel`, `board`, `wire`,
+//! `pixel_grid`, `color_picker`), whose value holds its props:
 //!
 //! | Prop | Type |
 //! | --- | --- |
@@ -28,6 +29,11 @@
 //! | `font` | `"ui"` or `"mono"` |
 //! | `color`, `fill`, `border_color` | integer `0xRRGGBBAA` or `"#rrggbb"` / `"#rrggbbaa"` |
 //! | `points` | `[[x, y], ...]` (wires) |
+//! | `cols`, `rows`, `zoom` | integer (pixel grids: texels, lu per texel) |
+//! | `tool` | `"pencil"`, `"fill"`, `"eyedropper"`, `"line"` (pixel grids) |
+//! | `mirror_h`, `grid` | bool (pixel grids) |
+//! | `palette` | up to 16 colours, integer `0xRRGGBB` or `"#rrggbb"` (pixel grids) |
+//! | `pixels`, `mask` | `cols * rows` palette indices / lock flags: a list of integers, or a string of hex digits, one per texel (pixel grids) |
 //! | `on_click`, `on_change`, `on_submit`, `on_select`, `on_activate`, `on_pointer`, `on_key`, `on_text`, `on_paste` | handler name (string) |
 //! | `children` | nodes; `child` = one node (scroll views) |
 //! | `compact`, `medium`, `wide` | nodes (`responsive` only) |
@@ -107,6 +113,19 @@ fn handler(v: &Json, path: &str, key: &str) -> Result<Handler, String> {
         Json::Int(i) => Ok(Handler::Ref(*i)),
         _ => Err(format!("{path}.{key} must be a handler name")),
     }
+}
+
+/// A pixel grid's `pixels` / `mask`: a list of small integers, or a string
+/// of hex digits (one texel each).
+fn texels(v: &Json, path: &str, key: &str) -> Result<Vec<u8>, String> {
+    if let Some(s) = v.as_str() {
+        return s
+            .chars()
+            .map(|c| c.to_digit(16).map(|d| d as u8).ok_or_else(|| format!("{path}.{key}: {c:?} is not a hex digit")))
+            .collect();
+    }
+    let a = v.as_array().ok_or_else(|| format!("{path}.{key} must be a list of integers or a hex string"))?;
+    a.iter().map(|x| u8::try_from(int(x, path, key)?).map_err(|_| format!("{path}.{key} entries must be 0-255"))).collect()
 }
 
 /// One node of a layout tree.
@@ -189,6 +208,28 @@ pub fn element(node: &Json, path: &str) -> Result<Element, String> {
             "border_w" => p.border_w = Some(u16_of(v, &path, k)?),
             "stroke" => p.stroke = Some(u16_of(v, &path, k)?),
             "capture" => p.capture = Some(boolean(v, &path, k)?),
+            "cols" => p.cols = Some(u16_of(v, &path, k)?),
+            "rows" => p.rows = Some(u16_of(v, &path, k)?),
+            "zoom" => p.zoom = Some(u16_of(v, &path, k)?),
+            "tool" => p.tool = Some(string(v, &path, k)?),
+            "mirror_h" => p.mirror_h = Some(boolean(v, &path, k)?),
+            "grid" => p.grid = Some(boolean(v, &path, k)?),
+            "palette" => {
+                let a = v.as_array().ok_or_else(|| format!("{path}.palette must be a list of colours"))?;
+                if a.len() > 16 {
+                    return Err(format!("{path}.palette has {} colours; at most 16", a.len()));
+                }
+                // Integers are 0xRRGGBB (what the Python / Lua wrappers send); strings are "#rrggbb".
+                p.palette = a
+                    .iter()
+                    .map(|c| match c.as_i64() {
+                        Some(i) => u32::try_from(i).ok().filter(|v| *v <= 0xff_ffff).ok_or_else(|| format!("{path}.palette entries are 0xRRGGBB")),
+                        None => color_prop(c, &path, k).map(|c| c >> 8),
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
+            "pixels" => p.pixels = texels(v, &path, k)?,
+            "mask" => p.mask = texels(v, &path, k)?,
             "points" => {
                 let a = v.as_array().ok_or_else(|| format!("{path}.points must be a list of [x, y]"))?;
                 let mut pts = Vec::with_capacity(a.len());

@@ -1,0 +1,80 @@
+NAME
+    git - simple version control
+
+SYNOPSIS
+    git command [args]
+
+DESCRIPTION
+    A small git that keeps the history of a directory's files in a .git
+    folder, in the same object format as real git. It works in the
+    current directory and the directories above it: commands look for
+    the nearest .git upwards. Files and folders named in a .gitignore at
+    the top of the repository (one pattern per line, * wildcards, a
+    trailing / for directories, ! to un-ignore, # for comments) are left
+    out by git add . and git status.
+
+    There are no remotes (no clone, push or pull) and no merge. Commits
+    are made by "Terminal User <user@terminal.os>". Run git with no
+    command for a short list.
+
+COMMANDS
+    init
+        Make the current directory a repository (creates .git, with the
+        branch main).
+
+    add path ...
+        Put the current contents of files into the index (the next
+        commit). A directory adds everything in it; . adds the current
+        directory.
+
+    status
+        The branch, the changes staged for the next commit (new,
+        modified, deleted) and the untracked files. Changes not yet
+        added are shown by git diff.
+
+    commit -m message
+        Record the index as a new commit on the current branch and print
+        its short id. Quotes around the message are optional.
+
+    log
+        The commits of the current branch, newest first.
+
+    branch [name]
+        Without a name, list the branches (* marks the current one).
+        With a name, create a branch at the current commit.
+
+    checkout branch
+        Switch to an existing branch. The index is set to that branch's
+        last commit; the files in the directory are not rewritten.
+
+    diff
+        Show the changes between the index and the files in the
+        directory.
+
+    rebase [-i] branch|HEAD~N
+    rebase [-i] --root
+        Replay the current branch's commits on top of branch (or rewrite
+        the last N commits, or all of them with --root). A rebase onto a
+        branch that is simply ahead fast-forwards. With -i, git writes a
+        todo list to .git/rebase-merge/git-rebase-todo instead: edit it
+        (pick, squash, fixup, drop, reword, edit; reorder lines to
+        reorder commits), then run git rebase --continue.
+
+    rebase --continue
+    rebase --abort
+        Carry on with, or cancel, an interactive rebase.
+
+    debug
+        Internal information: where .git is, HEAD, refs and the index.
+
+EXAMPLES
+      git init
+      git add .
+      git commit -m "first version"
+      git log
+      git branch test
+      git checkout test
+      git rebase -i HEAD~3
+
+SEE ALSO
+    edit, filesystem

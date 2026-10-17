@@ -35,11 +35,14 @@ public final class UiManager implements CompositorHost {
     /** Ctrl+Alt+Backspace switches between the console and the GUI. */
     public static final int SWITCH_MODS = UiProto.Mods.CTRL | UiProto.Mods.ALT;
 
-    private static final ScheduledExecutorService TICKS = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "ECM-UI");
-        t.setDaemon(true);
-        return t;
-    });
+    /**
+     * Compositor ticks run on the display pump's pool (DISPLAY_PIPELINE_SPEC.md
+     * Part A1), so one computer's slow tick doesn't hold up the others'; a
+     * compositor's own ticks never overlap (Compositor.tick is synchronized).
+     */
+    private static ScheduledExecutorService ticks() {
+        return com.example.evanscomputermod.computer.pipeline.DisplayPump.scheduler();
+    }
     private static final long T0 = System.nanoTime();
     /**
      * App-manager work the compositor must not wait for under its lock: an
@@ -107,7 +110,7 @@ public final class UiManager implements CompositorHost {
         }
         config = loadConfig();
         if (config.autostart()) {
-            TICKS.schedule(() -> {
+            ticks().schedule(() -> {
                 try {
                     start();
                 } catch (Throwable t) {
@@ -196,6 +199,23 @@ public final class UiManager implements CompositorHost {
     }
 
     /** The console/GUI switch chord. A phone has no console screen: it stays on the GUI. */
+    /** The desktop's Console item: show the console (the GUI keeps running). */
+    @Override
+    public void showConsole() {
+        if (phone == null) setVisible(false);
+    }
+
+    @Override
+    public void clipboardChanged(String mime, byte[] data) {
+        if (mime != null && mime.startsWith("text/")) computer.clipboardToPlayer(new String(data, StandardCharsets.UTF_8));
+    }
+
+    /** The player's real clipboard, right before their paste key. */
+    public void clipboardFromPlayer(String text) {
+        Compositor c = compositor;
+        if (c != null) c.setClipboardText(text);
+    }
+
     public synchronized void toggle() {
         if (compositor != null && phone == null) setVisible(!guiVisible);
     }
@@ -504,16 +524,38 @@ public final class UiManager implements CompositorHost {
         Compositor c = compositor;
         if (c != null && !ids.isEmpty() && c.exporter() == null) {
             int epoch = EPOCHS.incrementAndGet();
-            c.setExporter(new SceneExporter(c, epoch, step -> {
+            SceneExporter ex = new SceneExporter(c, epoch, step -> {
                 sceneHub.offer(step);
                 computer.requestUiSync();
-            }));
+            });
+            ex.setTimedSink(sceneHub::offerTimed);
+            c.setExporter(ex);
         }
         sceneHub.sync(displayId, ids, () -> {
             Compositor cc = compositor;
             return cc == null ? null : cc.exporter();
         }, sink);
         if (c != null && !sceneHub.hasViewers() && c.exporter() != null) c.setExporter(null);
+        // A lossy canvas that stops changing is refined: come back when that is due.
+        long due = sceneHub.refineDueInNanos(com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs());
+        long at = System.nanoTime() + due;
+        if (due >= 0 && (refineTimerAt < System.nanoTime() || at < refineTimerAt)) {
+            refineTimerAt = at;
+            com.example.evanscomputermod.computer.pipeline.DisplayPump.schedule(computer::requestUiSync, due);
+        }
+    }
+
+    private volatile long refineTimerAt;
+
+    @Override
+    public void timedQueued() {
+        computer.requestUiSync();
+    }
+
+    /** A client scrolled a scroll container of the GUI it draws (UiScrollPacket). */
+    public void scrolled(int sceneSurface, int node, int x, int y) {
+        Compositor c = compositor;
+        if (c != null) c.scrolled(sceneSurface, node, x, y);
     }
 
     // ================================================================= app manager hooks
@@ -742,6 +784,32 @@ public final class UiManager implements CompositorHost {
         return n.endsWith(".wasm") ? n.substring(0, n.length() - 5) : n;
     }
 
+    /** When a tile viewer (or a pixel reader) last needed the composited frame (nanoTime). */
+    private volatile long lastPixelDemandNanos = System.nanoTime();
+    /** Without demand for this long, compositing waits (Part A6). */
+    static final long PIXEL_DEMAND_NANOS = 1_000_000_000L;
+
+    /**
+     * A display pass had tile viewers (players without client rendering, a
+     * Screen wall in tile mode): the composited frame is needed. Composites
+     * any damage that waited.
+     */
+    public void notePixelDemand() {
+        long before = lastPixelDemandNanos;
+        lastPixelDemandNanos = System.nanoTime();
+        Compositor c = compositor;
+        if (c != null && System.nanoTime() - before > PIXEL_DEMAND_NANOS) {
+            c.compositePending();
+            computer.requestUiSync();
+        }
+    }
+
+    @Override
+    public boolean pixelsWanted() {
+        if (!sceneHub.hasViewers()) return true; // headless or tile-only: as before
+        return System.nanoTime() - lastPixelDemandNanos < PIXEL_DEMAND_NANOS;
+    }
+
     @Override
     public void present(byte[] rgba, int w, int h, List<Box> damage) {
         if (!guiVisible) return;
@@ -781,7 +849,7 @@ public final class UiManager implements CompositorHost {
             if (tickDueNanos <= due && tickDueNanos > System.nanoTime() - 50_000_000L) return;
             tickDueNanos = due;
         }
-        TICKS.schedule(() -> {
+        ticks().schedule(() -> {
             synchronized (tickLock) {
                 if (tickDueNanos == due) tickDueNanos = Long.MAX_VALUE;
             }

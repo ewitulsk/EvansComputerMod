@@ -1,0 +1,68 @@
+NAME
+    files - the file manager (GUI)
+
+SYNOPSIS
+    files [FOLDER]
+
+DESCRIPTION
+    Opens a window that lists the files in FOLDER (the root, /, if none
+    is given): folders first, each with an icon and its size. Needs the
+    GUI. An app that may only see the documents folder (Files on an
+    ePhone) starts in /home.
+
+    Double-click an entry, or select it and press Enter or Open, to open
+    it. A folder opens in the window, a .wasm program runs, and any
+    other file opens in the app that handles its type: text (.txt, .md,
+    .py, .json, .toml, .sh, ...) in the Text Editor, .vpl in the Visual
+    Programmer, .gba in the GBA emulator, videos in the Video Player
+    when the server has it. When several installed apps open a type and
+    none is the default, a chooser asks which one.
+
+    The toolbar has Up, the path field (type a path, press Enter), New
+    folder, Rename, Delete, Copy, Paste and Open. In a narrow window
+    (an ePhone) the file commands are in the ... menu. The line at the
+    bottom says what happened ("Pasted notes (copy).txt", "Can't open
+    ...").
+
+    Upload copies a file from your real computer into the folder shown.
+    The button is only there when the server and your own game both have
+    the evanscomputermod-upload add-on. Your system's file picker opens
+    in your game and the bottom line shows the progress; while it runs
+    the button is Cancel upload.
+
+KEYS
+    Enter
+        Open the selected entry.
+
+    Backspace
+        Go up to the parent folder.
+
+    F2
+        Rename the selected entry.
+
+    Delete
+        Delete the selected entry, after asking. It is deleted for good:
+        there is no wastebasket.
+
+    Ctrl+C
+        Copy the selected file or folder. Its path also goes on the
+        clipboard as text.
+
+    Ctrl+V
+        Paste the copied file or folder here. A taken name becomes
+        "name (copy).ext", then "name (copy 2).ext", ...
+
+    F5
+        Read the folder again.
+
+    Esc
+        Cancel the open question (new folder, rename, delete). At the
+        Terminal block press Shift+Esc (Esc closes the screen).
+
+EXAMPLES
+      files
+      files /home
+      gui launch files /bin
+
+SEE ALSO
+    gui, editor, chooser, picker, upload, ls, cp, rm

@@ -345,7 +345,9 @@ public final class ScenarioPlayer {
         hands.gameMode.useItemOn(hands, level, hands.getMainHandItem(), InteractionHand.MAIN_HAND,
                 new BlockHitResult(hit, face, pos, false));
         sneak(false);
-        hands.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        // An empty-hand use that handed the player something (a module taken out of a bay lands in the
+        // first free slot, the main hand) keeps it; otherwise the hand is emptied again.
+        if (!held.isEmpty() || hands.getMainHandItem().isEmpty()) hands.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         return heard();
     }
 
@@ -532,6 +534,15 @@ public final class ScenarioPlayer {
         return ok;
     }
 
+    /**
+     * What the client sends right before a paste key: the player's real
+     * clipboard ({@code ClipboardPackets.Push}, through its server handler).
+     */
+    public boolean pushClipboard(UUID computer, int display, String text) {
+        return com.example.evanscomputermod.network.ClipboardPackets.Push.deliver(hands,
+                new com.example.evanscomputermod.network.ClipboardPackets.Push(computer, (byte) display, text));
+    }
+
     /** HID usage of Enter, Backspace and the letter keys. */
     public static final int HID_ENTER = 0x28, HID_BACKSPACE = 0x2A;
 
@@ -593,6 +604,12 @@ public final class ScenarioPlayer {
         ok &= MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_UP,
                 (short) x1, (short) y1, (byte) 0, (byte) 0, (byte) 0));
         return ok;
+    }
+
+    /** The mouse moved to a pixel (a pointer move, as the client sends it). */
+    public boolean move(UUID computer, int display, int x, int y) {
+        return MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_MOVE,
+                (short) x, (short) y, (byte) 0, (byte) 0, (byte) 0));
     }
 
     /** One wheel step at a pixel ({@code dir} -1 = towards the end, as the client sends a wheel turned down). */

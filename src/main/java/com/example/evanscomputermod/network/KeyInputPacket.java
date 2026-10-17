@@ -83,6 +83,11 @@ public record KeyInputPacket(UUID computerId, byte displayId, byte action, short
         if (host == null) return false;
         ComputerInstance computer = ComputerTargets.instance(host);
         if (computer == null) return false;
+        return apply(computer, player, packet);
+    }
+
+    private static boolean apply(ComputerInstance computer, ServerPlayer player, KeyInputPacket packet) {
+        computer.noteUiPlayer(player.getUUID());
         if (packet.action() == TEXT) {
             computer.handleTextEvent(packet.text());
         } else if (packet.action() >= DOWN && packet.action() <= REPEAT) {
@@ -94,14 +99,19 @@ public record KeyInputPacket(UUID computerId, byte displayId, byte action, short
         return true;
     }
 
+    /** Network thread (DISPLAY_PIPELINE_SPEC.md Part A3): straight to the compositor, which is synchronized. */
     public static void handle(KeyInputPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            try {
-                if (!(context.player() instanceof ServerPlayer player)) return;
-                deliver(player, packet);
-            } catch (Throwable e) {
-                EvansComputerMod.LOGGER.error("Error handling key input packet", e);
-            }
-        });
+        try {
+            if (!(context.player() instanceof ServerPlayer player)) return;
+            ComputerTargets.input(player, packet.computerId(), packet.displayId(), c -> apply(c, player, packet), () -> {
+                try {
+                    deliver(player, packet);
+                } catch (Throwable e) {
+                    EvansComputerMod.LOGGER.error("Error handling key input packet", e);
+                }
+            });
+        } catch (Throwable e) {
+            EvansComputerMod.LOGGER.error("Error handling key input packet", e);
+        }
     }
 }

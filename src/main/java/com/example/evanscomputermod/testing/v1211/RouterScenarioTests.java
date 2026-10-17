@@ -81,14 +81,6 @@ public final class RouterScenarioTests {
   @GameTest(
       template = TestDriver.STRUCTURE,
       timeoutTicks = TestDriver.BACKSTOP_TICKS,
-      batch = "ecm_router_scenarios.internet")
-  public static void internet(GameTestHelper h) {
-    run(h, "router_internet");
-  }
-
-  @GameTest(
-      template = TestDriver.STRUCTURE,
-      timeoutTicks = TestDriver.BACKSTOP_TICKS,
       batch = "ecm_router_scenarios.fiber")
   public static void fiber(GameTestHelper h) {
     run(h, "router_fiber");

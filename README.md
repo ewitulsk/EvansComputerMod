@@ -34,8 +34,8 @@ homes on a buried village cable) connected by a generated long-distance fiber ri
 that runs panel to panel and is cabled to each ISP router. The ISP routers, village web
 servers and the ring's chat server are server-owned computers that keep running outside
 loaded chunks; `chat` talks to the chat server from any village. Player terminals can use
-an Always-On bay module. Windows servers have a socket-based internet gateway without a
-TAP driver.
+an Always-On bay module. With the optional internet add-on (below), the Internet Gateway
+reaches the real internet through a host socket proxy on any OS.
 
 See **[the Tech Village network](docs/TECH_VILLAGE_NETWORK.md)** for the ring's
 architecture, address plan, configurations, how to verify that the villages are peered,
@@ -66,7 +66,7 @@ Shared memory has no fixed addresses: the input, interrupt, socket-IPC, framebuf
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
 | **Screen** | In-world display block. Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
 | **Redstone Link Interface** | *(Create installed)* Place next to a Terminal to give it a `redstone_link` peripheral: 64 programmable Create Redstone Link channels. Keeps its channel setup when broken. |
-| **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
+| **Internet Gateway** | Unbreakable block at (0,0,0) linking cabled networks to the real internet (needs the optional internet add-on on the server; offline without it). Auto-generated with cable column to surface on first server start. |
 
 ### Network Interface Block
 
@@ -160,6 +160,8 @@ The server decodes video files (MP4, MKV, WebM, MOV, AVI) with FFmpeg and hands 
 **Video is an optional add-on.** FFmpeg is native code, so it is not in the main mod: it ships as a separate server-side mod, `evanscomputermod-ffmpeg-mc<version>.jar` (built with the others by `copy-jar.sh`), like the Wasmtime runtime. Put it in the server's mods folder (or your own for single player); players don't need it. Without it, the `video` command says video isn't installed and the Video Player app isn't offered (an installed copy is removed at the next boot).
 
 **File upload is an optional add-on.** `evanscomputermod-upload-mc<version>.jar` (built by `copy-jar.sh`) lets a player copy a file from their real computer (Windows, Linux or macOS) into a Terminal or ePhone: type `upload [DIR]` (default `/home`), click **Upload** in Files, or call `shell.upload()` from Python or Lua. The system's own file picker opens in the player's game and the file goes to the server over the network. It must be on the server **and** in each player's game; without it on either side, upload isn't offered (the Upload button only appears for a player whose game has it). The server's `config/evanscomputermod_upload-server.toml` (per world) turns it on or off, limits it to operators, and caps the file size (16 MiB by default) and the storage a computer may use (256 MiB by default). See [docs/UPLOAD.md](docs/UPLOAD.md).
+
+**Real internet access is an optional add-on.** `evanscomputermod-internet-mc<version>.jar` (built by `copy-jar.sh`, pure Java, server-side only) connects the Internet Gateway block to the real internet: the server makes outbound TCP and UDP connections on behalf of in-game computers, so `curl`, the browser and DNS's real-name fallback work. Private/LAN destinations are blocked unless the server sets `-Devanscomputermod.internet.allowLan=true`; `-Devanscomputermod.internetProxy=false` turns it off, and Linux servers can also bridge a TAP device with `-Devanscomputermod.tap=<device>` (it runs a `python3` helper). Without the add-on the main mod opens no host sockets and the gateway is offline. See [docs/ROUTER.md](docs/ROUTER.md#always-on-computers-saves-and-the-internet-uplink).
 
 - **`video`** on the console: `video info FILE` (size, frame rate, length, sound), `video ls [DIR...]` (the videos in `/home` and `/home/videos` with their lengths) and `video play FILE` (on the Terminal's screen, fitted into `--size WxH`, default 320x200; `--screen` plays on the attached Screen wall at its own resolution; `--start SECONDS`, `--loop`, `--mute`). Ctrl+T stops it.
 - **Video Player** (`dev.ecm.video`), an app on every computer: the desktop and the ePhone. Its library lists the videos in `/home` and `/home/videos`; Files opens videos with it. It has a seek bar, -10s / +10s, Play/Pause and Loop; keys Space, the arrows and L; on an ePhone in hand, hotkey slots 1 (play/pause), 2 (back 10 s) and 3 (forward 10 s). Leaving it pauses it, and it opens again at the same place after the phone restarts.
@@ -885,7 +887,7 @@ spk.close()
 
 ### `net` Module
 
-The `net` module provides a full TCP/IP networking stack built entirely inside the WASM OS. Computers can communicate with each other over a virtual Ethernet LAN, and optionally reach the real internet through a TAP bridge.
+The `net` module provides a full TCP/IP networking stack built entirely inside the WASM OS. Computers can communicate with each other over a virtual Ethernet LAN, and optionally reach the real internet through the Internet Gateway (with the internet add-on on the server).
 
 #### Network Architecture
 
@@ -1260,16 +1262,16 @@ Every face of a computer (plus each attached Network Interface block) is its own
 - **Netlink** (`net/netlink.rs`) — `ifconfig` and `ip` talk rtnetlink to the kernel. Every change is persisted to `/network.cfg` and restored at boot.
 - **Switch** — see [`switch_instructions.md`](switch_instructions.md). The switch is a kernel service: `switch on` runs it in the background, `switch` opens its AOS-CX style CLI, and `interface vlan N` + `ip address` gives it a management address (SVI) reachable through the bridge.
 
-### TAP Bridge — Real Internet Access
+### Internet Gateway — Real Internet Access
 
-The TAP bridge connects segments that reach an **Internet Gateway** block to a real Linux TAP device. Unicast frames for MACs not on the segment, and all broadcast/multicast, are copied to the TAP; frames from the TAP appear on every gateway-connected segment.
+Segments that reach an **Internet Gateway** block are linked to the real network by the optional internet add-on (`evanscomputermod-internet`, server-side). Unicast frames for MACs not on the segment, and all broadcast/multicast, go to the uplink; frames from it appear on every gateway-connected segment. The uplink is a host socket proxy at `10.0.0.1` (any OS; LAN destinations blocked by default) and, on Linux, optionally a TAP device:
 
 ```bash
 sudo scripts/setup-tap.sh tap0      # create TAP + NAT rules (Linux, as root)
 sudo scripts/teardown-tap.sh tap0   # remove them
 ```
 
-On a Minecraft server the TAP is configured in the mod's config file (the Java mod uses a small helper process to open the device).
+then start the server with `-Devanscomputermod.tap=tap0` (TAP is off by default; the add-on runs a small `python3` helper to open the device). Details: [docs/ROUTER.md](docs/ROUTER.md#always-on-computers-saves-and-the-internet-uplink).
 
 ### Testing
 
@@ -1394,7 +1396,7 @@ net.udp_close(sock)
 
 ### Fetch a Web Page from the Real Internet
 
-Requires TAP bridge setup (see Networking — Technical Details):
+Requires the internet add-on on the server and a computer cabled to the Internet Gateway (see Networking — Technical Details):
 
 ```python
 import net

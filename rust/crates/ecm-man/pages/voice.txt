@@ -1,0 +1,63 @@
+NAME
+    voice - microphones, your voice, and talking over the radio
+
+DESCRIPTION
+    Computers hear sound the way real ones do: a microphone is a capture
+    device programs read from, and a radio carries a voice as a real
+    signal. A voice that reaches a computer has travelled through the
+    air (fainter with distance) or over the air (with range, walls and
+    other radios).
+
+HARDWARE
+    Microphone
+        A desk microphone block. Next to a Terminal it is a microphone
+        peripheral and /dev/mic; its tally lamp lights while a program
+        records.
+
+    ePhone
+        Every ePhone has a microphone at its holder's hand, or uses its
+        AirPods' (see bluetooth).
+
+    Walkie-Talkie
+        A two-way FM radio for VHF and UHF channels. While its holder
+        holds its push-to-talk key it transmits their voice; any
+        receiver on the channel hears it (another Walkie-Talkie, a
+        Handheld Radio, an SDR running rx_fm).
+
+    Speaker
+        Plays sound, and is a source microphones hear.
+
+THE SOUND IN THE AIR
+    Every sound (a talking player, a Speaker, a phone's speaker) is put
+    into the world at its position. A microphone hears all of them,
+    each half as loud at twice the distance, and nothing past 24 blocks.
+    A program that plays what it records next to its own Microphone
+    feeds back, as in a real room.
+
+/DEV/MIC
+    /dev/mic (or /dev/mic.<side>) reads PCM; /dev/micctl sets the format
+    (rate 8000-48000, bits 8|16, channels 1|2), the gain (0-100, 50 is
+    the capsule's own level) and flush, and reads back the status and
+    the level. Every open /dev/mic is its own stream, so two programs
+    can record at once. Apps need the microphone permission.
+
+YOUR MICROPHONE
+    Minecraft's Options > Music & Sounds has Microphone Input (off by
+    default), the input device, its volume and the mode: Push to Talk
+    (hold Talk, B) or Voice Activation. The microphone opens only while
+    something wants your voice (a Microphone near you that a program
+    reads, or a Walkie-Talkie in hand), and the HUD shows MIC or TX.
+    With Simple Voice Chat or Plasmo Voice installed, that mod's
+    microphone and push-to-talk are used instead.
+
+PROGRAMS
+      arecord FILE.wav           record a microphone (arecord --level)
+      radio_station /dev/mic F   transmit a microphone live on an SDR
+      discord                    voice channels (see discord)
+      audio.open_mic(side)       Python and Lua (see scripting)
+
+    Settings > Sound picks the default speaker and microphone (written
+    to /etc/sound.conf), their volume and gain, and shows a live level.
+
+SEE ALSO
+    arecord, radio_station, bluetooth, discord, settings, scripting

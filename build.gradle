@@ -97,6 +97,17 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(vp.java)
 repositories {
     mavenLocal()
     mavenCentral()
+    // Voice chat mods' public APIs (compile only; see docs/VOICE.md, prox-chat compatibility).
+    maven {
+        name = 'henkelmax'
+        url = 'https://maven.maxhenkel.de/repository/public'
+        content { includeGroup 'de.maxhenkel.voicechat' }
+    }
+    maven {
+        name = 'plasmoverse'
+        url = 'https://repo.plasmoverse.com/releases'
+        content { includeGroupByRegex 'su\\.plo.*' }
+    }
 }
 
 // Point subproject source sets at stonecutter's per-version generated
@@ -188,7 +199,6 @@ neoForge {
                 systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
                 // The tech suite needs the headless ISP ring (BGP reroute checks); other suites do not.
                 systemProperty 'evanscomputermod.techVillages', providers.gradleProperty('visualSuite').getOrElse('tech') == 'tech' ? 'true' : 'false'
-                systemProperty 'evanscomputermod.tap', 'none'
                 // Opt-in multi-minute parts of the tech suite (TESTING.md "Long runs"): ride, reroute, all.
                 systemProperty 'ecm.clientChecks.techParts', providers.gradleProperty('visualTechParts').getOrElse('')
                 // 6 GB: the tech suite boots the whole ring headless, DNS included (44 infrastructure
@@ -345,6 +355,13 @@ dependencies {
         }
         compileOnly files("${libs}/sable-neoforge-1.21.1-2.0.5.jar", "${libs}/create-1.21.1-6.0.10.jar")
         compileOnly fileTree(dir: "${libs}/compile", include: ['*.jar'])
+        // Simple Voice Chat and Plasmo Voice: when either is installed, the microphone comes from
+        // it (voice/client/compat), so the mic is never opened twice. Only their API classes are
+        // compiled against; the bridge classes load only when the mod is present.
+        compileOnly 'de.maxhenkel.voicechat:voicechat-api:2.5.0'
+        compileOnly('su.plo.voice.api:client:2.1.4') { transitive = false }
+        compileOnly('su.plo.voice.api:common:2.1.4') { transitive = false }
+        compileOnly('su.plo.voice:protocol:2.1.4') { transitive = false }
         // FML 4 (NeoForge 21.1) doesn't put plain `implementation` libraries on the
         // game's classpath in dev runs (runClient/runServer/runGameTestServer), so
         // Chicory was missing there. The release jar bundles it anyway.

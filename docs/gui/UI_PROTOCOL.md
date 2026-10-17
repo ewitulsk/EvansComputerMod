@@ -397,7 +397,18 @@ All four are messages on the same UI connection. The compositor and app manager 
 
 ### Implementation
 
-`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas, and for editors `board`, `panel` and `wire`: see [Visual Programmer](VISUAL_PROGRAMMER.md#toolkit-additions)), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
+`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas, for editors `board`, `panel` and `wire`: see [Visual Programmer](VISUAL_PROGRAMMER.md#toolkit-additions), and for the Card Designer `pixel_grid` and `color_picker`, below), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
+
+### Card widgets
+
+Two widgets for the Card Designer ([CARDS.md](../cards/CARDS.md) "Programs and apps"), drawn with ordinary display-list nodes (rects per run of equal texels, lines for hatching), so they need no resources and render identically everywhere:
+
+| Widget | Props | Behaviour |
+| --- | --- | --- |
+| `pixel_grid` | `cols`, `rows` (texels), `zoom` (lu per texel; without it the grid fills its space and fits), `palette` (up to 16 `0xRRGGBB`; a default 16-colour set otherwise), `pixels` (`cols * rows` palette indices; replaces the edited bitmap when set, like a text field's `text`), `mask` (`cols * rows`, non-zero = locked: hatched, never painted), `color` (the palette index to paint with), `tool` (`pencil`, `fill`, `eyedropper`, `line`), `mirror_h`, `grid` (gridlines when a texel is at least 4 lu) | A press paints the texel under the pointer (pencil: and every texel along a drag; fill: the connected area, locks are walls; line: a preview while dragging, painted on release); `mirror_h` paints the left-right mirror too. `change` carries the changed texels (`EventValue::Texels`, `[x, y, index]` each); the eyedropper fires `select` with the picked index (and remembers it as the paint colour when the app sets no `color`). The bitmap is widget state: Rust reads it with `Ctx::pixels(id)` / `ViewCtx::pixels`, Python and Lua with `.pixels` / `.pixel(x, y)` on the widget or `layout.value(id)`. Takes Tab focus. |
+| `color_picker` | `value` (`0xRRGGBB`), `width` / `height` (120 x 140 by default) | A saturation/value square (16 x 16 cells at the current hue), a 16 lu hue strip (24 bands) and a hex field with a swatch. Drags on the square and the strip fire `change` with the new `0xRRGGBB` on every move; a press on the field (or Tab) focuses it: typed hex digits (a `#` is implied, 3 or 6 digits) apply as soon as the colour is complete, Enter applies or restores, Escape restores, Ctrl+C copies `#rrggbb`, Ctrl+V pastes. All integer math: hue 0-359, saturation and value 0-255 kept next to the colour so a grey keeps its hue. |
+
+Theme tokens: `grid_line` (gridlines) and `masked` (the wash over locked texels). Python: `ui.PixelGrid(width=32, height=20, pixels=[...], palette=[...], zoom=6, color=1, tool="pencil", mirror_h=False, grid=True, mask=[...], on_change=f, on_select=g)` (`width` / `height` are texels; `.pixels`, `.pixel(x, y)`, `.set_pixel(x, y, i)`, `.color`, `.tool` …) and `ui.ColorPicker(value=0xff0000, on_change=f)` (`.value`, `.hex`); Lua: `ui.PixelGrid(width, height, pixels, palette, {...})` and `ui.ColorPicker(value, {...})` with the same names. Golden: `card_widgets` (a card face with the stripe rows locked, an icon grid with `mirror_h`, a picker; then a pencil stroke and hue / SV presses hit-tested by the compositor).
 
 ### Python
 
@@ -633,3 +644,39 @@ The app platform ([APPS.md](APPS.md)) wired to the compositor and the desktop; t
 - **`OpenFile`:** `Compositor.deliverOpenFile(pid, path)`: sent to the pid's connections that said Hello, else queued and sent right after `Welcome` (dropped if the program exits first).
 - **From the ePhone lane (merged):** `WillSuspend` (`UiManager.deliverWillSuspend`, on Terminals through `installAppHooks`), `SaveState` -> app manager, `restore_follows` / `Restore`, `BackgroundDone` (§11 "As built (P5b)"); `HotkeyClaim` is the phone's (§7). Order after `Welcome`: `Restore`, queued `NotificationAction`s, queued `OpenFile`s.
 - **Tests:** `UiServicesTest` (`notifyNeedsTheNotificationsPermission`, `launchAndOpenGoToTheHostAndOpenFileReachesTheApp`), `AppDesktopKernelTest` (real kernel and desktop), GameTests `ecm_apps` `app_store` and `files_open_with`; goldens `settings_apps`, `settings_apps_compact`, `settings_apps_wide`, and the regenerated `settings_*` / `desktop_apps`.
+
+## 20 · Version 2: timed commits and client feedback
+
+Version 2 of the wire contract (`abi/ui-protocol.toml`, [DISPLAY_PIPELINE_SPEC.md](DISPLAY_PIPELINE_SPEC.md) Parts C3 and F). The compositor accepts `Hello{version: 1}` and `2`; `Welcome` answers with the client's version, and a version 1 app never sees a v2 message, so apps built before keep working (ecm-ui, Python and Lua now say 2).
+
+### Timed commits
+
+| Message | Dir | Meaning |
+| --- | --- | --- |
+| `CommitAt{surface, pts_us}` | a>c | Like `Commit`, but the pixel changes in it (the connection's canvases with new rows, the surface itself if it is a pixel surface) are shown at `pts_us` on the app's monotonic clock (WASI `clock_time_get(MONOTONIC)`). Tree changes or a resize in it are `bad_state`: layout stays immediate, so text and buttons never wait behind video. Frames queue in time order. |
+| `QueueFlush{surface}` | a>c | Drop the surface's and the connection's canvases' queued frames (seek, pause, stop). |
+| `SurfaceSetContent{surface, resource, hint}` | a>c | How a pixel surface (`resource` 0) or a canvas may travel: 0 auto, 1 exact, 2 motion (lossy allowed). |
+| `QueueLimits{max_queue_frames, max_queue_ms}` | c>a | After `Welcome` (and `Restore`, queued actions and files): 12 frames and 500 ms by default. |
+
+- While a surface or the connection's canvases have a timed stream (a frame queued or shown in the last second), `RequestFrame` is answered with `Frame` when the queue has room, not on the refresh tick, so a producer runs exactly as far ahead as the queue allows.
+- The compositor shows each frame at its time, so its frame (and tile viewers, screenshots) is what is on screen now. Clients that draw the scene get the frames ahead as `TIMED` messages ([DISPLAY_PIPELINE.md](DISPLAY_PIPELINE.md) section 1b).
+- ecm-ui: `Core::put_canvas_at`, `commit_at`, `queue_flush`, `set_content`, `queue_limits`, `Ctx::now_us`. Python and Lua: `app.canvas(w, h, format)`, `Canvas.put`, `Canvas.commit_at(pts_us)`, `Canvas.queue_flush()`, `Canvas.content`, `ui.now_us()` (`man ui`).
+
+### Client feedback props
+
+Props a client that draws the scene may act on at once; the server's own drawing ignores them, and the app's next commit always replaces what the client predicted.
+
+| Prop | Nodes | The client |
+| --- | --- | --- |
+| `HoverFill`, `HoverBorderColor`, `HoverColor` | rect, rect, text | uses them while the hit id under the pointer equals the node's own `HitId` |
+| `PressedFill`, `PressedBorderColor`, `PressedColor` | rect, rect, text | while the left button went down on that hit id and is held |
+| `Scroll` (1 x, 2 y, 3 both), `ContentW`, `ContentH`, `ScrollX`, `ScrollY` | group | scrolls the group on the wheel at once (16 lu a step, ecm-ui's `scroll_step`), clamped to the content, and reports the offset; the app gets `Scrolled{surface, node, x, y}` (c>a), lays the content out there and commits `ScrollX/ScrollY` |
+| `DragWindow` (a window id) | group, rect | a left drag that starts on the node moves its window and that window (a shell's title bar and the app window it frames) with the pointer; the shell's `Place` on release takes over |
+| `Caret` (character index) | text | typed text and Backspace show in the focused window's field at once |
+| `CaretOf` (a text node id) | rect | that field's caret: moved with the predicted text |
+
+ecm-ui sets them on buttons, list rows, menu items, tabs, scrollbar thumbs and checkboxes (hover and pressed), scroll views (a viewport group `:vp`), single-line text fields (caret) and the desktop's title bars (drag). Text areas get no scroll or caret props.
+
+### Tests
+
+`UiTimedSceneTest` (JUnit), `UiServicesTest` (the message order after `Welcome`), `ecm-ui` `tests/feedback.rs`, the Python and Lua canvas tests, and the GameTests of `ecm_display`.

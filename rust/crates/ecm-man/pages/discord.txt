@@ -1,0 +1,43 @@
+NAME
+    discord - Discord: servers, text channels and voice channels
+
+SYNOPSIS
+    discord
+
+    discord --source <dir>
+
+DESCRIPTION
+    Opens the Discord app (dev.ecm.discord; it needs the GUI). It finds
+    every Discord backend (discordd) on the network by itself, plus the
+    one in /etc/chat.conf and the ones you added, and shows the servers
+    you joined on all of them together on the rail at the left.
+
+    The + button creates a server (Create My Own), joins one (Join a
+    Server lists every server on every connected backend), searches the
+    network, or adds a backend by address (10.0.8.1 or 10.0.8.1:7790).
+    In a server, text channels show as # name and voice channels with a
+    speaker icon and who is in them. Its owner adds channels and can
+    delete it; others can leave it.
+
+    In a text channel the last 50 messages show, and Enter sends.
+    /nick NAME changes your nickname on every backend. A message while
+    the window isn't on screen posts a notification.
+
+    Tap a voice channel to join it: the app uses the default microphone
+    and speaker (on an ePhone its own, or its AirPods, shown as
+    Headphones). Mute and Deafen sit by your name; Disconnect leaves. On
+    a loudspeaker it talks half duplex, like a speakerphone.
+
+    On the ePhone the hotkeys are 1 Send, 2 Mute, 3 Hang up.
+
+OPTIONS
+    --source dir
+        Write the app's package folder, for pkg build dir repo.
+
+FILES
+    /etc/chat.conf
+        A backend to connect to (village computers have one) and the
+        default nickname.
+
+SEE ALSO
+    discordd, chat, disco, voice, bluetooth

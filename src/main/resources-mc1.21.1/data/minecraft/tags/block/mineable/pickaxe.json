@@ -3,6 +3,7 @@
   "values": [
     "evanscomputermod:terminal_block",
     "evanscomputermod:burner_generator",
+    "evanscomputermod:microphone",
     "evanscomputermod:access_point",
     "evanscomputermod:copper_wire",
     "evanscomputermod:antenna_wire",
@@ -28,6 +29,8 @@
     "evanscomputermod:lte_antenna",
     "evanscomputermod:mmwave_antenna",
     "evanscomputermod:charging_dock",
-    "evanscomputermod:card_reader"
+    "evanscomputermod:card_reader",
+    "evanscomputermod:card_printer",
+    "evanscomputermod:nfc_reader"
   ]
 }

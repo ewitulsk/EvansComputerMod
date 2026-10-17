@@ -1,0 +1,116 @@
+NAME
+    networking - cables, addresses, DHCP, DNS, routing, Wi-Fi and SSH
+
+OVERVIEW
+    Computers talk over network cable, fiber and Wi-Fi with real
+    Ethernet and IPv4: addresses, routes, DHCP, DNS, TCP and UDP. All
+    of it is software on the computers; the blocks are only the wires.
+    This page explains the pieces and which page to read for each task.
+
+INTERFACES AND CABLES
+    A computer's network ports are its faces. The faces other than the
+    screen are numbered in the order DOWN, UP, NORTH, SOUTH, WEST,
+    EAST, then the free faces of attached Interface Blocks: eth0,
+    eth1, eth2, ... For a terminal with a horizontal screen DOWN is
+    always eth0 and UP always eth1; the side faces depend on where the
+    screen faces, so hold the Interface Probe against a face to see its
+    name. A Wi-Fi Module in a module bay adds wlan0.
+
+    Every NIC whose face touches the same connected run of cable is on
+    one shared segment, like a hub: they all hear each other. Fiber
+    Span joins only fiber and Fiber Patch Panels; put a patch panel
+    where copper meets fiber. An interface has link only when another
+    NIC (or the Internet Gateway) is on its segment. Use a switch only
+    for VLANs, loops or link aggregation.
+
+    ifconfig lists the interfaces with their state, MAC and address.
+
+ADDRESSES AND ROUTES
+    Each interface needs an IPv4 address and prefix, for example
+    192.168.1.20/24: computers in the same subnet reach each other
+    directly; anything else goes to a router, normally the default
+    route. Set them by hand with ifconfig and ip, or let DHCP do it.
+
+    The kernel saves the settings in /network.cfg and reads it at boot:
+
+      iface eth0 10.0.0.5/24
+      iface eth1 dhcp
+      vlan eth0 100
+      down eth2
+      route default via 10.0.0.1 dev eth0
+      route 192.168.5.0/24 via 10.0.0.3 dev eth0
+      dns 10.0.0.53
+
+    /services.cfg holds one startup command per line, run after
+    network.cfg: router on, switch on, and background commands ending
+    in & (sshd &, httpd 80 &, named &, disco serve &).
+
+DHCP
+    A DHCP server hands out addresses, the default router and the DNS
+    server. Clients: iface ethN dhcp in network.cfg, ifconfig ethN
+    dhcp, or dhclient ethN. Servers: a pool in the router command line,
+    or dhcpd on any computer.
+
+DNS
+    Names like web.v3.ring are turned into addresses by DNS. Programs
+    look in /etc/hosts, then ask the nameservers in /etc/resolv.conf
+    (written from DHCP), trying its search domains for short names.
+    named is the DNS server; domain registers your own .ecm names.
+
+ROUTING
+    A router forwards between subnets. The router command makes a
+    computer a router with NAT (many private computers behind one
+    address), port forwarding, a DHCP server, static routes and BGP.
+    The Internet Gateway block reaches the real internet when the
+    server has the internet add-on (evanscomputermod-internet); without
+    it the gateway is offline. Give the port cabled to it a static
+    address in 10.0.0.0/24 with gateway 10.0.0.1 (it serves no DHCP).
+    Only public addresses are reached: the server's own LAN (10.x,
+    172.16-31.x, 192.168.x, 100.64-127.x) is refused unless the server
+    allows it.
+
+WI-FI
+    Put a Wi-Fi Module in a bay, then wifi connect <network>
+    [password]. Access Points bridge Wi-Fi to their cable.
+
+SSH
+    Run sshd & on a computer and ssh to it from another to use its
+    shell, including the router and switch command lines. Set
+    passwords with passwd.
+
+THE TECH VILLAGE RING
+    Ten Tech Villages around spawn form a ring. Village N is AS 65000+N
+    run by its ISP router; neighbouring villages are joined by fiber
+    and exchange routes with BGP, so traffic goes the other way round
+    when a fiber is cut. Village 1 has the uplink to the internet.
+
+      100.(64+N).1.0/24   the village cable under the streets
+      100.(64+N).0.0/24   the Data Center (web server .10, DNS .53)
+      192.168.1.0/24      each house, behind its home router (NAT)
+      172.31.N.0/26       the fiber to the next village
+
+    To join, put a computer on the village cable (dig under a street)
+    with iface ethN dhcp, place one in a free Data Center rack, or tap
+    a fiber with a patch panel and peer with your own router (the
+    ISPs accept BGP from taps). The ring has a chat server, an app
+    repository and DNS (vN.ring, .ecm, .ring); disco finds them.
+
+TASKS
+      see interfaces and addresses   ifconfig, ip
+      set an address by hand         ifconfig, ip
+      get an address automatically   dhclient
+      hand out addresses             dhcpd, router
+      test a connection              ping, traceroute
+      look up a name                 nslookup, dig, resolvectl
+      run DNS, register a name       named, domain, whois
+      fetch or serve web pages       curl, httpd
+      log in remotely                ssh, sshd, ssh-keygen
+      route, NAT, BGP                router
+      VLANs, switching               switch
+      join Wi-Fi                     wifi, wpa_supplicant, wpa_cli, iw
+      watch packets                  tcpdump
+      find services                  disco
+      chat and Discord               chat, discord, discordd
+
+SEE ALSO
+    ifconfig, ip, dhclient, router, switch, named, wifi, ssh, disco

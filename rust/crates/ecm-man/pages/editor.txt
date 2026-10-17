@@ -1,0 +1,65 @@
+NAME
+    editor - the Text Editor (GUI)
+
+SYNOPSIS
+    editor [FILE]
+
+DESCRIPTION
+    Opens a window to edit a text file in a monospace font, with line
+    numbers (left out on a small window). With FILE it opens that file;
+    a FILE that doesn't exist yet becomes a new file that Save creates.
+    Without FILE it starts an empty, untitled document. Needs the GUI.
+
+    The toolbar has New, Open, Save, Save as (not on a small window) and
+    Find. The bottom line says what happened and shows the caret's
+    position as "Ln, Col". The window title is the file's name with a *
+    in front while there are unsaved changes.
+
+    Before closing the window, starting a new file or opening another
+    one with unsaved changes, the editor asks "Save changes to NAME?"
+    with Cancel, Don't save and Save.
+
+    Files double-clicked in Files open in a copy of the editor that is
+    an app (dev.ecm.editor) and may only read and write the file it was
+    given. The editor typed at the shell or started from the launcher
+    can open any file.
+
+KEYS
+    Ctrl+S
+        Save. An untitled document asks for a path first.
+
+    Ctrl+Shift+S
+        Save as: asks for a path.
+
+    Ctrl+O
+        Open: asks for a path.
+
+    Ctrl+N
+        Start a new, untitled document.
+
+    Ctrl+F
+        Show the find field (filled with the selected text). Enter in
+        it, F3 or Next finds the next match after the caret, ignoring
+        case and wrapping round to the top.
+
+    F3
+        Find the next match.
+
+    Esc
+        Close the open question or the find field. At the Terminal
+        block press Shift+Esc (Esc closes the screen).
+
+    Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A
+        Copy, cut, paste, select all. Shift with the arrows selects;
+        Ctrl with the arrows moves a word.
+
+    Tab
+        Inserts spaces. Ctrl+Tab leaves the text area.
+
+EXAMPLES
+      editor
+      editor /home/hello.py
+      gui launch editor /etc/ui.toml
+
+SEE ALSO
+    files, notes, gui, python, lua

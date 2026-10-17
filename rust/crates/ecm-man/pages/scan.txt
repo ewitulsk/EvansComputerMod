@@ -1,0 +1,48 @@
+NAME
+    scan - find the active frequencies in a band
+
+SYNOPSIS
+    scan <start> <stop> [--threshold DB] [--dwell MS] [--passes N]
+    [--gain DB] [--sdr NAME] [--rate SPS] [--log FILE]
+
+DESCRIPTION
+    Steps the SDR across start..stop, listening a short time at each
+    step, and prints every signal that stands out above the noise: its
+    frequency, level and how far over the noise it is. At the end it
+    prints how many active frequencies it found (nearby hits merged).
+
+    Each step covers most of the sample rate's width, so a wider --rate
+    scans a band in fewer steps.
+
+OPTIONS
+    --threshold DB
+        How far above the noise floor a signal must be. Default 15.
+
+    --dwell MS
+        Time spent on each step, 10-10000 ms. Default 100.
+
+    --passes N
+        Scan the band N times (catches signals that come and go).
+        Default 1.
+
+    --gain DB
+        Receiver gain. Default 30 (fixed, so levels compare between
+        steps).
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+    --rate SPS
+        Sample rate. Default 48000.
+
+    --log FILE
+        Append the results to FILE, one line per frequency:
+        "<hz> <level dB> <dB over noise>".
+
+EXAMPLES
+      scan 144M 148M
+      scan 7M 7.3M --threshold 10 --passes 3
+      scan 88M 108M --rate 250k --log /fm.txt
+
+SEE ALSO
+    waterfall, rx_fm, rx_am, radio

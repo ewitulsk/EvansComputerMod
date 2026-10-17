@@ -362,30 +362,30 @@ public final class AppScenarios {
         return b.build();
     }
 
-    // ------------------------------------------------------------------ chat_app
+    // ------------------------------------------------------------------ discord_app
 
-    static final String CHAT = "dev.ecm.chat", CHAT_SERVER = "10.0.8.1";
-    static final String CHAT_HELLO = "hello from my desk", CHAT_REPLY = "hi alex, welcome", CHAT_LATER = "are you still there?";
+    static final String DISCORD = "dev.ecm.discord", DISCORD_SERVER = "10.0.8.1";
+    static final String DISCORD_HELLO = "hello from my desk", DISCORD_REPLY = "hi alex, welcome", DISCORD_LATER = "are you still there?";
 
     /** Click "Repositories" (medium and wide windows) or "Repos" (compact) in the App Store. */
     static String clickRepos(ScenarioRun r) {
         return clickText(r, "App Store", "Repositories") == null ? null : clickText(r, "App Store", "Repos");
     }
 
-    /** Null once Chat's window shows a text containing {@code text}. */
-    static String chatShows(ScenarioRun r, String text) {
+    /** Null once Discord's window shows a text containing {@code text}. */
+    static String discordShows(ScenarioRun r, String text) {
         var c = comp(r);
         if (c == null) return "no GUI";
         for (var w : c.windows()) {
-            if (!w.appId().equals(CHAT) || !w.mapped()) continue;
+            if (!w.appId().equals(DISCORD) || !w.mapped()) continue;
             var texts = c.textsOf(w.id());
-            return texts.stream().anyMatch(t -> t.contains(text)) ? null : "Chat shows " + texts;
+            return texts.stream().anyMatch(t -> t.contains(text)) ? null : "Discord shows " + texts;
         }
-        return "no Chat window";
+        return "no Discord window";
     }
 
-    static boolean chatFocused(ScenarioRun r) {
-        return comp(r).windows().stream().anyMatch(w -> w.appId().equals(CHAT) && w.focused());
+    static boolean discordFocused(ScenarioRun r) {
+        return comp(r).windows().stream().anyMatch(w -> w.appId().equals(DISCORD) && w.focused());
     }
 
     /** Type on the client's keyboard (into the focused field): the player's key packets. */
@@ -393,59 +393,64 @@ public final class AppScenarios {
         b.mutate(r -> r.typeText("client", text), "type '" + text + "'");
     }
 
+    /** The server runs discordd and serves the Discord package it built itself (shared by the two scenarios below). */
+    static void discordServer(Scenario.Builder b, String repoArgs) {
+        b.send("server", "discordd &");
+        b.expect("server", "discordd listening on port 7777 \\(voice on UDP 7778\\), \"Discord\": 1 server", "discordd listening (its home server)");
+        b.send("server", "discord --source /src/discord");
+        b.expect("server", "discord: wrote Discord \\(dev\\.ecm\\.discord\\) 1\\.0\\.0 to /src/discord", "Discord's package folder: app.toml, icon.png, main.wasm",
+                "^discord: can't");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg build /src/discord /srv/repo");
+        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.discord-1\\.0\\.0\\.ecmpkg \\(3 files", "pkg build packs it", "^pkg: ");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg serve /srv/repo 8080" + repoArgs + " &");
+        b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
+    }
+
     /**
-     * {@code chat_app} (docs/gui/APPS.md "Chat"): computer {@code server} gets an address and
-     * runs {@code dhcpd} with no config (it writes a default one), {@code chatd}, builds the
-     * Chat package itself ({@code chatapp --source}, {@code pkg build}) and serves it
-     * ({@code pkg serve}). Computer {@code client}, cabled to it, gets a lease with
-     * {@code dhclient}, starts the GUI, opens the App Store from the launcher, adds the
-     * server's repository on the Repositories page, installs Chat and opens it; types the
-     * server's address and a nickname, Connect. The desktop's dialog asks for the network as
-     * Chat opens (it looks for chat servers on the network, and finds none: the server doesn't
-     * run {@code disco serve}): Allow. The server joins with the {@code chat} command and sees the client's message; its
-     * reply shows in Chat. Then Files is opened (Chat loses focus) and a message from the server
-     * makes Chat post a notification (after the desktop asks for notifications: Allow).
-     * Controls: no repository in the store at first; Chat isn't installed before Install; no
-     * notification while Chat has focus.
+     * {@code discord_app} (docs/DISCORD.md): computer {@code server} gets an address and runs
+     * {@code dhcpd} with no config (it writes a default one), {@code discordd} (a Discord backend),
+     * builds the Discord package itself ({@code discord --source}, {@code pkg build}) and serves it
+     * ({@code pkg serve}). Computer {@code client}, cabled to it, gets a lease with {@code dhclient},
+     * starts the GUI, opens the App Store from the launcher, adds the server's repository on the
+     * Repositories page, installs Discord and opens it. The desktop asks for the network as Discord
+     * looks for backends (Allow); none is found (the server doesn't run {@code disco serve}), so the
+     * player adds the server by address on the + page; the backend's home server opens with
+     * {@code #general}. {@code /nick alex}; the server joins with the {@code chat} command (which lands
+     * in #general) and sees the client's message; its reply shows in Discord. Then Files is opened
+     * (Discord loses focus) and a message from the server makes Discord post a notification (after the
+     * desktop asks for notifications: Allow). Controls: no repository in the store at first; Discord
+     * isn't installed before Install; nothing found on the network; no notification while Discord has focus.
      */
-    static Scenario chatApp() {
-        var b = Scenario.builder("chat_app",
-                        "a server runs chatd and serves the Chat app it packaged; a cabled client gets a DHCP lease, installs Chat from"
-                                + " the App Store and talks to the server's chat command; a message while Chat is in the background"
-                                + " posts a notification")
+    static Scenario discordApp() {
+        var b = Scenario.builder("discord_app",
+                        "a server runs discordd and serves the Discord app it packaged; a cabled client installs Discord from the App Store,"
+                                + " adds the backend by address and talks in #general with the server's chat command; a message while Discord is in"
+                                + " the background posts a notification")
                 .asPlayer()
                 .timeLimit(58_000);
-        b.host("server", new BlockPos(0, 1, 0), CHAT_SERVER + "/24");
+        b.host("server", new BlockPos(0, 1, 0), DISCORD_SERVER + "/24");
         b.host("client", new BlockPos(4, 1, 0), null);
         b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
                 Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
         b.note("Setup (done for you): two computers, a cable between their bottom faces.");
-        b.send("server", "ifconfig eth0 " + CHAT_SERVER + "/24");
-        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + CHAT_SERVER);
+        b.send("server", "ifconfig eth0 " + DISCORD_SERVER + "/24");
+        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + DISCORD_SERVER);
 
-        b.note("server: DHCP with no config (dhcpd writes a default one), the chat server, the Chat package, a repository");
+        b.note("server: DHCP with no config (dhcpd writes a default one), the Discord backend, the Discord package, a repository");
         b.send("server", "dhcpd &");
         b.expect("server", "no /etc/dhcpd\\.conf; wrote a default config for eth0 there", "dhcpd writes /etc/dhcpd.conf");
         b.expect("server", "pool eth0 10\\.0\\.8\\.100 10\\.0\\.8\\.199 prefix 24 router 10\\.0\\.8\\.1 lease 3600", "the pool: .100-.199, itself as router");
         b.expect("server", "serving eth0 10\\.0\\.8\\.100-10\\.0\\.8\\.199/24 as 10\\.0\\.8\\.1", "dhcpd serving");
-        b.send("server", "chatd &");
-        b.expect("server", "chatd listening on port 7777", "chatd listening");
-        b.send("server", "chatapp --source /src/chat");
-        b.expect("server", "chatapp: wrote Chat \\(dev\\.ecm\\.chat\\) 1\\.0\\.0 to /src/chat", "Chat's package folder: app.toml, icon.png, main.wasm",
-                "^chatapp: can't");
-        b.expect("server", PROMPT, "shell");
-        b.send("server", "pkg build /src/chat /srv/repo");
-        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg \\(3 files", "pkg build packs it", "^pkg: ");
-        b.expect("server", PROMPT, "shell");
-        b.send("server", "pkg serve /srv/repo 8080 &");
-        b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
+        discordServer(b, "");
 
         b.note("client: a lease from the server's default pool");
         b.send("client", "dhclient eth0");
         b.expect("client", "bound to 10\\.0\\.8\\.100/24", "the client leased 10.0.8.100", "no lease");
         b.expect("client", PROMPT, "shell");
-        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) == null ? null : "already installed",
-                "control: Chat isn't installed", 1_000);
+        b.await(r -> computer(r, "client").getAppManager().manifest(DISCORD) == null ? null : "already installed",
+                "control: Discord isn't installed", 1_000);
 
         b.note("client: the GUI; the App Store from the launcher; Repositories: the server's address, Add");
         b.send("client", "gui");
@@ -458,62 +463,69 @@ public final class AppScenarios {
                 "control: no repository, no apps", 15_000);
         b.await(AppScenarios::clickRepos, "click Repositories", 5_000);
         b.await(r -> clickText(r, "App Store", "http://10.0.30.1:8080/"), "click the address field", 5_000);
-        typeOn(b, CHAT_SERVER + ":8080");
+        typeOn(b, DISCORD_SERVER + ":8080");
         b.await(r -> clickText(r, "App Store", "Add"), "click Add", 5_000);
-        b.await(r -> comp(r).findText("App Store", "Chat") != null ? null : "Chat not listed",
-                "the repository is added (10-0-8-1) and lists Chat", 20_000);
+        b.await(r -> comp(r).findText("App Store", "Discord") != null ? null : "Discord not listed",
+                "the repository is added (10-0-8-1) and lists Discord", 20_000);
         b.await(r -> clickText(r, "App Store", "Install"), "click Install", 5_000);
-        b.expect("server", "GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "the repository served the package");
-        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) != null ? null : "not installed yet", "Chat is installed", 20_000);
+        b.expect("server", "GET /dev\\.ecm\\.discord-1\\.0\\.0\\.ecmpkg", "the repository served the package");
+        b.await(r -> computer(r, "client").getAppManager().manifest(DISCORD) != null ? null : "not installed yet", "Discord is installed", 20_000);
         b.await(r -> clickText(r, "App Store", "Open"), "click Open", 15_000);
-        b.await(r -> windowShown(r, "Chat"), "Chat's window", 20_000);
+        b.await(r -> windowShown(r, "Discord"), "Discord's window", 20_000);
 
-        b.note("Chat looks for chat servers on the network as it opens: the desktop asks for the network: Allow");
-        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
-                "the dialog asks \"Allow Chat to use network?\"", 20_000);
+        b.note("Discord looks for backends on the network as it opens: the desktop asks for the network: Allow");
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Discord to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
+                "the dialog asks \"Allow Discord to use network?\"", 20_000);
         b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
-        b.await(r -> chatShows(r, "None found"), "control: the server doesn't run disco serve, so nothing is found on the network", 15_000);
+        b.await(r -> discordShows(r, "No Discord backend found"), "control: the server doesn't run disco serve, so nothing is found", 15_000);
 
-        b.note("Chat: the server's address and a nickname, Connect");
-        b.await(r -> clickText(r, "Chat", "10.0.30.1"), "click the server field", 5_000);
-        typeOn(b, CHAT_SERVER);
-        b.await(r -> clickText(r, "Chat", "Nickname (optional)"), "click the nickname field", 5_000);
-        typeOn(b, "alex");
-        b.await(r -> clickText(r, "Chat", "Connect"), "click Connect", 5_000);
-        b.await(r -> chatShows(r, "as alex"), "Chat is connected as alex", 20_000);
+        b.note("Discord: + (Add a server), the backend's address, Add backend; Back: its home server, #general");
+        b.await(r -> clickText(r, "Discord", "+"), "click + on the server rail", 5_000);
+        b.await(r -> clickText(r, "Discord", "Backend address (10.0.8.1)"), "click the address field", 5_000);
+        typeOn(b, DISCORD_SERVER);
+        b.await(r -> clickText(r, "Discord", "Add backend"), "click Add backend", 5_000);
+        b.await(r -> discordShows(r, "Discord · " + DISCORD_SERVER), "the backend is connected (its name from READY)", 20_000);
+        b.expect("server", "joined from 10\\.0\\.8\\.100", "discordd: the client joined");
+        b.await(r -> clickText(r, "Discord", "Back"), "click Back", 5_000);
+        b.await(r -> clickText(r, "Discord", "# general"), "click # general", 10_000);
+        b.await(r -> discordShows(r, "Message #general"), "#general is open", 10_000);
 
-        b.note("server: join with the chat command; the client's message arrives, the reply shows in Chat");
-        b.send("server", "chat " + CHAT_SERVER + " --nick base");
-        b.expect("server", "Joined Tech Village chat as base", "the server's chat command joins");
-        b.await(r -> clickText(r, "Chat", "Message Tech Village chat"), "click the message box", 10_000);
-        typeOn(b, CHAT_HELLO);
-        b.await(r -> clickText(r, "Chat", "Send"), "click Send", 5_000);
-        b.expect("server", "<alex> " + CHAT_HELLO, "the server's chat shows the client's message");
-        b.send("server", CHAT_REPLY);
-        b.await(r -> chatShows(r, CHAT_REPLY), "the reply shows in Chat", 15_000);
-        b.await(r -> comp(r).notifications().stream().noneMatch(n -> n.appId().equals(CHAT)) ? null : "a notification while on screen",
-                "control: no notification while Chat has focus", 1_000);
+        b.note("The nickname: /nick alex in the composer");
+        b.await(r -> clickText(r, "Discord", "Message #general"), "click the message box", 5_000);
+        typeOn(b, "/nick alex");
+        b.await(r -> clickText(r, "Discord", "Send"), "click Send", 5_000);
+        b.expect("server", " is now alex", "discordd: the client is alex now");
 
-        b.note("Chat in the background: Files from the launcher takes the focus; the server writes again");
+        b.note("server: join with the chat command (it lands in #general); the client's message arrives, the reply shows in Discord");
+        b.send("server", "chat " + DISCORD_SERVER + " --nick base");
+        b.expect("server", "Joined Discord as base", "the server's chat command joins the home server's #general");
+        b.await(r -> clickText(r, "Discord", "Message #general"), "click the message box", 10_000);
+        typeOn(b, DISCORD_HELLO);
+        b.await(r -> clickText(r, "Discord", "Send"), "click Send", 5_000);
+        b.expect("server", "<alex> " + DISCORD_HELLO, "the server's chat shows the client's message");
+        b.send("server", DISCORD_REPLY);
+        b.await(r -> discordShows(r, DISCORD_REPLY), "the reply shows in Discord", 15_000);
+        b.await(r -> comp(r).notifications().stream().noneMatch(n -> n.appId().equals(DISCORD)) ? null : "a notification while on screen",
+                "control: no notification while Discord has focus", 1_000);
+
+        b.note("Discord in the background: Files from the launcher takes the focus; the server writes again");
         b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
         b.await(r -> clickOn(r, "popup", "Files"), "click Files in the launcher", 5_000);
-        b.await(r -> windowShown(r, "Files") == null && !chatFocused(r) ? null : "Chat still focused", "Files has the focus", 15_000);
-        b.send("server", CHAT_LATER);
-        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use notifications?") ? null
-                : "no dialog: " + comp(r).layerTexts("permission"), "Chat's first notification: the desktop asks for notifications", 15_000);
+        b.await(r -> windowShown(r, "Files") == null && !discordFocused(r) ? null : "Discord still focused", "Files has the focus", 15_000);
+        b.send("server", DISCORD_LATER);
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Discord to use notifications?") ? null
+                : "no dialog: " + comp(r).layerTexts("permission"), "Discord's first notification: the desktop asks for notifications", 15_000);
         b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
-        b.await(r -> comp(r).notifications().stream().anyMatch(n -> n.appId().equals(CHAT) && n.body().contains(CHAT_LATER)
-                        && n.title().equals("base in Tech Village chat")) ? null : "notifications " + comp(r).notifications(),
-                "Chat posts \"base in Tech Village chat: " + CHAT_LATER + "\"", 15_000);
-        b.await(r -> chatShows(r, CHAT_LATER), "the message is in Chat too", 5_000);
+        b.await(r -> comp(r).notifications().stream().anyMatch(n -> n.appId().equals(DISCORD) && n.body().contains(DISCORD_LATER)
+                        && n.title().equals("base in #general (Discord)")) ? null : "notifications " + comp(r).notifications(),
+                "Discord posts \"base in #general (Discord): " + DISCORD_LATER + "\"", 15_000);
+        b.await(r -> discordShows(r, DISCORD_LATER), "the message is in Discord too", 5_000);
         return b.build();
     }
 
     // ------------------------------------------------------------------ service_discovery
 
     static final String LAB_REPO = "Lab-Apps";
-    /** Chat's "On the network" entry for the server (name, address:port). */
-    static final String FOUND_CHAT = "Tech Village chat · " + CHAT_SERVER + ":7777";
 
     /** Null while the client's /etc/pkg/repos doesn't name {@code name}. */
     static String reposLack(ScenarioRun r, String name) {
@@ -529,61 +541,52 @@ public final class AppScenarios {
     }
 
     /**
-     * {@code service_discovery} (docs/DISCOVERY.md): the {@code chat_app} server (DHCP, chatd, the
-     * Chat package served by {@code pkg serve --name Lab-Apps}) and a client with a lease. Control:
+     * {@code service_discovery} (docs/DISCOVERY.md): the {@code discord_app} server (DHCP, discordd, the
+     * Discord package served by {@code pkg serve --name Lab-Apps}) and a client with a lease. Control:
      * before the server runs {@code disco serve}, the client's {@code disco} finds nothing. Then the
-     * server starts {@code disco serve}: {@code disco} on the client lists its chat server and its
-     * repository (both announced themselves), {@code pkg discover} offers the repository. In the GUI
-     * the App Store lists Chat with no repository added ("1 found on the network"), Install, Open;
-     * Chat asks for the network as it opens (Allow), lists the server under "On the network", and one
-     * click connects it. Controls: nothing found before {@code disco serve}; {@code /etc/pkg/repos}
-     * stays without the repository (it was used, not added).
+     * server starts {@code disco serve}: {@code disco} on the client lists its Discord backend (as
+     * {@code discord} and as {@code chat}) and its repository, {@code pkg discover} offers the
+     * repository. In the GUI the App Store lists Discord with no repository added ("1 found on the
+     * network"), Install, Open; Discord asks for the network as it opens (Allow) and connects to the
+     * backend it found by itself: its home server is on the rail with #general. Controls: nothing found
+     * before {@code disco serve}; {@code /etc/pkg/repos} stays without the repository (it was used, not added).
      */
     static Scenario serviceDiscovery() {
         var b = Scenario.builder("service_discovery",
-                        "a server runs chatd and pkg serve, then disco serve; a cabled client finds both with disco, the App Store lists"
-                                + " the server's Chat without adding the repository, and Chat connects to the server it found with one click")
+                        "a server runs discordd and pkg serve, then disco serve; a cabled client finds both with disco, the App Store lists"
+                                + " the server's Discord without adding the repository, and Discord connects to the backend it found by itself")
                 .asPlayer()
                 .timeLimit(58_000);
-        b.host("server", new BlockPos(0, 1, 0), CHAT_SERVER + "/24");
+        b.host("server", new BlockPos(0, 1, 0), DISCORD_SERVER + "/24");
         b.host("client", new BlockPos(4, 1, 0), null);
         b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
                 Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
         b.note("Setup (done for you): two computers, a cable between their bottom faces.");
-        b.send("server", "ifconfig eth0 " + CHAT_SERVER + "/24");
-        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + CHAT_SERVER);
+        b.send("server", "ifconfig eth0 " + DISCORD_SERVER + "/24");
+        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + DISCORD_SERVER);
 
-        b.note("server: DHCP, the chat server, the Chat package in a repository named " + LAB_REPO);
+        b.note("server: DHCP, the Discord backend, the Discord package in a repository named " + LAB_REPO);
         b.send("server", "dhcpd &");
         b.expect("server", "serving eth0 10\\.0\\.8\\.100-10\\.0\\.8\\.199/24 as 10\\.0\\.8\\.1", "dhcpd serving");
-        b.send("server", "chatd &");
-        b.expect("server", "chatd listening on port 7777", "chatd listening");
-        b.send("server", "chatapp --source /src/chat");
-        b.expect("server", "chatapp: wrote Chat \\(dev\\.ecm\\.chat\\) 1\\.0\\.0 to /src/chat", "Chat's package folder", "^chatapp: can't");
-        b.expect("server", PROMPT, "shell");
-        b.send("server", "pkg build /src/chat /srv/repo");
-        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "pkg build packs it", "^pkg: ");
-        b.expect("server", PROMPT, "shell");
-        b.send("server", "pkg serve /srv/repo 8080 --name " + LAB_REPO + " &");
-        b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
+        discordServer(b, " --name " + LAB_REPO);
 
         b.note("client: a lease; control: nothing answers a search while the server has no disco serve");
         b.send("client", "dhclient eth0");
         b.expect("client", "bound to 10\\.0\\.8\\.100/24", "the client leased 10.0.8.100", "no lease");
         b.expect("client", PROMPT, "shell");
         b.send("client", "disco");
-        b.expect("client", "disco: nothing found\\.", "control: no responder, nothing found", "^chat |^pkg ");
+        b.expect("client", "disco: nothing found\\.", "control: no responder, nothing found", "^discord |^pkg ");
         b.expect("client", PROMPT, "shell");
 
-        b.note("server: disco serve answers for what this computer announced (chatd, pkg serve)");
+        b.note("server: disco serve answers for what this computer announced (discordd as discord and chat, pkg serve)");
         b.send("server", "disco serve &");
-        b.expect("server", "disco: answering on UDP port 5354 and group 224[.]0[.]0[.]254 for 2 services, no relay", "disco serve answers for the chat server and the repository",
-                "cannot listen");
+        b.expect("server", "disco: answering on UDP port 5354 and group 224[.]0[.]0[.]254 for 3 services, no relay",
+                "disco serve answers for the Discord backend and the repository", "cannot listen");
         b.send("server", "ip maddr");
         b.expect("server", "inet  224\\.0\\.0\\.254", "the server's eth0 joined the discovery group (ip maddr)");
         b.expect("server", PROMPT, "shell");
         b.send("client", "disco");
-        b.expect("client", "chat\\s+10\\.0\\.8\\.1:7777\\s+Tech Village chat", "disco finds the chat server", "nothing found");
+        b.expect("client", "discord\\s+10\\.0\\.8\\.1:7777\\s+Discord", "disco finds the Discord backend", "nothing found");
         b.expect("client", "pkg\\s+10\\.0\\.8\\.1:8080\\s+" + LAB_REPO, "disco finds the repository", "nothing found");
         b.expect("client", PROMPT, "shell");
         b.send("client", "pkg discover");
@@ -591,7 +594,7 @@ public final class AppScenarios {
                 "pkg discover offers the repository (not configured)", "No repositories found");
         b.expect("client", PROMPT, "shell");
 
-        b.note("client: the GUI; the App Store lists the server's Chat without adding anything");
+        b.note("client: the GUI; the App Store lists the server's Discord without adding anything");
         b.send("client", "gui");
         b.expect("client", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
@@ -599,23 +602,21 @@ public final class AppScenarios {
         b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in the launcher", 5_000);
         b.await(r -> windowShown(r, "App Store"), "the App Store's window", 20_000);
         b.await(r -> comp(r).findText("App Store", "1 apps from 1 repository (1 found on the network)") != null
-                        && comp(r).findText("App Store", "Chat") != null ? null : "store not loaded",
-                "the App Store lists Chat from the repository it found on the network", 20_000);
+                        && comp(r).findText("App Store", "Discord") != null ? null : "store not loaded",
+                "the App Store lists Discord from the repository it found on the network", 20_000);
         b.await(r -> reposLack(r, LAB_REPO), "control: nothing was added to /etc/pkg/repos", 1_000);
         b.await(r -> clickText(r, "App Store", "Install"), "click Install", 5_000);
-        b.expect("server", "GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "the repository served the package");
-        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) != null ? null : "not installed yet", "Chat is installed", 20_000);
+        b.expect("server", "GET /dev\\.ecm\\.discord-1\\.0\\.0\\.ecmpkg", "the repository served the package");
+        b.await(r -> computer(r, "client").getAppManager().manifest(DISCORD) != null ? null : "not installed yet", "Discord is installed", 20_000);
         b.await(r -> clickText(r, "App Store", "Open"), "click Open", 15_000);
-        b.await(r -> windowShown(r, "Chat"), "Chat's window", 20_000);
+        b.await(r -> windowShown(r, "Discord"), "Discord's window", 20_000);
 
-        b.note("Chat looks on the network as it opens (the desktop asks: Allow) and lists the server; one click connects");
-        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
-                "the dialog asks \"Allow Chat to use network?\"", 20_000);
+        b.note("Discord looks on the network as it opens (the desktop asks: Allow) and connects to the backend it found");
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Discord to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
+                "the dialog asks \"Allow Discord to use network?\"", 20_000);
         b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
-        b.await(r -> chatShows(r, FOUND_CHAT), "Chat lists \"" + FOUND_CHAT + "\" under On the network", 15_000);
-        b.await(r -> clickText(r, "Chat", FOUND_CHAT), "click the chat server it found", 5_000);
-        b.await(r -> chatShows(r, CHAT_SERVER + " as pc-"), "Chat is connected to " + CHAT_SERVER + " (a nickname from the MAC)", 20_000);
-        b.expect("server", "connection from 10\\.0\\.8\\.100", "chatd logs the client's connection");
+        b.expect("server", "joined from 10\\.0\\.8\\.100", "discordd: the client joined (found by itself, no address typed)");
+        b.await(r -> discordShows(r, "# general"), "Discord shows the backend's home server with # general", 20_000);
         return b.build();
     }
 
@@ -627,7 +628,7 @@ public final class AppScenarios {
         ALL.put(st.name, st);
         Scenario fo = filesOpenWith();
         ALL.put(fo.name, fo);
-        Scenario ca = chatApp();
+        Scenario ca = discordApp();
         ALL.put(ca.name, ca);
         Scenario sd = serviceDiscovery();
         ALL.put(sd.name, sd);

@@ -270,8 +270,22 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     @Override
+    public void bell() {
+        if (level instanceof net.minecraft.server.level.ServerLevel) {
+            level.playSound(null, worldPosition, net.minecraft.sounds.SoundEvents.NOTE_BLOCK_BELL.value(),
+                    net.minecraft.sounds.SoundSource.BLOCKS, 0.6f, 1.5f);
+        }
+    }
+
+    @Override
     public void markDirty() {
         setChanged();
+    }
+
+    /** Off the server thread (input, display passes): saved at the next tick. */
+    @Override
+    public void markDirtyLater() {
+        displayChanged = true;
     }
 
     /**
@@ -284,9 +298,110 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
         moduleBays.tick();
         controllers.tick(System.currentTimeMillis());
+        if (level instanceof ServerLevel sl) publishViewers(sl);
+        if (displayChanged) {
+            displayChanged = false;
+            setChanged();
+        }
         if (computer != null) {
             computer.tickSync();
         }
+    }
+
+    // ==================== Display pipeline (pump, viewer snapshot) ====================
+
+    /** Display passes of this computer, on the display pump (DISPLAY_PIPELINE_SPEC.md Part A1). */
+    private final com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane syncLane =
+            new com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane("terminal", this::syncPass);
+    /** Who watches and may use the displays, as of the last tick (Part A2). */
+    private volatile com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot =
+            com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
+    /** A pass sent something: the block is saved on the next tick (setChanged needs the server thread). */
+    private volatile boolean displayChanged;
+    private long snapshotTicks;
+    /** A test viewer (the in-process client harnesses): an extra recipient of one display whose packets go to a sink. */
+    private record TestViewer(int displayId,
+                              java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload> sink) {}
+
+    private final java.util.Map<UUID, TestViewer> testViewers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override
+    public com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot() {
+        return viewerSnapshot;
+    }
+
+    /**
+     * Once per tick, on the server thread: who has the GUI open, who is in
+     * range of the Screen wall and who may use each display (the same rules
+     * as {@link #canInteract}). A change of viewers starts a pass, so a player
+     * who just opened the GUI gets a keyframe without waiting for a frame.
+     */
+    private void publishViewers(ServerLevel sl) {
+        var b = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.builder(++snapshotTicks);
+        for (ServerPlayer p : collectTerminalViewers(sl)) b.recipient(DISPLAY_OWN, p);
+        if (screenDisplay != null && screenClusterInfo != null) {
+            for (ServerPlayer p : collectSyncRecipients(sl)) b.recipient(DISPLAY_ATTACHED, p);
+        }
+        for (ServerPlayer p : sl.players()) {
+            if (canInteract(p, DISPLAY_OWN)) {
+                b.interact(DISPLAY_OWN, p.getUUID());
+                if (acceptsInput(p, DISPLAY_OWN)) b.input(DISPLAY_OWN, p.getUUID());
+            }
+            if (canInteract(p, DISPLAY_ATTACHED)) {
+                b.interact(DISPLAY_ATTACHED, p.getUUID());
+                if (acceptsInput(p, DISPLAY_ATTACHED)) b.input(DISPLAY_ATTACHED, p.getUUID());
+            }
+        }
+        var next = b.build();
+        var prev = viewerSnapshot;
+        viewerSnapshot = next;
+        if (!next.sameRecipients(prev)) syncToClients();
+    }
+
+    /**
+     * Add an in-process test viewer of display {@code displayId}: it is a
+     * recipient of every pass and its packets go to {@code sink} (the
+     * GameTest client harnesses, which have no network connection).
+     */
+    public void addTestViewer(UUID id, int displayId,
+                              java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload> sink) {
+        testViewers.put(id, new TestViewer(displayId, sink));
+        getSyncHub(displayId).requestKeyframe(id);
+        syncToClients();
+    }
+
+    public void removeTestViewer(UUID id) {
+        testViewers.remove(id);
+        syncToClients();
+    }
+
+    /** One pass of both displays (display pump). */
+    private void syncPass() {
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) return;
+        displayChanged = true;
+        syncDeltaToClients(serverLevel);
+        if (screenDisplay != null) {
+            syncScreenDeltaToClients(serverLevel);
+        }
+    }
+
+    /** What the hub of a display streams: the scanout, its program's presentation queue, lossy rules. */
+    private DisplaySyncHub.Source source(int displayId) {
+        ComputerInstance c = computer;
+        TerminalDisplay d = displayId == DISPLAY_ATTACHED ? screenDisplay : display;
+        var device = c == null ? null : c.displayDevice(displayId == DISPLAY_ATTACHED
+                ? ComputerInstance.GFX_TARGET_SCREEN : ComputerInstance.GFX_TARGET_TERMINAL);
+        var tier = displayTier(displayId);
+        return new DisplaySyncHub.Source() {
+            @Override public TerminalDisplay display() { return d; }
+            @Override public com.example.evanscomputermod.computer.display.PresentQueue queue() {
+                return device == null ? null : device.queue();
+            }
+            @Override public int hint() { return device == null ? 0 : device.hint(); }
+            @Override public boolean lossyAllowed() {
+                return tier != null && tier != com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR;
+            }
+        };
     }
 
     // ==================== Peripherals & module bays ====================
@@ -429,18 +544,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         };
     }
 
+    /**
+     * Stream the displays: a pass on the display pump (never the server
+     * thread). Requests while a pass is queued or running fold into one more.
+     */
     @Override
     public void syncToClients() {
         if (level == null || level.isClientSide()) return;
-        level.getServer().execute(() -> {
-            setChanged();
-            if (level instanceof ServerLevel serverLevel) {
-                syncDeltaToClients(serverLevel);
-                if (screenDisplay != null) {
-                    syncScreenDeltaToClients(serverLevel);
-                }
-            }
-        });
+        syncLane.request();
     }
 
     @Override
@@ -659,10 +770,27 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return ids;
     }
 
-    /** Send to a player by id, if still online. */
-    private static void sendTo(ServerLevel serverLevel, UUID playerId, TerminalDeltaPacket packet) {
-        ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerId);
-        if (player != null) PacketDistributor.sendToPlayer(player, packet);
+    /**
+     * Send to a viewer of the snapshot (a player still online at the last
+     * tick) or a test viewer. Safe off the server thread: the connection
+     * encodes on its own event loop.
+     */
+    private void sendTo(int displayId, UUID playerId, net.minecraft.network.protocol.common.custom.CustomPacketPayload packet) {
+        TestViewer tv = testViewers.get(playerId);
+        if (tv != null) {
+            tv.sink().accept(packet);
+            return;
+        }
+        ServerPlayer player = viewerSnapshot.player(displayId, playerId);
+        if (player == null) player = viewerSnapshot.player(playerId);
+        if (player != null && !player.hasDisconnected()) PacketDistributor.sendToPlayer(player, packet);
+    }
+
+    /** The snapshot's recipients of a display plus the test viewers (of the Terminal's own display). */
+    private List<UUID> recipients(int displayId) {
+        List<UUID> ids = new ArrayList<>(viewerSnapshot.recipients(displayId));
+        for (var e : testViewers.entrySet()) if (e.getValue().displayId() == displayId) ids.add(e.getKey());
+        return ids;
     }
 
     /**
@@ -671,10 +799,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * {@link DisplaySyncHub}).
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_OWN, ids(collectTerminalViewers(serverLevel)));
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_OWN, recipients(DISPLAY_OWN));
         terminalSync.retainViewers(viewers);
+        terminalSync.setWaker(syncLane::requestIn);
         try {
-            terminalSync.sync(computerId, display, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
+            terminalSync.sync(computerId, source(DISPLAY_OWN), viewers, (id, packet) -> sendTo(DISPLAY_OWN, id, packet));
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error syncing terminal display", e);
             terminalSync.forceKeyframe();
@@ -688,10 +817,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private void syncScreenDeltaToClients(ServerLevel serverLevel) {
         TerminalDisplay sd = screenDisplay;
         if (sd == null || screenClusterInfo == null) return;
-        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_ATTACHED, ids(collectSyncRecipients(serverLevel)));
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_ATTACHED, recipients(DISPLAY_ATTACHED));
         screenSync.retainViewers(viewers);
+        screenSync.setWaker(syncLane::requestIn);
         try {
-            screenSync.sync(computerId, sd, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
+            screenSync.sync(computerId, source(DISPLAY_ATTACHED), viewers, (id, packet) -> sendTo(DISPLAY_ATTACHED, id, packet));
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error syncing screen display", e);
             screenSync.forceKeyframe();
@@ -710,25 +840,36 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (ui == null) return viewers;
         List<UUID> scene = ui.sceneViewers(displayId, viewers);
         try {
-            ui.sceneSync(displayId, scene, (player, d, data) -> {
-                ServerPlayer p = serverLevel.getServer().getPlayerList().getPlayer(player);
-                if (p != null) PacketDistributor.sendToPlayer(p,
-                        com.example.evanscomputermod.network.UiScenePackets.packet(player, computerId, d, data));
-            });
+            ui.sceneSync(displayId, scene, (player, d, data) -> sendTo(d, player,
+                    com.example.evanscomputermod.network.UiScenePackets.packet(player, computerId, d, data)));
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error syncing GUI scene", e);
         }
-        if (scene.isEmpty()) return viewers;
+        if (scene.isEmpty()) {
+            if (!viewers.isEmpty()) ui.notePixelDemand();
+            return viewers;
+        }
         List<UUID> rest = new ArrayList<>(viewers);
         rest.removeAll(scene);
+        if (!rest.isEmpty()) ui.notePixelDemand();
         return rest;
     }
 
     @Override
     public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        onSceneAck(player.getUUID(), displayId, epoch, generation, missing, 0);
+    }
+
+    @Override
+    public void onSceneAck(UUID player, int displayId, int epoch, long generation, long[] missing, long clientRecvUs) {
         ComputerInstance c = computer;
         if (c == null) return;
-        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
+        if (c.getUiManager().sceneHub().onAck(player, displayId, epoch, generation, missing, clientRecvUs)) syncToClients();
+    }
+
+    @Override
+    public java.util.Map<Integer, DisplaySyncHub> syncHubs() {
+        return java.util.Map.of(DISPLAY_OWN, terminalSync, DISPLAY_ATTACHED, screenSync);
     }
 
     /** The sync hub of one display (tests play clients through it). */
@@ -743,30 +884,33 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      */
     @Override
     public void onDisplayAck(ServerPlayer player, int displayId, long ackedGeneration) {
+        onDisplayAck(player.getUUID(), displayId, ackedGeneration, 0);
+    }
+
+    /**
+     * A client acked a frame or asked for a keyframe. Any thread (acks arrive
+     * on the network thread, Part A3): the hubs are synchronized and the pass
+     * runs on the pump. {@code clientRecvUs} is the client's receive time.
+     */
+    @Override
+    public void onDisplayAck(UUID player, int displayId, long ackedGeneration, long clientRecvUs) {
         DisplaySyncHub hub = getSyncHub(displayId);
         if (ackedGeneration != 0) {
-            // Frames that changed while this client's ack was outstanding
-            // were coalesced, not sent: send them now rather than waiting
-            // for the next change (or the 10 s keyframe).
-            if (hub.onClientReady(player.getUUID(), ackedGeneration)) syncToClients();
+            // The window has room again: send what coalesced meanwhile now
+            // rather than waiting for the next change (or the 10 s keyframe).
+            if (hub.onClientReady(player, ackedGeneration, clientRecvUs)) syncToClients();
             return;
         }
         // A player whose client draws the GUI scene gets a scene keyframe instead.
         ComputerInstance c = computer;
-        if (c != null && !c.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
-            c.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+        if (c != null && !c.getUiManager().sceneViewers(displayId, List.of(player)).isEmpty()) {
+            c.getUiManager().sceneHub().requestKeyframe(player, displayId);
             syncToClients();
             return;
         }
-        // Bootstrap: a keyframe straight away. The screen's bootstrap is handled
-        // by the normal syncScreenDeltaToClients path on the next dirty tick.
-        if (displayId != DISPLAY_OWN || !(level instanceof ServerLevel serverLevel)) return;
-        hub.requestKeyframe(player.getUUID());
-        try {
-            hub.sync(computerId, display, List.of(player.getUUID()), (id, packet) -> sendTo(serverLevel, id, packet));
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("Error sending keyframe to {}", player.getName().getString(), e);
-        }
+        // A keyframe on the next pass (the player is a recipient once the snapshot has them).
+        hub.requestKeyframe(player);
+        syncToClients();
     }
 
     @Override

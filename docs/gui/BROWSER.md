@@ -33,6 +33,7 @@ One PR per phase.
 | 2 | Positioning, images, tables, forms, cookies in use; `httpd` CGI mode and virtual hosting; the Python/Lua server module; bookmarks, history and a home page setting; downloads | `browser_form` | **built** |
 | 3 | JavaScript: QuickJS (rquickjs, built with wasi-sdk like Lua), the DOM subset, events, timers, `fetch()`, `localStorage` | `browser_js` | **built** |
 | 4 | Names (DNS, docs/DNS.md): `http://web.v4.ring/`, `web` through the search domain, the registrar's pages at `http://nic.ring/` | `browser_dns` | **built** |
+| 5 | Tech Village house PCs open the Browser on their village's website (`/etc/browser.conf`) | `browser_home` | **built** |
 
 ## Using it
 
@@ -53,8 +54,13 @@ Desktop (medium and wide windows): `[<] [>] [Reload] [Home] [address] [Go] [Menu
 that shows the link under the pointer or what is loading. Phone (compact): the address on top, `[<] [>] [Reload] [Home]
 [Menu]` in a bar at the bottom, in thumb reach. **Menu**: Bookmark this page, Bookmarks (`about:bookmarks`), History
 (`about:history`, the last 100 pages), Set as home page. They are saved in the app's data folder
-(`/var/apps/dev.ecm.browser/browser.json`). Until a home page is set, Home is the computer's own village site when it sits
-on a village cable or data center LAN (`100.(64+n).0-1.x`), else the start page.
+(`/var/apps/dev.ecm.browser/browser.json`). Until a home page is set, Home (and where the Browser opens) is the
+computer's default: `home <address>` in `/etc/browser.conf` (public configuration every app may read, like
+`/etc/chat.conf`), else the computer's own village site when it sits on a village cable or data center LAN
+(`100.(64+n).0-1.x`), else the start page (`about:home`, always reachable by typing it). Every Tech Village house PC
+gets an `/etc/browser.conf` when its village is built (`WorldNetwork.browserConf`; a missing one is written when the
+house is provisioned again): `home http://web.vN.ring/`, its village's website by name (by address,
+`http://100.(64+n).0.10/`, on a ring without DNS). Menu > Set as home page overrides it for that computer.
 
 Forms: click a field and type (Left/Right/Home/End, Backspace/Delete, Tab to the next field, Escape to leave it); Enter
 sends the form (a new line in a textarea); a checkbox or radio button flips on a click; a select opens a menu of its
@@ -309,6 +315,12 @@ end)
   session cookie), registers `NAME.ecm`, and on the home page's record form for it points `www` (type A, filled in) at
   the village's web server `100.(64+n).0.10`; `http://www.NAME.ecm/` then shows the village's site. Control: registering
   the same name again: "That didn't work ... already registered". About 40 s once the ring is up.
+- **`browser_home`** (phase 5): at a Tech Village house PC, `cat /etc/browser.conf` shows `home http://web.vN.ring/`;
+  `gui`, then the launcher's Browser opens on the village's website; another village's site, then Home: the village's
+  again. Controls: `about:home` is still the start page; Menu > Set as home page on another village's site makes Home go
+  there (the player's choice wins); then the village's site is set back. Like `browser_dns`, it starts at the console
+  (Ctrl+Alt+Backspace if the desktop is showing) and ends by closing the Browser (Alt+F4) and going back to the console.
+  About 6 s once the ring is up.
 - **`browser_phone`**: an ePhone and a player-built cell network (a core with its Card Reader/Writer, a cell site, a web
   server on the core's LAN running `httpd 80 /srv/www`, as in `cell_chat`). Control first: with no modem the Browser from
   the home grid shows an error page for the server's address and keeps running. With the LTE Modem and the SIM cored
@@ -331,7 +343,8 @@ client suite (`cell_tech_village`), so phase 1 runs it on a player-built network
 | Servers | `cargo test -p httpd --lib`, `cargo test -p python --lib web_module`, `cargo test -p lua --lib` | httpd's command line, virtual hosts, paths (`..` refused), the CGI input and output; `web` in RustPython and in Lua with the same handler: query, form, cookies, 303 + Set-Cookie, 400, 500, 404, junk, the CGI protocol; the Python/Lua parity test includes `web` |
 | Golden images | `cargo run -p browser --example record_browser_sessions -- ../src/test/resources/ui-sessions`, then `-JUnit UiGoldenTest -McVersion 26.1` | `browser_compact` (the styled sample site on a phone), `browser_medium` (flex bar and cards), `browser_wide` (a village site in the theme colours), `browser_forms` (a fixed bar, a picture with a positioned badge, a table, a form with a typed-into field) |
 | Registrar pages | `cargo test -p ecm-dns registrar_web` | the session cookie (start, read from a `Cookie:` header, log out), the home page logged out (search, create, log in) and in (register, the account's domains with a record form each), result pages in words, escaping |
-| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the six scenarios (`browser_dns` places Tech Village 1 and boots the ring, as `DnsTests.ring`) |
+| Home page | `cargo test -p browser --lib home_page` | `home` read from `/etc/browser.conf` (comments, spacing, not an address), the Browser opening on it, Home, the player's own home page winning |
+| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the seven scenarios (`browser_dns` and `browser_home` place Tech Village 1 and boot the ring, as `DnsTests.ring`) |
 
 ## Limits and open items
 

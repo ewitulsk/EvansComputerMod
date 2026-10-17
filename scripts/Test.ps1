@@ -28,6 +28,7 @@ param(
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [switch]$Ffmpeg,                # JUnit in the FFmpeg video sidecar (26.1); GameTests: load the sidecar (1.21.1 build) in the run
     [switch]$Upload,                # GameTests / -ClientChecks: load the file upload sidecar (1.21.1 build) in the run
+    [switch]$Internet,              # JUnit in the internet sidecar (26.1); GameTests: load the internet sidecar (1.21.1 build) in the run
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
@@ -35,11 +36,12 @@ param(
     [switch]$NoStage,               # skip rebuilding/staging the WASM
     [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
     [switch]$Aeronautics,           # 1.21.1 GameTests: also load Create Aeronautics (libs/optional/create-aeronautics-bundled-*.jar)
+    [string]$VoiceMod = '',         # 1.21.1: also load a voice chat mod, svc or plasmo (libs/optional/voicechat-neoforge-1.21.1-*.jar / plasmovoice-neoforge-1.21.1-*.jar)
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen','gui','phone','upload')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock) or upload (a real client uploads a file to a Terminal; with -Upload)
+    [ValidateSet('tech','radio','screen','gui','phone','upload','cards')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock), upload (a real client uploads a file to a Terminal; with -Upload) or cards (card blocks, a printed card in hand and in frames, the printer screen, the inventory)
     [long]$Seed = 73198425,         # -ClientChecks world seed (Tech Village styles depend on it)
     [string[]]$TechParts = @()      # -ClientSuite tech: opt-in multi-minute parts: ride (cell_tech_village, ~5 min), reroute (fiber/cable cut and repair, ~1.5 min), all. Only when a change majorly touches what they test (TESTING.md "Long runs")
 )
@@ -47,6 +49,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 # `powershell -File` passes "a,b" as one string; accept both forms.
+# -VoiceMod: the voice chat mod's jar in libs/optional (svc = Simple Voice Chat, plasmo = Plasmo Voice).
+function Get-VoiceModJar {
+    $pattern = switch ($VoiceMod) { 'svc' { 'voicechat-neoforge-1.21.1-*.jar' } 'plasmo' { 'plasmovoice-neoforge-1.21.1-*.jar' } default { throw "-VoiceMod must be svc or plasmo" } }
+    $jar = Get-ChildItem (Join-Path $root "libs\optional") -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $jar) { throw "-VoiceMod $VoiceMod needs libs/optional/$pattern (from Modrinth)" }
+    $jar.FullName
+}
+
 function Split-List($v) { @($v | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 $Rust = Split-List $Rust
 $TechParts = Split-List $TechParts
@@ -140,8 +150,8 @@ if ($Rust.Count -gt 0) {
 # ---------------------------------------------------------------- JUnit
 if ($JUnit.Count -gt 0) {
     $filters = ($JUnit | ForEach-Object { "--tests *.$_" }) -join " "
-    $project = if($Wasmtime){"evanscomputermod-wasmtime"}elseif($Ffmpeg){"evanscomputermod-ffmpeg"}else{$McVersion}
-    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}elseif($Ffmpeg){"evanscomputermod-ffmpeg\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
+    $project = if($Wasmtime){"evanscomputermod-wasmtime"}elseif($Ffmpeg){"evanscomputermod-ffmpeg"}elseif($Internet){"evanscomputermod-internet"}else{$McVersion}
+    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}elseif($Ffmpeg){"evanscomputermod-ffmpeg\build-mc26.1\test-results\test"}elseif($Internet){"evanscomputermod-internet\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
     $cmd = ".\gradlew.bat :$project`:test $filters --console=plain"
     $log = Join-Path $out "junit.log"
     $code = Run-Logged $cmd $log
@@ -177,6 +187,7 @@ if ($GameTests.Count -gt 0) {
         New-Item -ItemType Directory -Force $mods | Out-Null
         Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
         if (-not $NoCreate) { Copy-Item (Join-Path $root "libs\create-1.21.1-*.jar") $mods }
+        if ($VoiceMod) { Copy-Item (Get-VoiceModJar) $mods }
         if ($Aeronautics) {
             # Create Aeronautics (bundles Simulated + Offroad; needs Create and Sable 2.x).
             # Not fetched automatically: copy create-aeronautics-bundled-1.21.1-*.jar into libs/optional.
@@ -199,6 +210,14 @@ if ($GameTests.Count -gt 0) {
             $ujar = Get-ChildItem (Join-Path $root "evanscomputermod-upload\build-mc1.21.1\libs") -Filter "evanscomputermod-upload-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
             Add-Step "upload-sidecar" "gradlew :evanscomputermod-upload:jar -PmcVersion=1.21.1" $ulog (($ucode -eq 0) -and [bool]$ujar) $null $null "exit $ucode"
             if ($ujar) { Copy-Item $ujar.FullName $mods }
+        }
+        if ($Internet) {
+            # The internet sidecar (server-side): built for 1.21.1 and dropped in the run's mods/.
+            $ilog = Join-Path $out "internet-sidecar.log"
+            $icode = Run-Logged ".\gradlew.bat :evanscomputermod-internet:jar -PmcVersion=1.21.1 --console=plain" $ilog
+            $ijar = Get-ChildItem (Join-Path $root "evanscomputermod-internet\build-mc1.21.1\libs") -Filter "evanscomputermod-internet-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            Add-Step "internet-sidecar" "gradlew :evanscomputermod-internet:jar -PmcVersion=1.21.1" $ilog (($icode -eq 0) -and [bool]$ijar) $null $null "exit $icode"
+            if ($ijar) { Copy-Item $ijar.FullName $mods }
         }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
@@ -240,6 +259,7 @@ if ($ClientChecks) {
         $directory = Join-Path $visualRoot $surface
         New-Item -ItemType Directory -Force "$directory/mods","$directory/config" | Out-Null
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
+        if ($VoiceMod) { Copy-Item (Get-VoiceModJar) "$directory/mods" }
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
     }
     if ($Upload) {
@@ -284,7 +304,7 @@ if ($ClientChecks) {
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
         if($ClientSuite -eq 'radio') {
             # The server announces its data-driven case list; these are always required.
-            $cases=@('radio_overview','radio_closeup_power','radio_closeup_wifi','radio_items','radio_handheld_screen','radio_controller_hud','radio_access_point_screen')
+            $cases=@('radio_overview','radio_closeup_power','radio_closeup_wifi','radio_items','radio_handheld_screen','voice_sound_options','radio_controller_hud','radio_access_point_screen')
             $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
@@ -297,6 +317,9 @@ if ($ClientChecks) {
         } elseif($ClientSuite -eq 'upload') {
             $cases=@('upload_terminal','upload_cancelled')
             $serverOnly=@('upload_fixture','upload_final')
+        } elseif($ClientSuite -eq 'cards') {
+            $cases=@('cards_blocks','cards_hand','cards_frames','cards_printer_screen','cards_inventory')
+            $serverOnly=@('cards_fixture','cards_final')
         } elseif($ClientSuite -eq 'gui') {
             $cases=@('gui_desktop','gui_typed','gui_p3_desktop','gui_close_over_overlay','gui_p3_launcher','gui_client_render')
             $serverOnly=@('gui_fixture','gui_final')

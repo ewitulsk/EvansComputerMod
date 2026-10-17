@@ -217,10 +217,10 @@ public final class TechCellChecks {
 
     // ------------------------------------------------------------ the Tech Village package repository
 
-    /** Chat's app id: never installed by generation (the player installs it from the App Store). */
-    public static final String CHAT_APP = "dev.ecm.chat";
+    /** Discord's app id: never installed by generation (the player installs it from the App Store). */
+    public static final String CHAT_APP = "dev.ecm.discord";
 
-    /** Null if the computer {@code id} has the world's repository (key pinned) in /etc/pkg/repos and no Chat installed. */
+    /** Null if the computer {@code id} has the world's repository (key pinned) in /etc/pkg/repos and no Discord installed. */
     public static String repoOn(ServerLevel level, VillageRepo repo, UUID id, String what) {
         var root = ComputerStorage.path(level.getServer(), id);
         try {
@@ -231,14 +231,14 @@ public final class TechCellChecks {
         } catch (Exception e) {
             return what + ": " + e;
         }
-        if (Files.exists(root.resolve("apps/" + CHAT_APP))) return what + " has Chat installed already";
+        if (Files.exists(root.resolve("apps/" + CHAT_APP))) return what + " has Discord installed already";
         return null;
     }
 
     /**
      * Every generated computer of village {@code n} ({@code visit.computers()}: ISP, Data Center,
      * Phone Store site, houses) and every display phone in its Phone Store: the Tech Village
-     * repository in /etc/pkg/repos with the pinned key, and Chat not installed. The phones carry
+     * repository in /etc/pkg/repos with the pinned key, and Discord not installed. The phones carry
      * their computer (fixed by the seed) from generation.
      */
     public static String repoConfigured(ServerLevel level, WorldNetwork data, TechVillageLocator.Visit visit, int n, List<String> details) {
@@ -261,13 +261,13 @@ public final class TechCellChecks {
         for (int slot = 1; slot <= CellPlan.PHONES; slot++) planned.add(data.identity(level, n, "store.phone" + slot));
         if (!phones.equals(planned)) return "display phones " + phones + ", planned " + planned;
         details.add(visit.computers().size() + " computers and " + phones.size() + " display phones of village " + n + ": "
-                + VillageRepo.NAME + " " + repo.url() + " pinned " + repo.publicKey().substring(0, 16) + "..., no Chat");
+                + VillageRepo.NAME + " " + repo.url() + " pinned " + repo.publicKey().substring(0, 16) + "..., no Discord");
         return null;
     }
 
     /**
      * The package server's repository as {@code pkg serve} published it (its index.json): format
-     * ecm-repo-1, the world's publisher key, exactly one package, Chat, whose file is there with
+     * ecm-repo-1, the world's publisher key, exactly one package, Discord, whose file is there with
      * that size and hash and whose signature verifies against the key the villages pin.
      */
     public static String repoIndex(ServerLevel level, WorldNetwork data, List<String> details) {
@@ -279,16 +279,17 @@ public final class TechCellChecks {
             if (!ix.has("publisher_key") || !repo.publicKey().equals(ix.get("publisher_key").getAsString()))
                 return "the index's publisher_key is not the world's repository key: " + ix.get("publisher_key");
             var pkgs = ix.getAsJsonArray("packages");
-            if (pkgs.size() != 1) return "the repository lists " + pkgs.size() + " packages, not only Chat: " + pkgs;
-            var e = pkgs.get(0).getAsJsonObject();
+            // Discord plus the card example packages (docs/CARDS.md); Discord is the one checked here.
+            com.google.gson.JsonObject e = null;
+            for (var el : pkgs) if (CHAT_APP.equals(el.getAsJsonObject().get("id").getAsString())) e = el.getAsJsonObject();
+            if (e == null) return "the repository does not list Discord: " + pkgs;
             String id = e.get("id").getAsString(), version = e.get("version").getAsString(), file = e.get("file").getAsString();
-            if (!id.equals(CHAT_APP)) return "the repository's package is " + id;
             byte[] bytes = Files.readAllBytes(dir.resolve(file));
             var p = VillageRepo.read(file, bytes);
             if (bytes.length != e.get("size").getAsLong() || !p.sha256().equals(e.get("sha256").getAsString())) return file + ": size or sha256 differ from the index";
-            if (!e.has("signature")) return "Chat is not signed";
+            if (!e.has("signature")) return "Discord is not signed";
             if (!VillageRepo.verify(repo.publicKey(), VillageRepo.signedMessage(id, version, p.sha256()), e.get("signature").getAsString()))
-                return "Chat's signature does not verify with the pinned key";
+                return "Discord's signature does not verify with the pinned key";
             details.add("index.json: " + id + " " + version + " (" + bytes.length + " bytes, signed, verifies with " + repo.publicKey().substring(0, 16)
                     + "...)");
             return null;

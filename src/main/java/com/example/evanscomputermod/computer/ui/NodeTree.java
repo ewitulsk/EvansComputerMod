@@ -42,6 +42,11 @@ public final class NodeTree {
         public int tint = 0xFFFFFFFF;
         public List<UiProto.Point> points = List.of();
         public int width = 1;
+        // Version 2: what the client may show at once (hover / pressed styles, scroll containers,
+        // window drags, the caret); the server's own drawing ignores them (null / 0 = not set).
+        public Integer hoverFill, hoverBorderColor, hoverColor, pressedFill, pressedBorderColor, pressedColor;
+        public int scroll, contentW, contentH, scrollX, scrollY, dragWindow;
+        public Integer caret, caretOf;
 
         Node(int id, UiProto.NodeKind kind) {
             this.id = id;
@@ -188,6 +193,20 @@ public final class NodeTree {
                 case UiProto.Prop.Tint v -> n.tint = v.value();
                 case UiProto.Prop.Points v -> n.points = v.value();
                 case UiProto.Prop.Width v -> n.width = v.value();
+                case UiProto.Prop.HoverFill v -> n.hoverFill = v.value();
+                case UiProto.Prop.HoverBorderColor v -> n.hoverBorderColor = v.value();
+                case UiProto.Prop.HoverColor v -> n.hoverColor = v.value();
+                case UiProto.Prop.PressedFill v -> n.pressedFill = v.value();
+                case UiProto.Prop.PressedBorderColor v -> n.pressedBorderColor = v.value();
+                case UiProto.Prop.PressedColor v -> n.pressedColor = v.value();
+                case UiProto.Prop.Scroll v -> n.scroll = v.value();
+                case UiProto.Prop.ContentW v -> n.contentW = v.value();
+                case UiProto.Prop.ContentH v -> n.contentH = v.value();
+                case UiProto.Prop.ScrollX v -> n.scrollX = v.value();
+                case UiProto.Prop.ScrollY v -> n.scrollY = v.value();
+                case UiProto.Prop.DragWindow v -> n.dragWindow = v.value();
+                case UiProto.Prop.Caret v -> n.caret = v.value();
+                case UiProto.Prop.CaretOf v -> n.caretOf = v.value();
             }
         }
         if (n.kind == UiProto.NodeKind.TEXT && n.face() == null) {

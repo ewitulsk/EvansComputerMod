@@ -195,6 +195,22 @@ pub fn monotonic_ms() -> u64 {
     T0.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
+/// The program's monotonic clock in microseconds: the clock `CommitAt`
+/// times (and `gfx_present_at`) are on (WASI `clock_time_get` MONOTONIC).
+/// On the host (tests) it counts from the first call.
+pub fn monotonic_us() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        ecm_host_abi::gfx_child::monotonic_us()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::OnceLock;
+        static T0: OnceLock<std::time::Instant> = OnceLock::new();
+        T0.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
+    }
+}
+
 /// The default connection for `App::new`: the UI fd on wasm32; elsewhere
 /// there is no compositor.
 pub fn default_connection(role: i32) -> Result<Box<dyn Connection>, ConnError> {

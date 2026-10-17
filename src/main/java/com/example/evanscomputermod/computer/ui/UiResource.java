@@ -24,6 +24,15 @@ final class UiResource {
     long hash;
     /** Bumped whenever a canvas's pixels change (the scene exporter diffs its tiles only then). */
     int version;
+    /** Frames committed with CommitAt and not shown yet (protocol v2), or null. */
+    TimedQueue timed;
+    /** SurfaceSetContent hint: 0 auto, 1 exact, 2 motion. */
+    int hint;
+
+    TimedQueue timed() {
+        if (timed == null) timed = new TimedQueue();
+        return timed;
+    }
 
     UiResource(int id, UiProto.ResourceKind kind, int w, int h, int format) {
         this.id = id;

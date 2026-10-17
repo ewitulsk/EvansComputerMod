@@ -21,6 +21,14 @@
 //! themselves, carets blink (when the connection has a clock), and images
 //! and canvases are uploaded through [`Core::image_rgba`] /
 //! [`Core::canvas`].
+//!
+//! Timed canvases (protocol v2): [`Core::put_canvas_at`] (or
+//! [`Core::put_canvas`] then [`Core::commit_at`]) has the compositor show a
+//! canvas frame at a time on the program's monotonic clock
+//! ([`crate::conn::monotonic_us`]) with `CommitAt`, so video stays smooth
+//! when the server or the network hitch; [`Core::queue_flush`] drops what is
+//! queued and [`Core::set_content`] marks a canvas as motion (lossy allowed).
+//! The scroll views take the client's `Scrolled` (it scrolled them at once).
 
 use crate::conn::{default_connection, ConnError, Connection};
 use crate::element::{menu, Element, EventKind, Handler};
@@ -76,6 +84,10 @@ pub struct Core {
     /// A text widget asked for the clipboard: (window, widget key).
     pending_paste: Option<(u32, String)>,
     blink_t0: u64,
+    /// How far `CommitAt` may queue (`QueueLimits`, protocol v2; None from a v1 compositor).
+    queue_limits: Option<proto::QueueLimits>,
+    /// Content hints set before any window existed (sent with the first one).
+    pending_content: Vec<(u32, u8)>,
 }
 
 impl Core {
@@ -102,6 +114,13 @@ impl Core {
             }
         };
         let mut restore = None;
+        let mut queue_limits = None;
+        // Version 2: QueueLimits comes right after Welcome (before Restore).
+        if let Some(Message::QueueLimits(_)) = pending.front() {
+            if let Some(Message::QueueLimits(q)) = pending.pop_front() {
+                queue_limits = Some(q);
+            }
+        }
         if welcome.restore_follows {
             loop {
                 match pending.pop_front() {
@@ -109,6 +128,7 @@ impl Core {
                         restore = Some(r.data);
                         break;
                     }
+                    Some(Message::QueueLimits(q)) => queue_limits = Some(q),
                     Some(_) => return Err(ConnError::Protocol),
                     None => wait(&mut conn, &mut pending)?,
                 }
@@ -131,7 +151,15 @@ impl Core {
             quit: false,
             pending_paste: None,
             blink_t0,
+            queue_limits,
+            pending_content: Vec::new(),
         })
+    }
+
+    /// `(max_queue_frames, max_queue_ms)`: how far ahead `CommitAt` may queue
+    /// (`QueueLimits`; None from a version 1 compositor).
+    pub fn queue_limits(&self) -> Option<(u16, u32)> {
+        self.queue_limits.as_ref().map(|q| (q.max_queue_frames, q.max_queue_ms))
     }
 
     /// Queue a message (sent at the next flush).
@@ -195,6 +223,9 @@ impl Core {
             title: title.chars().take(64).collect(),
         }));
         self.windows.push(Window::new(surface, title, content));
+        for (resource, hint) in std::mem::take(&mut self.pending_content) {
+            self.send(Message::SurfaceSetContent(proto::SurfaceSetContent { surface, resource, hint }));
+        }
         surface
     }
 
@@ -394,6 +425,63 @@ impl Core {
         Ok(())
     }
 
+    /// The surface timed canvas frames commit on: the first configured window
+    /// (the one [`Core::put_canvas`] commits).
+    fn timed_surface(&self) -> Option<u32> {
+        self.windows.iter().find(|w| w.configured).map(|w| w.surface)
+    }
+
+    /// New pixels for a canvas, shown at `pts_us` on the program's monotonic
+    /// clock ([`crate::conn::monotonic_us`]) instead of at the next commit:
+    /// `CommitAt` (protocol v2). Pending tree changes go first with a normal
+    /// `Commit` (a `CommitAt` may only carry pixels). Before the window is
+    /// configured the pixels wait for the first commit, as with `put_canvas`.
+    pub fn put_canvas_at(&mut self, id: u32, pixels: &[u8], damage: &[[i32; 4]], pts_us: u64) -> Result<(), ConnError> {
+        self.render()?;
+        self.conn.put_pixels(id, pixels, damage)?;
+        match self.timed_surface() {
+            Some(surface) => {
+                self.send(Message::CommitAt(proto::CommitAt { surface, pts_us }));
+                self.flush()
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Commit the canvas pixels put since the last commit ([`Core::put_canvas`])
+    /// for `pts_us` (`CommitAt`) instead of at the next loop turn. No-op
+    /// before a window is configured.
+    pub fn commit_at(&mut self, pts_us: u64) -> Result<(), ConnError> {
+        let Some(surface) = self.timed_surface() else { return Ok(()) };
+        // Tree changes are only sent by render, which commits them: none are pending here.
+        if let Some(w) = self.window_mut(surface) {
+            w.force_commit = false;
+        }
+        self.flush()?;
+        self.send(Message::CommitAt(proto::CommitAt { surface, pts_us }));
+        self.flush()
+    }
+
+    /// Drop the queued `CommitAt` frames (seek, pause, stop): `QueueFlush`.
+    pub fn queue_flush(&mut self) -> Result<(), ConnError> {
+        let surface = self.timed_surface().or_else(|| self.windows.first().map(|w| w.surface));
+        if let Some(surface) = surface {
+            self.send(Message::QueueFlush(proto::QueueFlush { surface }));
+        }
+        self.flush()
+    }
+
+    /// How a canvas (`resource`; 0 = a pixel surface itself) may travel to
+    /// players, the hint `gfx_set_hint` takes: 0 auto, 1 exact (never lossy),
+    /// 2 motion (video, lossy allowed): `SurfaceSetContent`.
+    pub fn set_content(&mut self, resource: u32, hint: u8) {
+        let hint = hint.min(2);
+        match self.windows.iter().find(|w| w.role == WindowRole::Window).or_else(|| self.windows.first()).map(|w| w.surface) {
+            Some(surface) => self.send(Message::SurfaceSetContent(proto::SurfaceSetContent { surface, resource, hint })),
+            None => self.pending_content.push((resource, hint)),
+        }
+    }
+
     pub fn destroy_resource(&mut self, id: u32) {
         self.send(Message::ResourceDestroy(proto::ResourceDestroy { id }));
     }
@@ -589,6 +677,14 @@ impl Core {
                     events.push(AppEvent::ThemeChanged);
                 }
                 Message::Restore(r) => self.restore = Some(r.data),
+                Message::QueueLimits(q) => self.queue_limits = Some(q),
+                // The client scrolled a scroll view itself (v2): lay it out there.
+                Message::Scrolled(sc) => {
+                    let used = self.window_mut(sc.surface).is_some_and(|w| w.scrolled(sc.node, sc.x, sc.y));
+                    if !used {
+                        events.push(AppEvent::Message(Message::Scrolled(sc)));
+                    }
+                }
                 Message::WillSuspend(s) => {
                     events.push(AppEvent::Suspend { deadline_ms: s.deadline_ms });
                     break;
@@ -714,6 +810,18 @@ impl Ctx<'_> {
         }
     }
 
+    /// The bitmap of the pixel grid with this id (palette indices, `cols * rows`).
+    pub fn pixels(&self, id: &str) -> Vec<u8> {
+        self.state(id).map(|s| s.pixels.clone()).unwrap_or_default()
+    }
+
+    /// Replace the bitmap of the pixel grid with this id.
+    pub fn set_pixels(&mut self, id: &str, pixels: &[u8]) {
+        if let Some(s) = self.state_mut(id) {
+            s.pixels = pixels.to_vec();
+        }
+    }
+
     /// Move keyboard focus to the widget with this id.
     pub fn focus(&mut self, id: &str) {
         if let Some(w) = self.core.window_mut(self.window) {
@@ -798,6 +906,36 @@ impl Ctx<'_> {
     pub fn request_frame(&mut self) {
         let surface = self.window;
         self.core.send(Message::RequestFrame(proto::RequestFrame { surface }));
+    }
+
+    /// Canvas pixels shown at `pts_us` on the monotonic clock ([`Ctx::now_us`]); see [`Core::put_canvas_at`].
+    pub fn put_canvas_at(&mut self, id: u32, pixels: &[u8], damage: &[[i32; 4]], pts_us: u64) -> Result<(), ConnError> {
+        self.core.put_canvas_at(id, pixels, damage, pts_us)
+    }
+
+    /// Commit the canvas pixels put since the last commit for `pts_us` ([`Core::commit_at`]).
+    pub fn commit_at(&mut self, pts_us: u64) -> Result<(), ConnError> {
+        self.core.commit_at(pts_us)
+    }
+
+    /// Drop the queued timed frames ([`Core::queue_flush`]).
+    pub fn queue_flush(&mut self) -> Result<(), ConnError> {
+        self.core.queue_flush()
+    }
+
+    /// A canvas's content hint: 0 auto, 1 exact, 2 motion ([`Core::set_content`]).
+    pub fn set_content(&mut self, resource: u32, hint: u8) {
+        self.core.set_content(resource, hint);
+    }
+
+    /// The monotonic clock in µs that `CommitAt` times are on.
+    pub fn now_us(&self) -> u64 {
+        crate::conn::monotonic_us()
+    }
+
+    /// `(max_queue_frames, max_queue_ms)` from the compositor ([`Core::queue_limits`]).
+    pub fn queue_limits(&self) -> Option<(u16, u32)> {
+        self.core.queue_limits()
     }
 
     pub fn close_window(&mut self) {

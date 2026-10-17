@@ -1,0 +1,60 @@
+NAME
+    videoplayer - the Video Player app for the desktop and the ePhone
+
+SYNOPSIS
+    videoplayer [--untimed] [file]
+
+DESCRIPTION
+    Opens the Video Player app in a window. It needs the GUI: start the
+    desktop with gui first (on the console, use video play instead).
+    Like video, it needs the server's FFmpeg add-on.
+
+    Without a file it opens the library: the videos in /home and
+    /home/videos (.mp4 .m4v .mkv .webm .mov .avi). Click one, or press
+    Enter for the first one shown, to play it. With a file it plays that
+    file (a name without a leading / still starts at the root, not the
+    current directory). Files also opens videos with it.
+
+    The window shows the picture with a seek bar and buttons under it;
+    the sound goes to the computer's speaker. Click the seek bar to jump
+    there; the buttons are Library, -10s, Play/Pause, +10s and Loop.
+    Leaving the app pauses it, and it remembers the file and position
+    for next time.
+
+    While playing, the app decodes about 300 ms ahead and hands each
+    frame to the compositor for the moment it is due, so the picture
+    stays smooth when the server lags or the network hitches; the
+    picture may travel slightly lossy, like a video stream. A seek or a
+    pause drops the frames queued ahead (and the sound queued in the
+    speaker), and a pause shows the exact frame where it stopped.
+
+OPTIONS
+    --untimed
+        The old way, without queued frames: each frame is sent when the
+        app's clock reaches it, exactly, with no lossy hint. For
+        comparing (it stutters when the server lags).
+
+KEYS
+    Space or K
+        Play or pause.
+
+    Left, Right
+        Back or forward 10 seconds.
+
+    L
+        Loop on or off.
+
+    Esc or Backspace
+        Back to the library. At the Terminal block Esc closes the
+        screen: press Shift+Esc or Backspace.
+
+    Hotkeys 1, 2, 3
+        On an ePhone held in hand: play/pause, back 10 s, forward 10 s.
+
+EXAMPLES
+      videoplayer
+      videoplayer /home/videos/trailer.mp4
+      gui launch videoplayer --untimed /home/videos/trailer.mp4
+
+SEE ALSO
+    video, player, gui, gfx

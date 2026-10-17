@@ -1,0 +1,9 @@
+# Card example (docs/cards/CARDS.md "Programs and apps"): a toy card issuer in Python.
+# Built into the Tech Village repository by scripts/stage-wasm.sh (village_repo example).
+id          = "dev.ecm.bankd"
+name        = "bankd"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Example issuer: writes bank cards, keeps balances, verifies signed payments over TCP."
+publisher   = "ECM"
+permissions = ["peripherals:card_reader", "network"]

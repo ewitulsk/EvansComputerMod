@@ -1,0 +1,45 @@
+NAME
+    curl - fetch a web page or send data to a web server
+
+SYNOPSIS
+    curl [-v] [-X METHOD] [-d DATA] [-H HEADER] <url>
+
+DESCRIPTION
+    Makes one plain HTTP/1.0 request and prints the body of the reply.
+    The URL is http://host[:port]/path; the http:// may be left out and
+    the port defaults to 80. The host can be an address or a name (the
+    search domain applies, so curl http://web/ works in a village).
+    There is no HTTPS.
+
+    If the name cannot be found or the connection fails, curl says so
+    (and why the name lookup failed).
+
+    Real websites need a computer cabled to the Internet Gateway and
+    the internet add-on (evanscomputermod-internet) on the server.
+    Addresses on the server's own LAN are refused: curl prints Failed
+    to connect.
+
+OPTIONS
+    -v
+        Also print the request line and the reply's headers.
+
+    -X METHOD
+        Use this method (GET by default).
+
+    -d DATA
+        Send DATA as the request body. Turns GET into POST and sets
+        Content-Type: application/x-www-form-urlencoded unless -H gives
+        another.
+
+    -H HEADER
+        Add a header, written Name: value (quote it).
+
+EXAMPLES
+      curl http://100.72.0.10/
+      curl http://web.v4.ring/index.html
+      curl -v http://10.0.0.5:8080/
+      curl -d "op=list" http://nic.ring/api
+      curl -H "Content-Type: text/plain" -d hi http://10.0.0.5/a.txt
+
+SEE ALSO
+    httpd, ping, nslookup, networking

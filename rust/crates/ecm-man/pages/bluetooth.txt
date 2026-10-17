@@ -1,0 +1,37 @@
+NAME
+    bluetooth - the ePhone's Bluetooth radio and AirPods
+
+DESCRIPTION
+    Every ePhone has a Bluetooth radio. AirPods pair with it over real
+    2.4 GHz radio frames, so range, walls and other 2.4 GHz traffic
+    (Wi-Fi, controllers) matter. While connected AirPods are in your
+    ears, the phone's sound plays only in them and its microphone is
+    theirs.
+
+ITEMS
+    AirPods
+        Wireless earbuds with microphones. Right-click to put them in
+        your ears (the head slot). About three hours of battery while
+        connected.
+
+    AirPods Case
+        Right-click opens or closes the lid (it closes by itself after
+        a minute); the AirPods inside can be paired while it is open.
+        Sneak + right-click takes them out and into your ears.
+
+PAIRING
+    Open the case's lid near your phone. On the phone, Settings >
+    Bluetooth lists "<you>'s AirPods" as ready to pair: tap Pair. Put
+    them in your ears: Settings says Sound plays on them. From then on
+    worn AirPods connect by themselves; back in the case with the lid
+    closed they disconnect and the sound goes back to the speaker.
+    Disconnect keeps them paired, Forget unpairs them.
+
+WHILE THEY ARE WORN
+    Everything the phone plays (Discord, the GBA, beep, aplay) plays in
+    your ears only: nobody else hears it and no microphone picks it up.
+    /dev/mic hears your mouth through them, and Discord shows
+    Headphones and talks full duplex.
+
+SEE ALSO
+    bluetoothctl, voice, phone-guide, settings, discord

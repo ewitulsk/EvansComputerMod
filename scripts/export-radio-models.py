@@ -6,6 +6,7 @@ Kinds:
   facing_lit   like facing; cubes named lit_* only appear in <name>_lit, used when lit=true
   facing_active  like facing_lit but for an `active` property (<name>_active)
   facing_card  like facing_lit but cubes named card_* appear in <name>_card, for a `card` property
+  facing_field like facing_lit but cubes named field_* appear in <name>_field, for a `field` property
   connector6   cubes named center*/north*/south*/west*/east*/down*/up* -> multipart on 6 sides
   simple       one model, one variant
   item         an item model (no blockstate)
@@ -38,6 +39,8 @@ PROJECTS = {
     'sdr_standard': ('facing', 'block'),
     'sdr_advanced': ('facing', 'block'),
     'handheld_radio': ('item', 'item'),
+    'airpods': ('item', 'item'),
+    'airpods_case': ('item', 'item'),
     'controller_receiver_module': ('item', 'item'),
     'wifi_module': ('item', 'item'),
     'access_point': ('facing_active', 'block'),
@@ -74,6 +77,14 @@ PROJECTS = {
     'ephone_body': ('item_bewlr:ephone', 'item'),
     'charging_dock': ('facing_active', 'block'),
     'card_reader': ('facing_card', 'block'),
+    'microphone': ('facing_lit', 'block'),
+    'walkie_talkie': ('item', 'item'),
+    'card_bank_body': ('item_bewlr:bank_card', 'item'),
+    'card_nfc_body': ('item_bewlr:nfc_card', 'item'),
+    'card_hybrid_body': ('item_bewlr:hybrid_card', 'item'),
+    'card_sim_body': ('item_bewlr:sim_card', 'item'),
+    'card_printer': ('facing_lit', 'block'),
+    'nfc_reader': ('facing_field', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -239,9 +250,9 @@ def export(name):
         out['parent'] = 'minecraft:item/generated' if not out['elements'] else 'minecraft:block/block'
         write(models / f'{name}.json', out)
         return
-    if kind in ('facing_lit', 'facing_active', 'facing_card'):
-        prop = {'facing_lit': 'lit', 'facing_active': 'active', 'facing_card': 'card'}[kind]
-        prefix = 'card_' if kind == 'facing_card' else 'lit_'
+    if kind in ('facing_lit', 'facing_active', 'facing_card', 'facing_field'):
+        prop = {'facing_lit': 'lit', 'facing_active': 'active', 'facing_card': 'card', 'facing_field': 'field'}[kind]
+        prefix = {'facing_card': 'card_', 'facing_field': 'field_'}.get(kind, 'lit_')
         write(models / f'{name}.json', {**out, 'elements': [e for e in out['elements'] if not e['name'].startswith(prefix)]})
         write(models / f'{name}_{prop}.json', out)
         state = {'variants': {}}

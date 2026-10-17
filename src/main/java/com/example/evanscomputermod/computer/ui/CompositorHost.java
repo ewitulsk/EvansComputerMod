@@ -47,6 +47,20 @@ public interface CompositorHost {
     /** Composited pixels changed: {@code rgba} is the whole frame, {@code damage} what changed (device px). */
     void present(byte[] rgba, int w, int h, List<Box> damage);
 
+    /**
+     * Does anything need the composited pixels right now (DISPLAY_PIPELINE_SPEC.md
+     * Part A6)? False while every viewer draws the scene client-side and
+     * nothing else asked for pixels lately: the compositor then keeps the
+     * damage and composites it when someone asks (a tile viewer, a
+     * screenshot, a headless check through {@link Compositor#frameRgba}).
+     */
+    default boolean pixelsWanted() {
+        return true;
+    }
+
+    /** A timed frame was queued or flushed (CommitAt, QueueFlush): stream it to clients now. */
+    default void timedQueued() {}
+
     /** Call {@link Compositor#tick()} after about {@code delayNanos} (coalesced; earlier requests win). */
     void requestTick(long delayNanos);
 
@@ -55,6 +69,12 @@ public interface CompositorHost {
 
     /** A message for the log / diagnostics. */
     default void log(String msg) {}
+
+    /** An app put something on the clipboard (copy): mirror text to the player's real clipboard. */
+    default void clipboardChanged(String mime, byte[] data) {}
+
+    /** The desktop asked to go back to the console (its launcher's Console item). */
+    default void showConsole() {}
 
     // App platform wiring (P4/P5): the computer's app manager answers these; tests use the defaults.
 

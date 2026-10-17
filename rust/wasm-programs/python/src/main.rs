@@ -156,12 +156,7 @@ mod shell_module {
             OptionalArg::Present(s) => s.as_str(),
             OptionalArg::Missing => "",
         };
-        if !prompt_str.is_empty() {
-            print!("{}", prompt_str);
-            let _ = io::stdout().flush();
-        }
-
-        crate::read_line_echo().unwrap_or_default()
+        crate::read_line_echo(prompt_str).unwrap_or_default()
     }
 
     // ==================== Upload (files from the player's real computer) ====================
@@ -807,7 +802,10 @@ struct PythonRepl {
 
 impl PythonRepl {
     fn new() -> Self {
-        let settings = Settings::default();
+        let mut settings = Settings::default();
+        // Like CPython: sys.argv is the script's path and its arguments
+        // (`python /apps/dev.ecm.bankd/main.py serve 7000` -> ["/apps/.../main.py", "serve", "7000"]).
+        settings.argv = std::env::args().skip(1).collect();
 
         let interpreter = Interpreter::with_init(settings, |vm| {
             vm.add_native_module("shell".to_owned(), Box::new(shell_module::make_module));
@@ -866,13 +864,18 @@ impl PythonRepl {
         println!();
     }
 
-    fn print_prompt(&self) {
+    fn prompt(&self) -> &'static str {
         if self.continuation {
-            print!("... ");
+            "... "
         } else {
-            print!(">>> ");
+            ">>> "
         }
-        let _ = io::stdout().flush();
+    }
+
+    /// Ctrl+C at the prompt: forget a half-typed block.
+    fn cancel(&mut self) {
+        self.input_buffer.clear();
+        self.continuation = false;
     }
 
     fn handle_input(&mut self, input: &str) -> bool {
@@ -1024,55 +1027,43 @@ fn rel(p: &str) -> &str {
     p.trim_start_matches('/')
 }
 
-/// Read a line from stdin, echoing printable characters (and backspace) as they arrive,
-/// since the terminal doesn't echo a running program's input. None at end of input.
-fn read_line_echo() -> Option<String> {
-    use std::io::Read;
-    let mut buf: Vec<u8> = Vec::new();
-    let stdin = io::stdin();
-    let mut lock = stdin.lock();
-    let mut byte = [0u8; 1];
-    let mut got_any = false;
-    loop {
-        match lock.read(&mut byte) {
-            Ok(0) => {
-                if !got_any {
-                    return None;
-                }
-                break;
-            }
-            Ok(_) => {
-                got_any = true;
-                match byte[0] {
-                    b'\n' | b'\r' => {
-                        println!();
-                        let _ = io::stdout().flush();
-                        break;
-                    }
-                    4 if buf.is_empty() => return None, // Ctrl+D on an empty line
-                    8 | 127 => {
-                        if buf.pop().is_some() {
-                            print!("\x08 \x08");
-                            let _ = io::stdout().flush();
-                        }
-                    }
-                    b if (32..127).contains(&b) => {
-                        buf.push(b);
-                        print!("{}", b as char);
-                        let _ = io::stdout().flush();
-                    }
-                    _ => {}
-                }
-            }
-            Err(_) => {
-                if !got_any {
-                    return None;
-                }
-                break;
-            }
+thread_local! {
+    /// The line editor (cursor keys, history, Ctrl+R) for the REPL and input().
+    static EDITOR: std::cell::RefCell<ecm_lineedit::Editor> = std::cell::RefCell::new(ecm_lineedit::Editor::new());
+}
+
+/// Where the REPL keeps its history.
+const HISTORY_FILE: &str = "/.python_history";
+
+/// Read a line with the line editor, which draws `prompt` and echoes what is
+/// typed (the terminal doesn't echo a running program's input). Ctrl+C stops
+/// the program as usual. None at end of input.
+fn read_line_echo(prompt: &str) -> Option<String> {
+    EDITOR.with(|e| match ecm_lineedit::stdio::read_line(&mut e.borrow_mut(), prompt, false) {
+        ecm_lineedit::stdio::Input::Line(l) => Some(l),
+        ecm_lineedit::stdio::Input::Interrupt => Some(String::new()),
+        ecm_lineedit::stdio::Input::Eof => None,
+    })
+}
+
+/// A REPL line: like [`read_line_echo`], but Ctrl+C gives up the line
+/// (Err) instead of stopping the program, and the history is saved.
+fn read_repl_line(prompt: &str) -> Result<Option<String>, ()> {
+    EDITOR.with(|e| {
+        let mut ed = e.borrow_mut();
+        let r = ecm_lineedit::stdio::read_line(&mut ed, prompt, true);
+        ecm_lineedit::stdio::save_history(&mut ed, HISTORY_FILE);
+        match r {
+            ecm_lineedit::stdio::Input::Line(l) => Ok(Some(l)),
+            ecm_lineedit::stdio::Input::Interrupt => Err(()),
+            ecm_lineedit::stdio::Input::Eof => Ok(None),
         }
-    }
-    Some(String::from_utf8(buf).unwrap_or_default())
+    })
+}
+
+/// Load the REPL's saved history.
+fn load_repl_history() {
+    EDITOR.with(|e| ecm_lineedit::stdio::load_history(&mut e.borrow_mut(), HISTORY_FILE));
 }
 
 fn main() {
@@ -1095,17 +1086,13 @@ fn main() {
     } else {
         // Interactive REPL mode
         repl.show_banner();
-        let stdin = io::stdin();
+        load_repl_history();
         loop {
-            repl.print_prompt();
-            // The terminal doesn't echo a program's input: echo it here, so you see what you type.
-            match read_line_echo() {
-                None => {
-                    // EOF
-                    println!();
-                    break;
-                }
-                Some(line) => {
+            match read_repl_line(repl.prompt()) {
+                Err(()) => repl.cancel(),
+                // End of input (Ctrl+D)
+                Ok(None) => break,
+                Ok(Some(line)) => {
                     if repl.handle_input(&line) {
                         break;
                     }

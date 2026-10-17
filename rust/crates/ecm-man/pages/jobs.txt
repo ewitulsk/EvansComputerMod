@@ -1,0 +1,22 @@
+NAME
+    jobs - list background jobs
+
+SYNOPSIS
+    jobs
+
+DESCRIPTION
+    Lists the jobs this shell started in the background (with & at the
+    end of the line) that are still running, as
+
+      [1]  Running    httpd 8080 &
+
+    The number in brackets is the job number that fg %N takes. With no
+    background jobs it prints "No background jobs." When a background
+    job ends, the shell prints "[N]+ Done    command" before the next
+    prompt.
+
+    Each shell has its own jobs: jobs started over SSH or in another
+    Terminal window are not listed here (ps shows every process).
+
+SEE ALSO
+    fg, bg, ps, kill, shell

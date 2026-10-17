@@ -241,6 +241,22 @@ public final class SpeakerAudio {
 
     // ------------------------------------------------------------ server side
 
+    /**
+     * Did a live stream (a role for which {@link #isLiveRole} is true: a call)
+     * put sound into the last {@link #drain()}? Live audio is sent to play at
+     * once, not on the picture's playout delay (SpeakerAudioPacket.FLAG_LIVE).
+     * The per-app mixer (#85) sets it; a speaker without one has no live
+     * streams, so this is false.
+     */
+    public boolean lastDrainLive() {
+        return false;
+    }
+
+    /** Roles whose sound is live: {@code phone} (cellular calls) and {@code voice} (Discord calls). */
+    public static boolean isLiveRole(String role) {
+        return "phone".equals(role) || "voice".equals(role);
+    }
+
     /** Samples written since the last drain, as 16-bit mono at {@link #rate()}. */
     public synchronized short[] drain() {
         short[] out = new short[pendingLen];
@@ -265,7 +281,17 @@ public final class SpeakerAudio {
     public synchronized String status() {
         return String.format(Locale.ROOT,
                 "rate %d\nbits %d\nchannels %d\nvolume %d\nlatency %d\nbuffered_ms %d\nunderruns %d\n",
-                rate, bits, channels, volume, latencyMs, bufferedMs(), underruns);
+                rate, bits, channels, volume, latencyMs, bufferedMs(), underruns) + statusExtra.get();
+    }
+
+    private volatile java.util.function.Supplier<String> statusExtra = () -> "";
+
+    /**
+     * More {@code key value} lines for {@code /dev/audioctl}, from the device that owns this
+     * sound card (an ePhone adds {@code headphones 1} while its audio goes to AirPods).
+     */
+    public void setStatusExtra(java.util.function.Supplier<String> extra) {
+        statusExtra = extra == null ? () -> "" : extra;
     }
 
     /**

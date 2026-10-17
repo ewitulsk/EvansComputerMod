@@ -498,17 +498,40 @@ public final class RouterScenarios {
     return b.build();
   }
 
-  /** Per run: the local web server standing in for "a website on the internet", and its URL. */
-  private static final Map<ScenarioRun, java.net.ServerSocket> FIXTURES = new java.util.WeakHashMap<>();
-  private static final Map<ScenarioRun, String> FIXTURE_URL = new java.util.WeakHashMap<>();
+  /** Per run: the sidecar's test page standing in for "a website on the internet". */
+  private static final Map<ScenarioRun, com.example.evanscomputermod.api.internet.InternetUplinkProvider.TestSite>
+      SITES = new java.util.WeakHashMap<>();
+
+  /** Null when this server's Internet Gateway is online (the internet sidecar is installed and on). */
+  static String internetInstalled(ScenarioRun r) {
+    if (!com.example.evanscomputermod.api.internet.InternetUplinks.installed()) {
+      r.fail("the Internet Gateway needs the evanscomputermod-internet sidecar in the server's mods folder"
+          + " (scripts/Test.ps1 -Internet)");
+      return "no internet uplink";
+    }
+    var hub = NetworkHub.getInstance();
+    if (hub == null || !hub.uplinkOpen()) {
+      r.fail("the internet sidecar is installed but turned off (-Devanscomputermod.internetProxy=false)");
+      return "uplink off";
+    }
+    return SITES.get(r) != null ? null : "the test web page isn't up";
+  }
+
+  private static String siteUrl(ScenarioRun r, int portOffset) {
+    var site = SITES.get(r);
+    if (site == null) return "http://0.0.0.0/";
+    var u = java.net.URI.create(site.url());
+    return "http://" + u.getHost() + ":" + (u.getPort() + portOffset) + "/";
+  }
 
   private static Scenario internet() {
     var b =
         nodes(
             "router_internet",
-            "The Internet Gateway block bridges real host TCP sockets: a client cabled to it, with a static"
-                + " address (the gateway serves no DHCP), curls a web server on the host machine. An"
-                + " isolated local HTTP fixture avoids reliance on a public website; manual mode can also"
+            "The Internet Gateway (with the evanscomputermod-internet sidecar) bridges real host TCP"
+                + " sockets: a client cabled to it, with a static address (the gateway serves no DHCP),"
+                + " curls a web page served on this machine. Control: another port on the same LAN"
+                + " address is refused, since the gateway blocks LAN destinations. Manual mode can also"
                 + " curl a public plain-HTTP URL.",
             "client");
     List<BlockPos> run = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1));
@@ -525,66 +548,26 @@ public final class RouterScenarios {
             // The player's Internet Gateway, cabled to the client's bottom face (eth0).
             for (BlockPos p : run) r.player().place(com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get(), r.abs(p), UP);
             r.player().place(com.example.evanscomputermod.block.ModBlocks.INTERNET_GATEWAY.get(), r.abs(gateway), SOUTH);
-            // "The internet": a web server on the host machine (outside the game).
+            // "The internet": a page the internet sidecar serves on this machine (outside the game).
+            var provider = com.example.evanscomputermod.api.internet.InternetUplinks.get();
+            if (provider == null) return;
             try {
-              var listener = new java.net.ServerSocket(0);
-              FIXTURES.put(r, listener);
-              var worker =
-                  new Thread(
-                      () -> {
-                        while (!listener.isClosed())
-                          try (var socket = listener.accept()) {
-                            socket.setSoTimeout(3000);
-                            var input =
-                                new java.io.BufferedReader(
-                                    new java.io.InputStreamReader(socket.getInputStream()));
-                            while (true) {
-                              var line = input.readLine();
-                              if (line == null || line.isEmpty()) break;
-                            }
-                            socket
-                                .getOutputStream()
-                                .write(
-                                    "HTTP/1.0 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\nhost-socket-ok\n"
-                                        .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-                          } catch (java.io.IOException e) {
-                            if (!listener.isClosed())
-                              com.example.evanscomputermod.EvansComputerMod.LOGGER.warn(
-                                  "Router lab HTTP fixture rejected a request", e);
-                          }
-                      },
-                      "Router-lab-HTTP");
-              worker.setDaemon(true);
-              worker.start();
-              String address = null;
-              for (var network : Collections.list(java.net.NetworkInterface.getNetworkInterfaces()))
-                if (network.isUp() && !network.isLoopback())
-                  for (var ip : Collections.list(network.getInetAddresses()))
-                    if (ip instanceof java.net.Inet4Address
-                        && !ip.isLinkLocalAddress()
-                        && ip.isSiteLocalAddress()) {
-                      address = ip.getHostAddress();
-                      break;
-                    }
-              if (address == null) throw new IllegalStateException("No host IPv4 interface");
-              FIXTURE_URL.put(r, "http://" + address + ":" + listener.getLocalPort() + "/");
+              var site = provider.openTestSite("host-socket-ok\n");
+              if (site != null) SITES.put(r, site);
             } catch (java.io.IOException e) {
-              throw new IllegalStateException(e);
+              com.example.evanscomputermod.EvansComputerMod.LOGGER.warn("router_internet: no test web page: {}", e.toString());
             }
           }
 
           public void clear(ScenarioRun r) {
-            var listener = FIXTURES.remove(r);
-            FIXTURE_URL.remove(r);
-            if (listener == null) return;
-            try {
-              listener.close();
-            } catch (Exception ignored) {
-            }
+            var site = SITES.remove(r);
+            if (site != null) site.close();
           }
         });
-    b.note("Built for you: an Internet Gateway block cabled to the client's bottom face (eth0); a web server"
-        + " runs on this machine (outside the game).");
+    b.note("Built for you: an Internet Gateway block cabled to the client's bottom face (eth0); a web page"
+        + " served on this machine (outside the game) by the evanscomputermod-internet sidecar.");
+    b.await(RouterScenarios::internetInstalled,
+        "the server's Internet Gateway is online (evanscomputermod-internet)", 1_000);
     provision(b, "client", Map.of("network.cfg",
         "iface eth0 10.0.0.50/24\nroute default via 10.0.0.1 dev eth0\n"));
     b.send("client", "ifconfig");
@@ -595,24 +578,31 @@ public final class RouterScenarios {
           byte[] mac = NetworkHub.deriveMac(r.terminal("client").getComputerId(), 0);
           return m != null && m.hasInternetAccess(mac) ? null : "the client's cable doesn't reach an Internet Gateway";
         }, "the client's cable reaches the Internet Gateway (its segment is online)", 5_000);
-    b.sendFn("client", r -> "curl " + FIXTURE_URL.get(r),
-        "curl http://<this machine's LAN address>:<the web server's port>/");
+    b.sendFn("client", r -> "curl " + siteUrl(r, 0),
+        "curl http://<this machine's LAN address>:<the test page's port>/");
     b.expect("client", "host-socket-ok", "the real host socket proxy fetched the page (external ICMP and HTTPS are unsupported)");
+    b.expect("client", "/ >", "curl returned to shell");
+    b.note("Control: the same LAN address on another port. The gateway blocks private/LAN destinations"
+        + " (only the test page itself is let through), so the connection is refused at once.");
+    b.sendFn("client", r -> "curl " + siteUrl(r, 1),
+        "curl http://<this machine's LAN address>:<another port>/");
+    b.expect("client", "Failed to connect", "a LAN destination is refused (unless the server sets -Devanscomputermod.internet.allowLan=true)");
     return b.build();
   }
 
   /**
-   * The chat service: chatd on "server", with alice cabled to its eth0 (bottom) and bob to its
-   * eth1 (top, a second LAN); alice and bob read the server from /etc/chat.conf. Control first:
-   * a port with no chatd gets the "refused" fix-it hint.
+   * The chat command against a Discord backend: discordd on "server", with alice cabled to its
+   * eth0 (bottom) and bob to its eth1 (top, a second LAN); alice and bob read the server from
+   * /etc/chat.conf and talk in the backend's home server #general. Control first: a port with no
+   * backend gets the "refused" fix-it hint.
    */
   private static Scenario chat() {
     var b =
         nodes(
             "router_chat",
-            "Instant messaging: chatd on 'server', 'alice' and 'bob' run chat (server from"
-                + " /etc/chat.conf), talk, /who and /quit. Control: a port without chatd is"
-                + " refused with a fix-it hint.",
+            "Instant messaging: discordd on 'server', 'alice' and 'bob' run chat (server from"
+                + " /etc/chat.conf), talk in #general, /who and /quit. Control: a port without a"
+                + " backend is refused with a fix-it hint.",
             "server",
             "alice",
             "bob");
@@ -624,14 +614,14 @@ public final class RouterScenarios {
         b,
         ordered(
             Map.entry("server", Map.of("network.cfg", "iface eth0 10.95.0.1/24\niface eth1 10.95.1.1/24\n",
-                "services.cfg", "chatd 7777 &\n")),
+                "services.cfg", "discordd 7777 &\n")),
             Map.entry("alice", Map.of("network.cfg", "iface eth0 10.95.0.2/24\n", "etc/chat.conf",
                 "server 10.95.0.1\nport 7777\nnick alice\n")),
             Map.entry("bob", Map.of("network.cfg", "iface eth0 10.95.1.3/24\n", "etc/chat.conf",
                 "server 10.95.1.1\nnick bob\n"))));
-    b.note("server runs chatd 7777 & on both of its LANs; cat /etc/chat.conf on alice and bob.");
+    b.note("server runs discordd 7777 & (a Discord backend) on both of its LANs; cat /etc/chat.conf on alice and bob.");
     b.send("alice", "chat 10.95.0.1:7778");
-    b.expect("alice", "refused", "control: no chat server on port 7778 (fix-it hint)");
+    b.expect("alice", "refused", "control: no Discord backend on TCP port 7778 (fix-it hint; 7778 is its voice port, UDP)");
     b.expect("alice", "/ >", "shell");
     b.send("alice", "chat");
     b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server and nick from /etc/chat.conf)");
@@ -1323,7 +1313,7 @@ public final class RouterScenarios {
             var d = WorldNetwork.get(level);
             var host = ComputerHost.get(level.getServer(), d.identity(level, d.chatVillage(), WorldNetwork.CHAT));
             String log = host.instance() == null ? "" : ScenarioRun.screen(host.headlessDisplay());
-            return log.contains("tapper joined from 10.200." + a + ".10") ? null : "chatd log:\n" + log;
+            return log.contains("tapper joined from 10.200." + a + ".10") ? null : "discordd log:\n" + log;
           },
           "the chat server saw tapper join from 10.200." + a + ".10 (no NAT: the tap's own prefix is routed)",
           15_000);

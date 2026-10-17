@@ -1,0 +1,57 @@
+NAME
+    afsk1200 - send and receive 1200-baud AX.25 packet radio (APRS style)
+
+SYNOPSIS
+    afsk1200 send <freq> <SRC> <DEST> <text...> [--repeat N]
+    [--power DBM] [--sdr NAME] [--rate SPS] [--iq FILE]
+
+    afsk1200 recv <freq> [--seconds S] [--count N] [--sdr NAME]
+    [--rate SPS] [--iq FILE]
+
+DESCRIPTION
+    A packet modem: Bell 202 AFSK at 1200 bit/s over narrowband FM,
+    carrying AX.25 UI frames, as used by APRS and amateur packet radio.
+    Callsigns are like N0CALL or N0CALL-7 (with an SSID); they are
+    upper-cased.
+
+COMMANDS
+    send <freq> <SRC> <DEST> <text...>
+        Transmit one frame from SRC to DEST with the text (up to 256
+        bytes), with 0.4 s of carrier before and after so receivers can
+        settle. Prints "afsk1200: sent SRC>DEST: text". Needs a Standard
+        or Advanced SDR.
+
+    recv <freq>
+        Listen and print every frame decoded (source, destination and
+        text; frames that are not AX.25 as hex). Runs until Ctrl+T,
+        --seconds or --count, then prints how many frames it decoded.
+        Any SDR can receive.
+
+OPTIONS
+    --repeat N
+        send: send the frame N times (1-100). Default 1.
+
+    --power DBM
+        send: transmit power. Default the SDR's maximum (37 dBm).
+
+    --seconds S, --count N
+        recv: stop after S seconds or N frames.
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+    --rate SPS
+        Sample rate, at least 9600. Default 48000.
+
+    --iq FILE
+        send writes the signal to FILE (cf32 plus .sigmf-meta) instead
+        of transmitting; recv decodes FILE instead of the SDR.
+
+EXAMPLES
+      afsk1200 recv 144.39M
+      afsk1200 send 144.39M N0CALL-1 APRS hello world --power 10
+      afsk1200 send 144.39M N0CALL CQ test --iq /pkt.cf32
+      afsk1200 recv 144.39M --iq /pkt.cf32
+
+SEE ALSO
+    radiod, rx_fm, iqrec, radio

@@ -1,0 +1,66 @@
+NAME
+    wpa_cli - control wpa_supplicant and edit its networks
+
+SYNOPSIS
+    wpa_cli [-i wlan0] [-c config] <command> [args]
+
+DESCRIPTION
+    Talks to a running wpa_supplicant and edits its config file
+    (default /etc/wpa_supplicant.conf). Edits are saved at once; when
+    the daemon runs it reloads them when needed. Replies are OK, FAIL
+    (with the reason) or the requested information.
+
+COMMANDS
+    status
+        The daemon's connection state (wpa_state, network, address).
+
+    scan, scan_results
+        Start a scan; list the Access Points found.
+
+    list_networks
+        The configured networks, with their ids and which is current.
+
+    add_network
+        Add a new (disabled) network and print its id.
+
+    set_network <id> <variable> <value>
+        Set ssid, psk, key_mgmt, bssid or priority. Text needs no
+        quotes and may contain spaces (set_network 0 psk correct
+        horse); an ssid that looks like hex digits, or a psk of 64 hex
+        digits, is taken as hex.
+
+    get_network <id> <variable>
+        Show a value (psk is shown as *).
+
+    enable_network <id|all>, disable_network <id|all>
+        Allow or forbid using networks. A network needs an ssid and a
+        psk (or key_mgmt NONE) to be enabled.
+
+    select_network <id>
+        Use only this network (disables the others).
+
+    remove_network <id|all>
+        Delete networks.
+
+    save_config
+        Accepted for compatibility; changes are already saved.
+
+    reconfigure
+        Make the daemon reload the config.
+
+    disconnect, reconnect, reassociate, terminate
+        Leave the network, join again, or stop the daemon.
+
+FILES
+    /etc/wpa_supplicant.conf
+        The networks.
+
+EXAMPLES
+      wpa_cli add_network
+      wpa_cli set_network 0 ssid ecm-lab
+      wpa_cli set_network 0 psk correct horse
+      wpa_cli enable_network 0
+      wpa_cli status
+
+SEE ALSO
+    wpa_supplicant, wifi, iw, networking

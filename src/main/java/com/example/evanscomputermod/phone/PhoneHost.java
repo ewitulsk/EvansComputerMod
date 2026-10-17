@@ -111,6 +111,49 @@ public final class PhoneHost implements IComputerHost {
                     return true;
                 }
             });
+    /**
+     * The phone's own microphone (peripheral {@code microphone}, {@code /dev/mic}): at the holder's
+     * hand, so it hears the holder close up and everything around them.
+     */
+    private final com.example.evanscomputermod.voice.MicAudio micAudio = new com.example.evanscomputermod.voice.MicAudio(
+            (start, n, rate, out) -> {
+                // The headphones layer: with AirPods connected and worn, /dev/mic is what their microphones sent.
+                if (this.bluetooth.micRouted()) {
+                    this.bluetooth.renderMic(start, n, rate, out);
+                    return;
+                }
+                com.example.evanscomputermod.voice.VoiceServer.Spot s = micSpot();
+                if (s != null) com.example.evanscomputermod.voice.SoundField.get().render(s.dimension(), s.x(), s.y(), s.z(), start, n, rate, out);
+            });
+    private final com.example.evanscomputermod.voice.MicrophonePeripheral mic = new com.example.evanscomputermod.voice.MicrophonePeripheral(
+            new com.example.evanscomputermod.voice.MicrophonePeripheral.Owner() {
+                @Override public com.example.evanscomputermod.voice.MicAudio mic() { return micAudio; }
+                @Override public void markGainChanged() {}
+            });
+
+    /**
+     * The phone's Bluetooth radio (peripheral {@code bluetooth}): AirPods pair and connect here, and
+     * while they are connected and worn the phone's speaker and microphone are theirs (docs/BLUETOOTH.md).
+     */
+    private com.example.evanscomputermod.bluetooth.PhoneBluetooth bluetooth;
+    private com.example.evanscomputermod.bluetooth.BluetoothPeripheral btPeripheral;
+
+    /**
+     * Where the phone's microphone is: a little below the holder's mouth, or the mouth of whoever
+     * wears the connected AirPods; null while nobody holds it.
+     */
+    @Nullable
+    private com.example.evanscomputermod.voice.VoiceServer.Spot micSpot() {
+        if (bluetooth.micRouted()) {
+            ServerPlayer w = com.example.evanscomputermod.bluetooth.Headsets.wearerOf(bluetooth.connected());
+            if (w != null) return com.example.evanscomputermod.voice.VoiceServer.mouth(w);
+        }
+        ServerPlayer p = holder;
+        if (p == null) return null;
+        var eye = p.getEyePosition();
+        return new com.example.evanscomputermod.voice.VoiceServer.Spot(p.level().dimension().location().toString(), eye.x, eye.y - 0.4, eye.z);
+    }
+
     /** The PhoneUi the status source was last given to (PhoneApps). */
     private Object statusSource;
 
@@ -124,7 +167,15 @@ public final class PhoneHost implements IComputerHost {
     private boolean held;
 
     private volatile PhoneState state = PhoneState.OFF;
-    private boolean attached;
+    private volatile boolean attached;
+    /** Display passes on the pump (DISPLAY_PIPELINE_SPEC.md Part A1): the holder's screen, and the onlookers' mirror. */
+    private final com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane syncLane =
+            new com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane("phone", this::syncNow);
+    private final com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane mirrorLane =
+            new com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane("phone-mirror", this::mirrorPass);
+    /** Who sees and may use the phone, as of the last tick (Part A2). */
+    private volatile com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot =
+            com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
     private volatile boolean booting;
     /** Ticks left until a detach is forced; -1 = no detach pending. */
     private int detachIn = -1;
@@ -137,6 +188,8 @@ public final class PhoneHost implements IComputerHost {
     private long ticks;
 
     private final Set<UUID> mirrorViewers = new HashSet<>();
+    /** The onlookers' player objects, for the viewer snapshot (scenario onlookers aren't in the player list). */
+    private final java.util.Map<UUID, ServerPlayer> mirrorPlayers = new java.util.HashMap<>();
     private boolean mirrorPending;
     private long lastMirrorTick;
     private PhoneConfig.Visibility visibility = PhoneConfig.Visibility.OFF;
@@ -228,7 +281,10 @@ public final class PhoneHost implements IComputerHost {
     PhoneHost(MinecraftServer server, UUID id) {
         this.server = server;
         this.id = id;
+        this.bluetooth = new com.example.evanscomputermod.bluetooth.PhoneBluetooth(id, "ePhone");
+        this.btPeripheral = new com.example.evanscomputermod.bluetooth.BluetoothPeripheral(bluetooth.link());
         speakerAudio.setWriteListener(() -> PhoneApps.audioWritten(this));
+        speakerAudio.setStatusExtra(() -> bluetooth.audioRouted() ? "headphones 1\n" : "headphones 0\n");
     }
 
     // ------------------------------------------------------------ state machine (server thread)
@@ -273,6 +329,9 @@ public final class PhoneHost implements IComputerHost {
         if (!attached) return;
 
         bays.tick();
+        if (!holderName.isEmpty()) bluetooth.link().setName(holderName + "'s ePhone");
+        bluetooth.tick(pose(), micAudio.listening());
+        if (bluetooth.link().takeChanged()) writeBluetoothToStack();
         ComputerInstance running = instance();
         if (running != null) running.tickSync();   // text console changes reach the holder from here
         drain();
@@ -282,6 +341,7 @@ public final class PhoneHost implements IComputerHost {
         }
         if (ticks % 20 == 0) writeBatteryToStack(false);
         updateMirror();
+        publishViewers();
         sendStatus(false);
         playSpeaker();
         controllers.tick(System.currentTimeMillis());
@@ -365,6 +425,11 @@ public final class PhoneHost implements IComputerHost {
         bays.load();
         peripherals.setWireless(PhonePeripheral.NAME, phonePeripheral);
         peripherals.setWireless("speaker", speaker);
+        peripherals.setWireless("microphone", mic);
+        com.example.evanscomputermod.voice.VoiceServer.addMic(micAudio, this::micSpot);
+        if (!stack.isEmpty()) bluetooth.load(stack.getOrDefault(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
+                net.minecraft.world.item.component.CustomData.EMPTY).copyTag().getCompound(BLUETOOTH_KEY));
+        peripherals.setWireless(com.example.evanscomputermod.bluetooth.BluetoothPeripheral.TYPE, btPeripheral);
         peripherals.setWireless(com.example.evanscomputermod.card.SimPeripheral.TYPE, simPeripheral);
     }
 
@@ -375,6 +440,23 @@ public final class PhoneHost implements IComputerHost {
         }
         controllers.disconnectAll();
         peripherals.detachAll();
+        com.example.evanscomputermod.voice.VoiceServer.removeMic(micAudio);
+        bluetooth.stop();
+    }
+
+    /** Where the phone item keeps its Bluetooth pairings (custom data). */
+    private static final String BLUETOOTH_KEY = "ecm_bluetooth";
+
+    private void writeBluetoothToStack() {
+        if (stack.isEmpty() || PhoneItemData.id(stack) == null) return;
+        net.minecraft.nbt.CompoundTag t = bluetooth.save();
+        net.minecraft.world.item.component.CustomData.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA, stack,
+                root -> root.put(BLUETOOTH_KEY, t));
+    }
+
+    /** The phone's Bluetooth radio (tests, debug). */
+    public com.example.evanscomputermod.bluetooth.PhoneBluetooth bluetooth() {
+        return bluetooth;
     }
 
     /** The sleep landed (or timed out): let go of the computer. It stays in memory, paused. */
@@ -389,7 +471,9 @@ public final class PhoneHost implements IComputerHost {
         ComputerRegistry.unregister(id, this);
         holderSync.reset();
         mirrorSync.reset();
+        viewerSnapshot = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
         mirrorViewers.clear();
+        mirrorPlayers.clear();
         sendStatus(true);
         holder = null;
         stack = ItemStack.EMPTY;
@@ -586,6 +670,7 @@ public final class PhoneHost implements IComputerHost {
         int interval = PhoneConfig.mirrorIntervalTicks();
         if (ticks % interval == 0) {
             mirrorViewers.clear();
+            mirrorPlayers.clear();
             ServerPlayer h = holder;
             if (visibility == PhoneConfig.Visibility.FULL && h != null) {
                 double r = PhoneConfig.mirrorRange();
@@ -593,6 +678,7 @@ public final class PhoneHost implements IComputerHost {
                     if (p == h || p.getUUID().equals(holderId)) continue;
                     if (!PhoneServer.prefs(p.getUUID()).renderOthers()) continue;
                     mirrorViewers.add(p.getUUID());
+                    mirrorPlayers.put(p.getUUID(), p);
                 }
             }
             mirrorSync.retainViewers(mirrorViewers);
@@ -606,12 +692,65 @@ public final class PhoneHost implements IComputerHost {
         mirrorPending = false;
         lastMirrorTick = ticks;
         if (mirrorViewers.isEmpty()) return;
+        mirrorLane.request();
+    }
+
+    /** The holder's display: the phone's screen, its program's presentation queue, lossy unless Tier 1. */
+    private DisplaySyncHub.Source holderSource() {
+        ComputerInstance c = instance();
+        var device = c == null ? null : c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL);
+        var tier = displayTier(DISPLAY_OWN);
+        var d = display;
+        return new DisplaySyncHub.Source() {
+            @Override public com.example.evanscomputermod.computer.TerminalDisplay display() { return d; }
+            @Override public com.example.evanscomputermod.computer.display.PresentQueue queue() {
+                return device == null ? null : device.queue();
+            }
+            @Override public int hint() { return device == null ? 0 : device.hint(); }
+            @Override public boolean lossyAllowed() {
+                return tier != null && tier != com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR;
+            }
+        };
+    }
+
+    /** The mirror's pass, on the display pump, to the onlookers of the last tick. */
+    private void mirrorPass() {
+        List<UUID> to = viewerSnapshot.recipients(DISPLAY_MIRROR);
+        if (to.isEmpty()) return;
+        ComputerInstance ci = instance();
+        if (ci != null) ci.getUiManager().notePixelDemand(); // onlookers get pixels even when the holder draws the scene
         try {
-            mirrorSync.sync(id, display, List.copyOf(mirrorViewers), this::send);
+            mirrorSync.sync(id, display, to, this::send);
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("ePhone mirror sync failed", e);
             mirrorSync.forceKeyframe();
         }
+    }
+
+    /** Once per tick (server thread): the holder and the onlookers, for the pump, acks and input. */
+    private void publishViewers() {
+        var b = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.builder(ticks);
+        ServerPlayer h = holder;
+        if (h != null && attached) {
+            if (state == PhoneState.AWAKE) b.recipient(DISPLAY_OWN, h);
+            b.interact(DISPLAY_OWN, h.getUUID());
+            if (state == PhoneState.AWAKE) b.input(DISPLAY_OWN, h.getUUID());
+            for (UUID m : mirrorViewers) {
+                ServerPlayer p = mirrorPlayers.get(m);
+                if (p == null) continue;
+                b.recipient(DISPLAY_MIRROR, p);
+                b.interact(DISPLAY_MIRROR, m);
+            }
+        }
+        var next = b.build();
+        var prev = viewerSnapshot;
+        viewerSnapshot = next;
+        if (!next.sameRecipients(prev)) syncToClients();
+    }
+
+    @Override
+    public com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot() {
+        return viewerSnapshot;
     }
 
     /** Status (state, visibility, battery) for the holder and nearby players, on change or every second. */
@@ -647,27 +786,30 @@ public final class PhoneHost implements IComputerHost {
         hardwareDirty = true;
     }
 
+    /** Stream the holder's screen: a pass on the display pump, never the server thread. */
     @Override
     public void syncToClients() {
-        server.execute(this::syncNow);
+        syncLane.request();
     }
 
+    /** The holder's pass (display pump); the mirror keeps its own low rate, set by the tick. */
     private void syncNow() {
         if (!attached) return;
-        UUID h = holderId;
-        if (h != null && state == PhoneState.AWAKE) {
+        List<UUID> own = viewerSnapshot.recipients(DISPLAY_OWN);
+        if (!own.isEmpty()) {
+            UUID h = own.get(0);
             if (sceneSync(h)) return;
             try {
-                holderSync.sync(id, display, List.of(h), this::send);
+                ComputerInstance ci = instance();
+                if (ci != null) ci.getUiManager().notePixelDemand();
+                holderSync.setWaker(syncLane::requestIn);
+                holderSync.sync(id, holderSource(), own, this::send);
             } catch (Exception e) {
                 EvansComputerMod.LOGGER.debug("ePhone display sync failed", e);
                 holderSync.forceKeyframe();
             }
         }
-        if (!mirrorViewers.isEmpty()) {
-            if (ticks - lastMirrorTick >= PhoneConfig.mirrorIntervalTicks()) syncMirror();
-            else mirrorPending = true;
-        }
+        if (!viewerSnapshot.recipients(DISPLAY_MIRROR).isEmpty()) mirrorPending = true;
     }
 
     /**
@@ -683,7 +825,7 @@ public final class PhoneHost implements IComputerHost {
         List<UUID> scene = ui.sceneViewers(DISPLAY_OWN, List.of(h));
         try {
             ui.sceneSync(DISPLAY_OWN, scene, (player, d, data) -> {
-                ServerPlayer p = server.getPlayerList().getPlayer(player);
+                ServerPlayer p = viewerSnapshot.player(player);
                 if (p != null && !(p instanceof FakePlayer)) {
                     PacketDistributor.sendToPlayer(p, com.example.evanscomputermod.network.UiScenePackets.packet(player, id, d, data));
                 }
@@ -698,9 +840,14 @@ public final class PhoneHost implements IComputerHost {
 
     @Override
     public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        onSceneAck(player.getUUID(), displayId, epoch, generation, missing, 0);
+    }
+
+    @Override
+    public void onSceneAck(UUID player, int displayId, int epoch, long generation, long[] missing, long clientRecvUs) {
         ComputerInstance c = instance();
-        if (c == null || !player.getUUID().equals(holderId)) return;
-        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
+        if (c == null || !player.equals(holderId)) return;
+        if (c.getUiManager().sceneHub().onAck(player, displayId, epoch, generation, missing, clientRecvUs)) syncToClients();
     }
 
     /** The phone's speaker: what programs wrote, to players near the holder. */
@@ -708,14 +855,32 @@ public final class PhoneHost implements IComputerHost {
         short[] pcm = speakerAudio.drain();
         ServerPlayer h = holder;
         if (pcm.length == 0 || h == null) return;
+        // The headphones layer: with AirPods connected and worn, the sound goes to them over
+        // Bluetooth (only their wearer hears it; it isn't in the air for microphones either).
+        if (bluetooth.audioRouted()) {
+            bluetooth.link().sendAudio(pcm, speakerAudio.rate());
+            return;
+        }
+        if (com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
+            // The phone's speaker is in the air for microphones too (in the holder's hand).
+            var eye = h.getEyePosition();
+            com.example.evanscomputermod.voice.SoundField.get().emit("phone:" + id, h.level().dimension().location().toString(),
+                    eye.x, eye.y - 0.5, eye.z, pcm, 0, pcm.length, speakerAudio.rate(), 1f);
+        }
         double range = com.example.evanscomputermod.EcmConfig.speakerRange();
         List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
         BlockPos at = h.blockPosition();
+        // When the first sample plays (the card's queue ahead of it), for lip sync on the client (Part E2).
+        int rate = Math.max(1, speakerAudio.rate());
+        long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        boolean live = speakerAudio.lastDrainLive(); // a call plays at once, not on the picture's delay
+        long pts = live ? now : Math.max(now, now + speakerAudio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate);
+        int flags = live ? com.example.evanscomputermod.speaker.SpeakerAudioPacket.FLAG_LIVE : 0;
         for (int off = 0; off < pcm.length; off += 2600) {
             int n = Math.min(2600, pcm.length - off);
             if (near.isEmpty()) continue;
             var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.rate(), n,
-                    speakerEncoder.encode(pcm, off, n));
+                    speakerEncoder.encode(pcm, off, n), live ? now : pts + off * 1_000_000L / rate, id, flags);
             for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
         }
     }
@@ -723,6 +888,11 @@ public final class PhoneHost implements IComputerHost {
     /** The phone's controller receiver (ControllerServer). */
     public com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
         return controllers;
+    }
+
+    /** The phone's microphone. */
+    public com.example.evanscomputermod.voice.MicAudio micAudio() {
+        return micAudio;
     }
 
     /** The phone's speaker (tests read how much it played). */
@@ -740,8 +910,8 @@ public final class PhoneHost implements IComputerHost {
 
     private void send(UUID player, TerminalDeltaPacket packet) {
         packetsTo.merge(player, 1, Integer::sum);
-        ServerPlayer p = server.getPlayerList().getPlayer(player);
-        if (p != null && !(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
+        ServerPlayer p = viewerSnapshot.player(player);
+        if (p != null && !(p instanceof FakePlayer) && !p.hasDisconnected()) PacketDistributor.sendToPlayer(p, packet);
     }
 
     @Override
@@ -813,25 +983,28 @@ public final class PhoneHost implements IComputerHost {
 
     @Override
     public void onDisplayAck(ServerPlayer player, int displayId, long generation) {
+        onDisplayAck(player.getUUID(), displayId, generation, 0);
+    }
+
+    /** Any thread (acks come in on the network thread, Part A3). */
+    @Override
+    public void onDisplayAck(UUID player, int displayId, long generation, long clientRecvUs) {
         DisplaySyncHub hub = displayId == DISPLAY_MIRROR ? mirrorSync : holderSync;
+        Runnable pass = displayId == DISPLAY_MIRROR ? mirrorLane::request : syncLane::request;
         // A holder whose client draws the GUI scene gets a scene keyframe instead.
         ComputerInstance ci = instance();
         if (generation == 0 && displayId == DISPLAY_OWN && ci != null
-                && !ci.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
-            ci.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+                && !ci.getUiManager().sceneViewers(displayId, List.of(player)).isEmpty()) {
+            ci.getUiManager().sceneHub().requestKeyframe(player, displayId);
             syncToClients();
             return;
         }
         if (generation != 0) {
-            if (hub.onClientReady(player.getUUID(), generation)) syncToClients();
+            if (hub.onClientReady(player, generation, clientRecvUs)) pass.run();
             return;
         }
-        hub.requestKeyframe(player.getUUID());
-        try {
-            hub.sync(id, display, List.of(player.getUUID()), this::send);
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("ePhone keyframe failed", e);
-        }
+        hub.requestKeyframe(player);
+        pass.run();
     }
 
     // ------------------------------------------------------------ hotkeys and wakes

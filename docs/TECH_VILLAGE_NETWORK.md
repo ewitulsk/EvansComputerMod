@@ -51,6 +51,13 @@ its entrance marker (`Template.entrance` in `scripts/gen-tech-village.py`, which
 building with doors and no entrance); `/ecm scenario spawn tech_village_roads` walks every
 door's road in the nearest village.
 
+Structure pieces place their blocks with the shapes they were saved with (nothing
+recomputes a cable's arms), so the templates and the network piece bake every arm in: the
+ISP router's Interface Block carries its arm into the router, and each planned run's arm
+masks come from its neighbours. `/ecm scenario spawn tech_village_cables` checks that every
+cable and Interface Block in the nearest village's ISP and Data Center visibly joins
+exactly what it is wired to.
+
 ## 2. Address plan
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
@@ -104,7 +111,7 @@ attached, use the Interface Probe on a face to see its name.
 |---|---|---|---|
 | ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP with open peering on eth2/eth3, DHCP, NAT in village 1), `sshd`, `disco serve` (answers for the ring's services, section 8c) |
 | Web server (`datacenter.web`) | Data Center, first rack | eth1 UP: data center LAN, `100.(64+N).0.10/24` | `httpd 80`, `sshd` |
-| Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd`, `disco serve` |
+| Discord backend (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `discordd 7777 --name "Tech Village"`, `sshd`, `disco serve` |
 | Package server (`datacenter.repo`, the chat village) | Data Center, fourth rack | eth1 UP: `100.(64+N).0.21/24` | `pkg serve /srv/repo 8080 --name Tech-Village-Apps` (the repository), `sshd`, `disco serve` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT), `disco serve` (relays searches to the ISP) |
 | House PC (`house<k>.pc`) | house desk, beside the router | eth1 UP: home LAN by DHCP | - |
@@ -335,13 +342,17 @@ other nine villages' sites, the chat server's address with how to use `chat`, th
 `pkg repo add ... --key` line for your own computer).
 `httpd` serves `index.html` for `/` and the other files of the computer by name.
 
-## 8. Chat
+## 8. Discord and chat
 
 One village's data center (chosen from the world seed; `/ecm techvillage info N` names
-it) runs `chatd 7777 &`. Every village computer has `/etc/chat.conf`:
+it) runs the ring's Discord backend, `discordd 7777 --name "Tech Village" &`
+([DISCORD.md](DISCORD.md)): the Discord app (from the App Store, section 8a) finds it by
+itself and shows its Tech Village server, where players make their own servers with text
+and voice channels. The console `chat` command talks in the Tech Village server's
+`#general`. Every village computer has `/etc/chat.conf`:
 
 ```text
-# Tech Village chat: run 'chat' (see 'chat --help')
+# Tech Village Discord backend: open Discord, or run 'chat' (see 'chat --help')
 server 100.74.0.20
 port 7777
 nick v3-house1
@@ -354,25 +365,26 @@ nick v3-house1
   server's time: `[16:18:40] <alice> hello bob`. New joiners get the last 20 messages.
 * `/nick NAME`, `/who`, `/help`, `/quit` (Ctrl+T also quits).
 * If it cannot connect it says why and how to fix it: no address (cable and DHCP), no
-  route (default route), refused (no chatd on that port), no answer (check the path
+  route (default route), refused (no discordd on that port), no answer (check the path
   with ping/traceroute and BGP).
 
 ![Chat between two villages on a house PC](images/tech-chat-session.png)
 
-The protocol is one text line per message over TCP (`NICK`, `MSG`, `WHO`, `QUIT` from
-clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
-server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
+The chat command's protocol is one text line per message over TCP (`NICK`, `MSG`, `WHO`,
+`QUIT` from clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
+server); see `rust/crates/ecm-chat/src/proto.rs`. `discordd` accepts it as the start of its own
+protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
 
 ## 8a. Apps: the Tech Village repository
 
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding one app, **Chat** (`dev.ecm.chat`):
+"Repositories") holding **Discord** (`dev.ecm.discord`) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
 
-* **Built with the mod.** `scripts/stage-wasm.sh` packs Chat from the staged `chatapp.wasm` the
-  way a player does, natively on the same code: `chatapp --source` (the package folder) and
-  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `chatapp` crate
+* **Built with the mod.** `scripts/stage-wasm.sh` packs Discord from the staged `discord.wasm` the
+  way a player does, natively on the same code: `discord --source` (the package folder) and
+  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `discord` crate
   (`wasm-bin/repo/`, bundled into the jar).
 * **Signed per world.** The repository key is an ed25519 key derived from the world seed
   (`HMAC-SHA256(seed, "ECM-TECHVILLAGE-REPO")` is the secret seed). When the server is
@@ -381,31 +393,30 @@ computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `servic
   `index.json` from them. The key itself is `/etc/pkg/signing.key` on the package server (it
   is the publisher: `pkg build <dir> /srv/repo --sign /etc/pkg/signing.key` publishes more
   verified apps). The repository folder is refreshed from the mod whenever it differs, so a
-  mod update publishes its Chat.
+  mod update publishes its Discord.
 * **Pinned everywhere.** Every generated computer (ISP, Data Center, houses, Phone Store and
   span cell sites, the core) and every **Phone Store display phone** has it in `/etc/pkg/repos`
   with the key pinned, as `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key
   <key>` writes it. The display phones carry their computer from generation (fixed by the
   seed), so the phone you take from the table already has it. Nothing is installed: open the
-  **App Store** and Chat is there (its page says **Verified publisher**); Install fetches it over the network (on a phone,
+  **App Store** and Discord is there (its page says **Verified publisher**); Install fetches it over the network (on a phone,
   over LTE), Open, and the network permission is asked as for any app.
-* **Chat's server.** Chat prefills its connect form from `/etc/chat.conf` while it has no saved
-  server (every village computer has the file; apps may read it). A phone has no
-  `/etc/chat.conf`: Chat finds the ring's chat server on the network (section 8c) and lists it
-  under On the network; a tap connects. Without discovery (an old world's house router), type
-  the chat server's address once (the form says where to find it: the
-  village web page's Chat section, `100.(64+K).0.20`); Chat remembers it.
+* **Discord's backend.** Discord connects to the backend in `/etc/chat.conf` (every village
+  computer has the file; apps may read it) and to every backend it finds on the network (section
+  8c): a phone has no `/etc/chat.conf` and finds the ring's backend that way. Without discovery
+  (an old world's house router), add it by address on Discord's + page (the village web page's
+  Discord section names it, `100.(64+K).0.20`); Discord remembers it.
 
 On your own computer: `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key <key>`
 (the key is on every village page and in any village computer's `/etc/pkg/repos`), then
-`pkg search` / `pkg install dev.ecm.chat` or the App Store. Without `--key` the apps show as
+`pkg search` / `pkg install dev.ecm.discord` or the App Store. Without `--key` the apps show as
 "Unverified publisher (signed, key not pinned)".
 
 ```text
 / > pkg search
-dev.ecm.chat 1.0.0  Chat  [Tech-Village-Apps, signed]
-    Talk with everyone on a chat server (chatd): rooms, people, notifications
-    asks for: network, notifications, background:refresh
+dev.ecm.discord 1.0.0  Discord  [Tech-Village-Apps, signed]
+    Servers with text and voice channels on every Discord backend around you
+    asks for: network, notifications, microphone, peripherals:speaker, background:refresh, background:audio
 ```
 
 (On a village's web server; the package server logs `100.(64+N).0.10:... GET /index.json`.)
@@ -470,7 +481,7 @@ Chat lists the chat servers it finds, `chat` with no server connects to the one 
   PC's search goes to its home router and on to the ISP; a phone's goes over LTE to the core
   and on to its village's ISP.
 * The **chat** and **package servers** run `disco serve &` too, so they are also found by
-  multicast on the Data Center LAN (`chatd` and `pkg serve --name` announce themselves).
+  multicast on the Data Center LAN (`discordd` and `pkg serve --name` announce themselves).
 
 ```text
 / > disco
@@ -727,7 +738,7 @@ A wrong address or port fails with a hint instead, for example:
 / > chat 100.65.0.10
 chat: connecting to 100.65.0.10:7777 as v5-web ...
 chat: connection to 100.65.0.10:7777 refused: the computer answered but no chat server listens there.
-  Fix: on the chat server run 'chatd &' (it is in its services.cfg), or check the port.
+  Fix: on that computer run 'discordd &' (it is in its services.cfg), or check the port.
 ```
 
 ### In Minecraft chat
@@ -981,7 +992,7 @@ ISPs, with the commands, the expected results and a break as the control.
 | Village network piece (houses, panels, ISP runs) | `worldgen/VillageNetworkPlanner.java`, `worldgen/TechNetworkPiece.java` |
 | ISP and Data Center buildings | `scripts/gen-tech-village.py` |
 | Roads from building entrances to the streets | `worldgen/VillageRoadPlanner.java`, `worldgen/TechRoadPiece.java`; check `testing/TechRoadChecks.java` |
-| Chat | `rust/crates/ecm-chat`, `rust/wasm-programs/chatd`, `rust/wasm-programs/chat` |
+| Discord and chat | `rust/crates/ecm-discord`, `rust/wasm-programs/discordd`, `rust/wasm-programs/discord`, `rust/crates/ecm-chat`, `rust/wasm-programs/chat` |
 | App repository (key, signing, package server files, /etc/pkg/repos) | `computer/VillageRepo.java`; the package built by `rust/wasm-programs/chatapp/examples/village_repo.rs` (`scripts/stage-wasm.sh`); the Chat app `rust/wasm-programs/chatapp` |
 | Carrier plan (carrier, core, sites, spacing, SIMs, cored.db, celld-site.toml) | `computer/CellPlan.java` |
 | Span cell sites (placed with the fiber) | `worldgen/CellSites.java`, `worldgen/FiberLineFeature.java` |

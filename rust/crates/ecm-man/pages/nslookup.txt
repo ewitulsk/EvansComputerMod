@@ -1,0 +1,32 @@
+NAME
+    nslookup - look up a name in DNS
+
+SYNOPSIS
+    nslookup [-type=TYPE] <name> [server]
+
+DESCRIPTION
+    Asks a DNS server about a name and prints the answer: addresses for
+    A, and the canonical name, nameservers, mail exchangers, text or SOA
+    for the other types. Answers from a server that does not own the
+    zone are marked Non-authoritative answer.
+
+    Without a server it asks the first nameserver in /etc/resolv.conf
+    and tries the search domains from that file, as every program's
+    name lookup does (so nslookup web finds web.v3.ring). With a server
+    the name is asked exactly as given. If /etc/resolv.conf has no
+    nameserver, it asks the kernel's resolver (the dns line of
+    network.cfg or the DHCP server) and prints only the address.
+
+OPTIONS
+    -type=TYPE
+        The record type: A (default), NS, CNAME, SOA, MX, TXT, PTR or
+        ANY. -query=TYPE and -q=TYPE are the same.
+
+EXAMPLES
+      nslookup web.v4.ring
+      nslookup web
+      nslookup -type=MX mybase.ecm
+      nslookup -type=NS ring 100.65.0.53
+
+SEE ALSO
+    dig, resolvectl, named, whois, networking

@@ -1,0 +1,138 @@
+NAME
+    router - turn this computer into a router (NAT, DHCP, BGP)
+
+SYNOPSIS
+    router
+    router on
+    router off
+
+DESCRIPTION
+    router is built into the shell. It makes the computer route between
+    its network ports, with static routes, NAT and port forwarding, a
+    DHCP server and BGP. The commands follow Aruba AOS-CX.
+
+    router opens the router's command line (starting the router if it
+    is not running) at the prompt router#. router on starts it and adds
+    it to startup (/services.cfg); router off stops forwarding, NAT,
+    DHCP and BGP and removes it from startup. Leaving the command line
+    with exit keeps the router running.
+
+    At start it reads /router.cfg. Changes take effect at once;
+    write memory saves them to /router.cfg (and turns on startup). The
+    command line also works over ssh.
+
+CONTEXTS
+      router#                       operational (show, clear)
+      router(config)#               configure terminal
+      router(config-if)#            interface ethN
+      router(config-dhcp)#          dhcp-server vrf default
+      router(config-dhcp-pool)#     pool NAME
+      router(config-bgp)#           router bgp ASN
+      router(config-bgp-ipv4-uc)#   address-family ipv4 unicast
+      router(config-route-map)#     route-map NAME permit|deny SEQ
+
+    exit goes up one level (from router#, back to the shell); end goes
+    back to router#. help or ? lists the commands.
+
+COMMANDS
+    ip routing, no ip routing
+        Forward packets between ports (off by default).
+
+    interface ethN
+        In it: ip address A.B.C.D/NN, ip dhcp (get the address from an
+        upstream DHCP server, with its default route and DNS), ip nat
+        inside, ip nat outside.
+
+    ip route PREFIX GATEWAY [ethN]
+        A static route, for example ip route 0.0.0.0/0 10.0.0.1 eth1.
+        The interface is found from the gateway when left out.
+
+    ip nat inside source static tcp|udp INSIDE-IP PORT OUTSIDE-PORT
+        Port forwarding: OUTSIDE-PORT on the outside address goes to
+        PORT on INSIDE-IP. Traffic from inside ports leaving an outside
+        port is translated to the outside port's address.
+
+    dhcp-server vrf default, then pool NAME
+        A DHCP pool for clients on a port: range FIRST LAST (within one
+        /24), default-router IP (the port's own address), dns-server
+        IP, domain-name NAME (no domain-name), lease SECONDS (4 to
+        31536000), enable, disable.
+
+    router bgp ASN
+        BGP: bgp router-id IP, timers bgp KEEPALIVE HOLD, neighbor IP
+        remote-as ASN|external|internal, neighbor IP update-source
+        ethN|IP, peer groups (neighbor GROUP peer-group, neighbor IP
+        peer-group GROUP) and dynamic neighbors (neighbor GROUP listen
+        ip-range PREFIX [as-range RANGE] [limit N], bgp listen limit
+        N). In address-family ipv4 unicast: neighbor IP|GROUP activate,
+        route-map NAME in|out, default-originate, maximum-prefix MAX
+        [threshold PCT] [restart SECS] [warning-only]; network PREFIX;
+        redistribute connected|static.
+
+    ip prefix-list NAME seq N permit|deny PREFIX [ge N] [le N]
+        An ordered prefix filter (no match means deny).
+
+    route-map NAME permit|deny SEQ
+        A policy entry: match ip address prefix-list LIST, set
+        local-preference N, set metric N, set community ASN:VALUE.
+
+    show ip route, show arp
+        The routing table (source, distance, metric) and neighbors.
+
+    show ip nat translations, show dhcp-server leases
+        Current NAT mappings and DHCP leases.
+
+    show bgp ipv4 unicast [summary | neighbors [IP]]
+        The BGP table, the session summary, or neighbor details.
+
+    clear bgp * | IP
+        Restart BGP sessions.
+
+    show running-config, write memory
+        Print or save the configuration (copy running-config
+        startup-config also saves).
+
+FILES
+    /router.cfg
+        The saved configuration (the same commands).
+
+    /router.leases
+        DHCP leases, kept across restarts.
+
+    /services.cfg
+        router on here starts the router at boot.
+
+EXAMPLES
+    A home router: LAN on eth0, upstream on eth1.
+
+      router on
+      router
+      configure terminal
+      ip routing
+      interface eth0
+      ip address 192.168.1.1/24
+      ip nat inside
+      exit
+      interface eth1
+      ip dhcp
+      ip nat outside
+      exit
+      dhcp-server vrf default
+      pool lan
+      range 192.168.1.10 192.168.1.200
+      default-router 192.168.1.1
+      dns-server 1.1.1.1
+      enable
+      end
+      write memory
+
+NOTES
+    The router has no DNS forwarder: hand out a DNS server clients can
+    reach. DHCP relay, IPv6, OSPF and route reflection are not
+    available. The Internet Gateway serves no DHCP: a port cabled to
+    it needs a static address in 10.0.0.0/24 with gateway 10.0.0.1.
+    The gateway is online only when the server has the internet add-on
+    (evanscomputermod-internet); see networking.
+
+SEE ALSO
+    switch, ip, dhcpd, traceroute, tcpdump, networking
