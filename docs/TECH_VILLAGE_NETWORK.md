@@ -345,11 +345,19 @@ other nine villages' sites, the chat server's address with how to use `chat`, th
 ## 8. Discord and chat
 
 One village's data center (chosen from the world seed; `/ecm techvillage info N` names
-it) runs the ring's Discord backend, `discordd 7777 --name "Tech Village" &`
-([DISCORD.md](DISCORD.md)): the Discord app (from the App Store, section 8a) finds it by
-itself and shows its Tech Village server, where players make their own servers with text
-and voice channels. The console `chat` command talks in the Tech Village server's
-`#general`. Every village computer has `/etc/chat.conf`:
+it) runs the ring's Discord backend ([DISCORD.md](DISCORD.md)), its accounts and its music
+server on the same computer (100.(64+K).0.20), from its `services.cfg`:
+
+```text
+authd 7600 --name "Tech Village" --key-file /etc/auth/realm.key &
+discordd 7777 --name "Tech Village" --auth 100.74.0.20:7600 --auth-key <realm fingerprint> &
+musicd 7800 --name "Tech Village Radio" --library /srv/music --auth 100.74.0.20:7600 --auth-key <realm fingerprint> &
+```
+
+The Discord app (from the App Store, section 8a) finds the backend by itself and shows its
+Tech Village server, where players make their own servers with text and voice channels.
+The console `chat` command talks in the Tech Village server's `#general`. Every village
+computer has `/etc/chat.conf`:
 
 ```text
 # Tech Village Discord backend: open Discord, or run 'chat' (see 'chat --help')
@@ -358,9 +366,11 @@ port 7777
 nick v3-house1
 ```
 
-* `chat` connects to the server in `/etc/chat.conf` with its nick; `chat SERVER[:PORT]`
-  or `--nick NAME` override it. A player's own computer without the file needs the
-  address: `chat 100.(64+K).0.20`.
+* Sign in first: `chat --user NAME --new` makes a Tech Village account (the password is
+  asked twice and never shown), `chat --user NAME` signs in later; after that plain `chat`
+  connects to the server in `/etc/chat.conf` with the saved login. `chat SERVER[:PORT]`
+  overrides the server. A player's own computer without the file needs the address:
+  `chat 100.(64+K).0.20`.
 * Type and press Enter to talk; messages arrive above the line you are typing, with the
   server's time: `[16:18:40] <alice> hello bob`. New joiners get the last 20 messages.
 * `/nick NAME`, `/who`, `/help`, `/quit` (Ctrl+T also quits).
@@ -374,6 +384,28 @@ The chat command's protocol is one text line per message over TCP (`NICK`, `MSG`
 `QUIT` from clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
 server); see `rust/crates/ecm-chat/src/proto.rs`. `discordd` accepts it as the start of its own
 protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
+
+### Accounts and music
+
+* **Accounts** ([AUTH.md](AUTH.md)). `authd` is the ring's realm, "Tech Village". Its key is
+  derived from the world seed (`VillageAuth`: HMAC-SHA256(seed, "ECM-TECHVILLAGE-AUTH"), like
+  the repository key), written to the chat server's `/etc/auth/realm.key`; `discordd` and
+  `musicd` trust only that key (`--auth-key`). Every village computer and Phone Store phone
+  has the realm pinned for Discord and Music (`/var/apps/dev.ecm.discord/accounts/pins`,
+  `/var/apps/dev.ecm.music/accounts/pins`: `<fingerprint> 100.(64+K).0.20:7600 Tech Village`),
+  so the first sign-in shows the realm as already trusted. One account works in both apps
+  (each app keeps its own login). On a player's own computer the first sign-in is a first
+  contact: compare the fingerprint with `authd key` on the chat server (or the website).
+* **Music** ([MUSIC.md](MUSIC.md)). `musicd` ("Tech Village Radio", port 7800) starts with the
+  three CC0 songs in `/srv/music` ([MUSIC_CREDITS.md](MUSIC_CREDITS.md)); an operator adds more
+  MP3s there (`upload`, `cp`) and runs `musicd scan`. Install Music from the App Store, sign in
+  with the Tech Village account, and keep listening with the phone in the pocket.
+* **Discovery.** The ISP routers answer `auth` and `music` searches ring-wide (section 8c),
+  next to `discord`, `chat` and `pkg`. Apps only use them to find an address: trust comes from
+  the pinned key.
+* Provisioning version 7 rewrites the chat server and the ISP routers once in existing
+  worlds; house computers get the pins the next time they are provisioned (missing files are
+  always written).
 
 ## 8a. Apps: the Tech Village repository
 
