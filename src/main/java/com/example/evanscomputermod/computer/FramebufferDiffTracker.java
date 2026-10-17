@@ -305,6 +305,26 @@ public class FramebufferDiffTracker {
                 pixelFormat, changedTiles, changedData);
     }
 
+    /**
+     * The shadow's own pixels of {@code tiles}, as a delta (no palette change):
+     * what a client holding approximations of those tiles (lossy frames)
+     * needs to show the exact picture again.
+     */
+    public GfxDelta tilesOf(java.util.BitSet tiles, int[] palette) {
+        int bpp = TerminalDisplay.bytesPerPixel(shadowPixelFormat);
+        int tilesX = (shadowGfxWidth + TILE_SIZE - 1) / TILE_SIZE;
+        int total = tilesX * ((shadowGfxHeight + TILE_SIZE - 1) / TILE_SIZE);
+        List<Integer> idx = new ArrayList<>();
+        List<byte[]> data = new ArrayList<>();
+        if (shadowPixelData != null) {
+            for (int t = tiles.nextSetBit(0); t >= 0 && t < total; t = tiles.nextSetBit(t + 1)) {
+                idx.add(t);
+                data.add(extractTile(shadowPixelData, shadowGfxWidth, shadowGfxHeight, bpp, t, tilesX));
+            }
+        }
+        return new GfxDelta(generation, false, null, shadowPixelFormat, idx, data);
+    }
+
     /** Convenience overload — defaults to indexed8 for callers that haven't
      *  been format-converted yet. */
     public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {

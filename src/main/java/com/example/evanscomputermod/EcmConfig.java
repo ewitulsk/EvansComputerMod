@@ -13,6 +13,14 @@ public final class EcmConfig {
 
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
+    private static final ModConfigSpec.IntValue DISPLAY_PUMP_THREADS;
+    private static final ModConfigSpec.IntValue DISPLAY_WINDOW_FRAMES;
+    private static final ModConfigSpec.IntValue DISPLAY_WINDOW_KB;
+    private static final ModConfigSpec.IntValue DISPLAY_QUEUE_FRAMES;
+    private static final ModConfigSpec.IntValue DISPLAY_QUEUE_MS;
+    private static final ModConfigSpec.BooleanValue DISPLAY_ALLOW_LOSSY;
+    private static final ModConfigSpec.IntValue DISPLAY_MAX_STREAM_KBPS;
+    private static final ModConfigSpec.IntValue DISPLAY_MAX_PLAYOUT_MS;
     private static final ModConfigSpec.IntValue SPEAKER_RANGE;
     private static final ModConfigSpec.IntValue MIC_RANGE;
     private static final ModConfigSpec.BooleanValue MIC_PLAYER_VOICES;
@@ -70,6 +78,33 @@ public final class EcmConfig {
             };
             b.pop();
         }
+        DISPLAY_PUMP_THREADS = b
+                .comment("Threads that diff, encode and send display frames for every computer (off the server thread).",
+                        "0 = min(4, cores / 2). docs/gui/DISPLAY_PIPELINE.md, \"Pipeline today\".")
+                .defineInRange("pumpThreads", 0, 0, 32);
+        DISPLAY_WINDOW_FRAMES = b
+                .comment("Frames a viewer may have unacknowledged per display. More frames in flight means the frame rate",
+                        "is limited by bandwidth instead of ping.")
+                .defineInRange("windowFrames", 8, 1, 64);
+        DISPLAY_WINDOW_KB = b
+                .comment("Bytes (KiB) a viewer may have unacknowledged per display.")
+                .defineInRange("windowKiB", 512, 16, 16384);
+        DISPLAY_QUEUE_FRAMES = b
+                .comment("Frames a program may queue ahead with gfx_present_at or CommitAt (timed presentation).")
+                .defineInRange("queueFrames", 12, 1, 12);
+        DISPLAY_QUEUE_MS = b
+                .comment("How far ahead of now a queued frame may be, in ms.")
+                .defineInRange("queueMs", 500, 50, 500);
+        DISPLAY_ALLOW_LOSSY = b
+                .comment("Send fast-changing pictures (video, games) as JPEG instead of exact tiles. Text and Tier 1",
+                        "panels always stay exact. False turns lossy encoding off everywhere.")
+                .define("allowLossy", true);
+        DISPLAY_MAX_STREAM_KBPS = b
+                .comment("Bandwidth budget per viewer for lossy pictures, in kbit/s, shared by everything one player watches.")
+                .defineInRange("maxStreamKbps", 6000, 200, 6000);
+        DISPLAY_MAX_PLAYOUT_MS = b
+                .comment("Longest playout delay a client may use for timed frames, in ms (it adapts to jitter below this).")
+                .defineInRange("maxPlayoutMs", 400, 60, 400);
         b.pop();
 
         b.comment("Speaker block.").push("speaker");
@@ -154,6 +189,79 @@ public final class EcmConfig {
 
     public static int displayMaxRefreshHz() {
         return get(DISPLAY_MAX_HZ, 60);
+    }
+
+    /** Display pump threads (0 in the file = min(4, cores / 2)). */
+    public static int displayPumpThreads() {
+        int n = get(DISPLAY_PUMP_THREADS, 0);
+        return n > 0 ? n : com.example.evanscomputermod.computer.pipeline.DisplayPump.defaultThreads();
+    }
+
+    /** Test override of the window and lossy settings ({@code ecm.display.*} system properties), else the config. */
+    private static int prop(String name, int fallback) {
+        String v = System.getProperty("ecm.display." + name);
+        if (v == null) return fallback;
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    public static int displayWindowFrames() {
+        return prop("windowFrames", get(DISPLAY_WINDOW_FRAMES, 8));
+    }
+
+    public static long displayWindowBytes() {
+        return prop("windowKiB", get(DISPLAY_WINDOW_KB, 512)) * 1024L;
+    }
+
+    public static int displayQueueFrames() {
+        return get(DISPLAY_QUEUE_FRAMES, 12);
+    }
+
+    public static int displayQueueMs() {
+        return get(DISPLAY_QUEUE_MS, 500);
+    }
+
+    private static volatile Boolean lossyOverride;
+
+    public static boolean displayAllowLossy() {
+        Boolean o = lossyOverride;
+        if (o != null) return o;
+        if ("false".equals(System.getProperty("ecm.display.allowLossy"))) return false;
+        try {
+            return !SPEC.isLoaded() || DISPLAY_ALLOW_LOSSY.get();
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Set {@code display.allowLossy} in the server's config, as an operator
+     * does by editing the config file (the value is saved to it). Used by the
+     * {@code video_smooth_under_lag} scenario's control. Before the config is
+     * loaded (unit tests) it is kept in memory only.
+     */
+    public static void setDisplayAllowLossy(boolean on) {
+        try {
+            if (SPEC.isLoaded()) {
+                DISPLAY_ALLOW_LOSSY.set(on);
+                lossyOverride = null;
+                return;
+            }
+        } catch (RuntimeException ignored) {
+            // fall through
+        }
+        lossyOverride = on;
+    }
+
+    public static int displayMaxStreamKbps() {
+        return get(DISPLAY_MAX_STREAM_KBPS, 6000);
+    }
+
+    public static int displayMaxPlayoutMs() {
+        return get(DISPLAY_MAX_PLAYOUT_MS, 400);
     }
 
     /** The server's caps for a panel tier (the defaults before the config is loaded). */

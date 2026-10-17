@@ -143,15 +143,20 @@ public final class UiScenePackets {
      * of {@code epoch}; {@code generation <= 0} asks for a keyframe and
      * {@code missing} lists image keys it doesn't hold.
      */
-    public record Ack(UUID computerId, byte displayId, int epoch, long generation, long[] missing)
+    public record Ack(UUID computerId, byte displayId, int epoch, long generation, long[] missing, long clientRecvUs)
             implements CustomPacketPayload {
+        public Ack(UUID computerId, byte displayId, int epoch, long generation, long[] missing) {
+            this(computerId, displayId, epoch, generation, missing, 0);
+        }
+
         public static final Type<Ack> TYPE =
                 new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "ui_scene_ack"));
 
         public static final StreamCodec<ByteBuf, Ack> STREAM_CODEC = new StreamCodec<>() {
             @Override
             public Ack decode(ByteBuf buf) {
-                return new Ack(UUIDUtil.STREAM_CODEC.decode(buf), buf.readByte(), buf.readInt(), buf.readLong(), readKeys(buf));
+                return new Ack(UUIDUtil.STREAM_CODEC.decode(buf), buf.readByte(), buf.readInt(), buf.readLong(), readKeys(buf),
+                        buf.readLong());
             }
 
             @Override
@@ -161,6 +166,7 @@ public final class UiScenePackets {
                 buf.writeInt(p.epoch());
                 buf.writeLong(p.generation());
                 writeKeys(buf, p.missing());
+                buf.writeLong(p.clientRecvUs());
             }
         };
 
@@ -169,15 +175,18 @@ public final class UiScenePackets {
             return TYPE;
         }
 
+        /** Network thread (DISPLAY_PIPELINE_SPEC.md Part A3): straight to the scene hub, checked against the viewer snapshot. */
         public static void handle(Ack packet, IPayloadContext context) {
-            context.enqueueWork(() -> {
-                if (context.player() instanceof ServerPlayer player) {
-                    IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
-                    if (host != null) {
-                        host.onSceneAck(player, packet.displayId(), packet.epoch(), packet.generation(), packet.missing());
-                    }
-                }
-            });
+            if (!(context.player() instanceof ServerPlayer player)) return;
+            ComputerTargets.offThread(player, packet.computerId(), packet.displayId(), false,
+                    host -> host.onSceneAck(player.getUUID(), packet.displayId(), packet.epoch(), packet.generation(),
+                            packet.missing(), packet.clientRecvUs()),
+                    () -> {
+                        IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
+                        if (host != null) {
+                            host.onSceneAck(player, packet.displayId(), packet.epoch(), packet.generation(), packet.missing());
+                        }
+                    });
         }
     }
 

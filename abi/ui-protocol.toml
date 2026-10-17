@@ -42,7 +42,13 @@
 # compositor, "c>s" / "s>c" shell connections only. The codec accepts every
 # message in both directions; the compositor enforces direction and role.
 
-version = 1
+# Version 2 (DISPLAY_PIPELINE_SPEC.md): timed commits (CommitAt, QueueFlush,
+# QueueLimits), content hints (SurfaceSetContent), and props and an event the
+# client may use for immediate feedback (hover / pressed styles, scroll
+# containers, window drags, the caret; Scrolled). The compositor accepts
+# version 1 and 2 clients; a version 1 client never sees QueueLimits or
+# Scrolled and its messages mean exactly what they did.
+version = 2
 max_message = 1048576
 
 # ---------------------------------------------------------------- enums
@@ -194,12 +200,26 @@ Sampling    = { tag = 19, fields = ["value: Sampling"] }
 Tint        = { tag = 20, fields = ["value: u32"] }
 Points      = { tag = 21, fields = ["value: [Point] max=256"] }
 Width       = { tag = 22, fields = ["value: u16"], doc = "line width in lu" }
+HoverFill          = { tag = 23, fields = ["value: u32"], doc = "v2: fill while the pointer is over the node's hit id (the client applies it at once; the app's own state replaces it)" }
+HoverBorderColor   = { tag = 24, fields = ["value: u32"], doc = "v2: border colour while hovered" }
+HoverColor         = { tag = 25, fields = ["value: u32"], doc = "v2: text colour while hovered" }
+PressedFill        = { tag = 26, fields = ["value: u32"], doc = "v2: fill while the left button is down on the node's hit id" }
+PressedBorderColor = { tag = 27, fields = ["value: u32"], doc = "v2: border colour while pressed" }
+PressedColor       = { tag = 28, fields = ["value: u32"], doc = "v2: text colour while pressed" }
+Scroll             = { tag = 29, fields = ["value: u8 range=0..3"], doc = "v2: a scroll container (1 x, 2 y, 3 both): the client scrolls it at once on the wheel and reports Scrolled; the app's children are already laid out at ScrollX/ScrollY" }
+ContentW           = { tag = 30, fields = ["value: i32 range=0.."], doc = "v2: a scroll container's content width (lu)" }
+ContentH           = { tag = 31, fields = ["value: i32 range=0.."], doc = "v2: a scroll container's content height (lu)" }
+ScrollX            = { tag = 32, fields = ["value: i32 range=0.."], doc = "v2: the offset the app laid the content out at (lu)" }
+ScrollY            = { tag = 33, fields = ["value: i32 range=0.."], doc = "v2: the offset the app laid the content out at (lu)" }
+DragWindow         = { tag = 34, fields = ["value: u32"], doc = "v2: dragging this node moves its window and window <value> (a shell's title bar and the app window it frames); the client moves them at once, the shell's Place confirms" }
+Caret              = { tag = 35, fields = ["value: u32"], doc = "v2: a text field's text node with the caret at this character index; the client shows typed text in it at once" }
+CaretOf            = { tag = 36, fields = ["value: u32"], doc = "v2: this rect is the caret of text node <value>; the client moves it with the text it predicts" }
 
 [node_props]
 doc = "Props each node kind accepts (§6 table). Create rejects others."
-group  = ["X", "Y", "W", "H", "Clip", "Opacity", "Scale", "HitId"]
-rect   = ["X", "Y", "W", "H", "Fill", "Radius", "BorderW", "BorderColor", "HitId"]
-text   = ["X", "Y", "Text", "Font", "Size", "Color", "HitId"]
+group  = ["X", "Y", "W", "H", "Clip", "Opacity", "Scale", "HitId", "Scroll", "ContentW", "ContentH", "ScrollX", "ScrollY", "DragWindow"]
+rect   = ["X", "Y", "W", "H", "Fill", "Radius", "BorderW", "BorderColor", "HitId", "HoverFill", "HoverBorderColor", "PressedFill", "PressedBorderColor", "DragWindow", "CaretOf"]
+text   = ["X", "Y", "Text", "Font", "Size", "Color", "HitId", "HoverColor", "PressedColor", "Caret"]
 image  = ["X", "Y", "W", "H", "Resource", "Src", "Sampling", "Tint", "HitId"]
 canvas = ["X", "Y", "W", "H", "Resource", "Scale", "HitId"]
 line   = ["Points", "Width", "Color", "HitId"]
@@ -221,7 +241,7 @@ Remove = { tag = 3, fields = ["id: u32 range=1.."], doc = "and its children" }
 [messages.Hello]
 opcode = 0x0001
 dir = "a>c"
-doc = "First message from a client. version = protocol version (1)."
+doc = "First message from a client. version = protocol version (1 or 2)."
 fields = ["version: u16", "role: Role", "capabilities: [str] max=64 itemmax=64"]
 
 [messages.Welcome]
@@ -292,6 +312,30 @@ opcode = 0x0109
 dir = "c>a"
 doc = "Next refresh of a visible surface after RequestFrame."
 fields = ["surface: u32", "time_ms: u64"]
+
+[messages.CommitAt]
+opcode = 0x010C
+dir = "a>c"
+doc = "v2: like Commit, but the pixel changes in it (canvases, a pixel surface) are shown at pts_us on the program's monotonic clock (WASI clock_time_get MONOTONIC). Tree changes in it are an error; layout stays immediate. Frames queue in pts order, at most max_queue_frames and max_queue_ms ahead (QueueLimits)."
+fields = ["surface: u32", "pts_us: u64"]
+
+[messages.QueueFlush]
+opcode = 0x010D
+dir = "a>c"
+doc = "v2: drop the queued frames of this surface and of the connection's canvases (seek, pause, stop)."
+fields = ["surface: u32"]
+
+[messages.SurfaceSetContent]
+opcode = 0x010E
+dir = "a>c"
+doc = "v2: how a pixel surface (resource 0) or a canvas (resource id) may travel: 0 auto, 1 exact (never lossy), 2 motion (video: lossy allowed), as gfx_set_hint."
+fields = ["surface: u32", "resource: u32", "hint: u8 range=0..2"]
+
+[messages.QueueLimits]
+opcode = 0x010F
+dir = "c>a"
+doc = "v2: sent right after Welcome to version 2 clients: how many frames and ms CommitAt may queue ahead."
+fields = ["max_queue_frames: u16", "max_queue_ms: u32"]
 
 [messages.CloseRequested]
 opcode = 0x010A
@@ -367,6 +411,12 @@ fields = ["slot: u8 range=1..6", "label: str max=64"]
 opcode = 0x0311
 dir = "a>c"
 fields = ["surface: u32", "lock: bool"]
+
+[messages.Scrolled]
+opcode = 0x0313
+dir = "c>a"
+doc = "v2: the player scrolled scroll container node (Scroll prop) to (x, y) lu; the client shows it already. The app lays the content out there and commits ScrollX/ScrollY to confirm."
+fields = ["surface: u32", "node: u32", "x: i32 range=0..", "y: i32 range=0.."]
 
 [messages.PointerLockChanged]
 opcode = 0x0312

@@ -50,6 +50,13 @@ public final class UiSceneMirror {
     private final Map<Long, MirrorResource> resources = new HashMap<>();
     private final Set<Long> missing = new HashSet<>();
 
+    /** Timed frames (protocol v2) waiting for their time, per canvas or pixel surface ({@link SceneExporter#timedKey}). */
+    private record TimedEntry(long dueUs, UiSceneCodec.Timed timed, UiSceneCodec.PixelBlock untimed) {}
+
+    private final Map<Long, java.util.ArrayDeque<TimedEntry>> timedQ = new HashMap<>();
+    private final Map<Long, Long> timedLast = new HashMap<>();
+    private long timedApplied, timedDropped;
+
     private int[] frame;
     private byte[] rgba;
     private final Box.Region damage = new Box.Region();
@@ -133,7 +140,13 @@ public final class UiSceneMirror {
                 for (UiProto.TreeOp op : t.ops()) s.tree.apply(op, Integer.MAX_VALUE, Integer.MAX_VALUE, d);
                 for (Box b : d.boxes()) damage.add(SceneRenderer.surfaceDamage(display, s, b, now));
             }
-            for (UiSceneCodec.PixelBlock b : p.pixels()) applyPixels(b, now);
+            for (UiSceneCodec.PixelBlock b : p.pixels()) {
+                // Exact pixels never overtake timed frames still waiting for that buffer (a refine lands after them).
+                java.util.ArrayDeque<TimedEntry> q = timedQ.get(SceneExporter.timedKey(
+                        b.target() == UiSceneCodec.TARGET_CANVAS ? b.scope() : 0, b.id()));
+                if (q != null && !q.isEmpty()) q.addLast(new TimedEntry(q.peekLast().dueUs, null, b));
+                else applyPixels(b, now);
+            }
         } catch (UiError | UiProtoException | RuntimeException e) {
             ready = false;
             return Result.NEED_KEYFRAME;
@@ -144,6 +157,8 @@ public final class UiSceneMirror {
     }
 
     private void reset() {
+        timedQ.clear();
+        timedLast.clear();
         surfaces.clear();
         scopes.clear();
         windows.clear();
@@ -208,6 +223,7 @@ public final class UiSceneMirror {
             long rk = resKey(ri.scope(), ri.id());
             MirrorResource r = resources.get(rk);
             if (r == null || r.kind != ri.kind() || r.w != ri.w() || r.h != ri.h()) {
+                timedQ.remove(SceneExporter.timedKey(ri.scope(), ri.id())); // a resized canvas drops its timed frames
                 r = new MirrorResource(ri.kind(), ri.w(), ri.h());
                 if (ri.kind() == UiProto.ResourceKind.CANVAS) r.argb = new int[ri.w() * ri.h()];
             }
@@ -303,6 +319,88 @@ public final class UiSceneMirror {
             if (s.tree == null || !s.mapped || scopes.getOrDefault(s, -1) != scope) continue;
             for (NodeTree.Node n : s.tree.usersOf(id)) damage.add(SceneRenderer.surfaceDamage(display, s, NodeTree.absBox(n), now));
         }
+    }
+
+    // =========================================================== timed frames (protocol v2)
+
+    /**
+     * A timed frame (or a flush) of a canvas or pixel surface, to be shown at
+     * client time {@code dueUs} ({@code 0}: after the frames already waiting,
+     * a refine). Returns false if the frame builds on one this client doesn't
+     * have (it asks for a keyframe then).
+     */
+    public boolean timed(UiSceneCodec.Message m, long dueUs) {
+        UiSceneCodec.Timed t = m.timed();
+        if (t == null || !ready) return true;
+        long key = SceneExporter.timedKey(t.target() == UiSceneCodec.TARGET_CANVAS ? t.scope() : 0, t.id());
+        java.util.ArrayDeque<TimedEntry> q = timedQ.computeIfAbsent(key, k -> new java.util.ArrayDeque<>());
+        if (m.kind() == UiSceneCodec.TFLUSH) {
+            q.removeIf(e -> e.timed != null && e.timed.seq() > t.seq());
+            timedLast.put(key, t.seq());
+            return true;
+        }
+        Long last = timedLast.get(key);
+        if (!t.whole() && last != null && last != t.base()) return false;
+        timedLast.put(key, t.seq());
+        long due = dueUs != 0 ? dueUs : (q.isEmpty() ? 0 : q.peekLast().dueUs);
+        q.addLast(new TimedEntry(due, t, null));
+        return true;
+    }
+
+    /**
+     * Show the timed frames that are due at client time {@code nowUs}: for
+     * each buffer the frames before the newest due one are applied too (they
+     * build on each other) but never shown on their own. Returns how many
+     * buffers changed.
+     */
+    public int tickTimed(long nowUs, long clientNowMs) {
+        if (!ready || display == null || timedQ.isEmpty()) return 0;
+        long now = sceneTime(clientNowMs);
+        int changed = 0;
+        for (java.util.ArrayDeque<TimedEntry> q : timedQ.values()) {
+            int n = 0;
+            while (!q.isEmpty() && q.peekFirst().dueUs <= nowUs) {
+                TimedEntry e = q.removeFirst();
+                try {
+                    if (e.untimed != null) applyPixels(e.untimed, now);
+                    else applyTimed(e.timed, now);
+                } catch (UiError err) {
+                    // its buffer is gone (resized, destroyed): drop it
+                }
+                n++;
+            }
+            if (n > 0) {
+                changed++;
+                timedApplied++;
+                timedDropped += n - 1;
+            }
+        }
+        return changed;
+    }
+
+    private void applyTimed(UiSceneCodec.Timed t, long now) throws UiError {
+        int[] src;
+        int[] tiles = null;
+        if (t.encoding() == UiSceneCodec.ENC_JPEG) {
+            if (!t.decode()) return;
+            src = t.decoded()[0];
+        } else {
+            src = t.pixels();
+            tiles = t.tiles();
+        }
+        applyPixels(new UiSceneCodec.PixelBlock(t.target(), t.scope(), t.id(), t.w(), t.h(), tiles, src), now);
+    }
+
+    /** Timed frames waiting (diagnostics, tests). */
+    public int timedQueued() {
+        int n = 0;
+        for (java.util.ArrayDeque<TimedEntry> q : timedQ.values()) n += q.size();
+        return n;
+    }
+
+    /** {applied (shown), dropped (applied but replaced in the same frame)}. */
+    public long[] timedCounters() {
+        return new long[]{timedApplied, timedDropped};
     }
 
     /** An image arrived in the cache: resources waiting for it get it. */

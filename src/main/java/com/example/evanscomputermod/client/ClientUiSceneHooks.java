@@ -36,28 +36,72 @@ public final class ClientUiSceneHooks {
         return !"false".equals(System.getProperty("ecm.ui.clientRendering"));
     }
 
+    /** Network thread: bind the stream id now (later steps use it), decode on the decode thread. */
     public static void handleScene(UiScenePackets.Scene packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            if (Minecraft.getInstance().level == null) return;
-            if (packet.stream() != 0) ClientUiScenes.bindStream(packet.stream(), packet.computerId(), packet.displayId());
-            handle(packet.computerId(), packet.displayId(), packet.data());
-        });
+        if (packet.stream() != 0) ClientUiScenes.bindStream(packet.stream(), packet.computerId(), packet.displayId());
+        receive(packet.computerId(), packet.displayId(), packet.data());
     }
 
     public static void handleStep(UiScenePackets.Step packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
+        ClientUiScenes.Key key = ClientUiScenes.stream(packet.stream());
+        if (key != null) receive(key.computerId(), key.displayId(), packet.data());
+    }
+
+    /** Per display: the epoch and generation acked on receipt (decode thread only). */
+    private static final java.util.Map<ClientUiScenes.Key, long[]> RECEIVED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Unpack (inflate, decode) on the decode thread and ack on receipt
+     * (DISPLAY_PIPELINE_SPEC.md Part A5) when the message continues the
+     * stream: a keyframe, or the step after the last one acked. The render
+     * thread applies it and only answers when something went wrong (a
+     * keyframe request, missing images).
+     */
+    private static void receive(java.util.UUID computerId, int displayId, byte[] data) {
+        long recvUs = com.example.evanscomputermod.network.ClockSync.clientNowUs();
+        DisplayClientHooks.decode(() -> {
             if (Minecraft.getInstance().level == null) return;
-            ClientUiScenes.Key key = ClientUiScenes.stream(packet.stream());
-            if (key != null) handle(key.computerId(), key.displayId(), packet.data());
+            UiSceneCodec.Message m;
+            try {
+                m = UiSceneCodec.unpack(data);
+            } catch (com.example.evanscomputermod.computer.ui.proto.UiProtoException e) {
+                m = null;
+            }
+            ClientUiScenes.Key key = new ClientUiScenes.Key(computerId, displayId);
+            long acked = -1;
+            if (m != null && m.patch() != null) {
+                long[] r = RECEIVED.get(key);
+                if (m.kind() == UiSceneCodec.KEYFRAME) {
+                    RECEIVED.put(key, new long[]{m.epoch(), m.patch().to()});
+                    acked = m.patch().to();
+                    send(computerId, displayId, m.epoch(), acked, null, recvUs);
+                } else if (m.kind() == UiSceneCodec.STEP && r != null && r[1] == m.patch().from()) {
+                    r[1] = m.patch().to();
+                    acked = r[1];
+                    send(computerId, displayId, (int) r[0], acked, null, recvUs);
+                }
+            } else if (m != null && m.kind() == UiSceneCodec.END) {
+                RECEIVED.remove(key);
+            } else if (m != null && m.timed() != null) {
+                // A timed frame (protocol v2): decoded here, acked on receipt with its own sequence.
+                if (m.kind() == UiSceneCodec.TIMED) m.timed().decode();
+                send(computerId, displayId, m.epoch(),
+                        com.example.evanscomputermod.computer.ui.UiSceneHub.TIMED_ACK | m.timed().tseq(), null, recvUs);
+            }
+            UiSceneCodec.Message msg = m;
+            long already = acked;
+            DisplayClientHooks.toMain(() -> {
+                ClientUiScenes.Ack ack = ClientUiScenes.onMessage(computerId, displayId, msg, data.length, nowMs(), recvUs);
+                if (ack == null) return;
+                if (ack.generation() <= 0 || ack.missing() != null) RECEIVED.remove(key);
+                else if (already >= 0 && ack.generation() <= already) return; // acked on receipt
+                send(computerId, displayId, ack.epoch(), ack.generation(), ack.missing(), recvUs);
+            });
         });
     }
 
-    private static void handle(java.util.UUID computerId, int displayId, byte[] data) {
-        ClientUiScenes.Ack ack = ClientUiScenes.onMessage(computerId, displayId, data, nowMs());
-        if (ack != null) {
-            ClientPacketDistributor.sendToServer(new UiScenePackets.Ack(computerId, (byte) displayId,
-                    ack.epoch(), ack.generation(), ack.missing()));
-        }
+    private static void send(java.util.UUID computerId, int displayId, int epoch, long gen, long[] missing, long recvUs) {
+        ClientPacketDistributor.sendToServer(new UiScenePackets.Ack(computerId, (byte) displayId, epoch, gen, missing, recvUs));
     }
 
     @SubscribeEvent
@@ -75,5 +119,6 @@ public final class ClientUiSceneHooks {
     @SubscribeEvent
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientUiScenes.clearScenes();
+        RECEIVED.clear();
     }
 }

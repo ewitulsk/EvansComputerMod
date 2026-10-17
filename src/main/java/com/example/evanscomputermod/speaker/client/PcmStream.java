@@ -14,11 +14,22 @@ import java.nio.ByteOrder;
  * <p>When nothing has arrived it plays short stretches of silence rather than
  * ending, so a pause in the music doesn't stop the sound. If audio piles up
  * (the client fell behind), the oldest is dropped to keep the delay short.
+ *
+ * <p>Timed blocks ({@link #pushAt}, DISPLAY_PIPELINE_SPEC.md Part E2) say how
+ * far from now their first sample should play: silence fills the gap when
+ * the queue is shorter, and when the queue is more than 100 ms longer the
+ * oldest audio is skipped ("skip to pts").
  */
 final class PcmStream implements AudioStream {
 
     /** Keep at most this much queued (ms); older audio is dropped. */
     private static final int MAX_QUEUE_MS = 400;
+    /** With a playout delay the queue may be longer (the delay is capped at 400 ms). */
+    private static final int MAX_TIMED_QUEUE_MS = 900;
+    /** A timed block this much later than its time skips the audio before it (ms). */
+    static final int SKIP_LATE_MS = 100;
+    private int maxQueueMs = MAX_QUEUE_MS;
+    private long skips, pads;
     /** Silence handed out when nothing has arrived (ms). */
     private static final int SILENCE_MS = 50;
 
@@ -39,8 +50,42 @@ final class PcmStream implements AudioStream {
         return rate;
     }
 
+    /**
+     * Queue a timed block whose first sample should play {@code leadUs} from
+     * now (negative: it is late already).
+     */
+    synchronized void pushAt(short[] pcm, long leadUs) {
+        maxQueueMs = MAX_TIMED_QUEUE_MS;
+        long queuedUs = size * 1_000_000L / rate;
+        long target = Math.max(0, leadUs);
+        if (target > queuedUs + 5_000) {
+            int pad = (int) Math.min(ring.length - size - pcm.length, (target - queuedUs) * rate / 1_000_000L);
+            for (int i = 0; i < pad; i++) {
+                ring[(head + size) % ring.length] = 0;
+                size++;
+            }
+            if (pad > 0) pads++;
+        } else if (queuedUs > target + SKIP_LATE_MS * 1000L) {
+            int drop = (int) Math.min(size, (queuedUs - target) * rate / 1_000_000L);
+            head = (head + drop) % ring.length;
+            size -= drop;
+            skips++;
+        }
+        push(pcm);
+    }
+
+    /** An untimed block: the stream goes back to the short queue of before. */
+    synchronized void pushNow(short[] pcm) {
+        maxQueueMs = MAX_QUEUE_MS;
+        push(pcm);
+    }
+
+    synchronized long skips() {
+        return skips;
+    }
+
     synchronized void push(short[] pcm) {
-        int max = rate * MAX_QUEUE_MS / 1000;
+        int max = rate * maxQueueMs / 1000;
         for (short s : pcm) {
             if (size == ring.length) { // full: drop the oldest
                 head = (head + 1) % ring.length;

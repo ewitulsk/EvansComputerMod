@@ -22,8 +22,15 @@ import java.util.List;
 
 /**
  * Server side of a Speaker: owns its {@link SpeakerAudio} stream, sends what
- * programs wrote to nearby players every tick (IMA ADPCM), and shows the
- * loudness on the cone. The volume is saved with the block.
+ * programs wrote to nearby players (IMA ADPCM), and shows the loudness on the
+ * cone. The volume is saved with the block.
+ *
+ * <p>Sending runs on the display pump every {@link #CADENCE_MS} ms, not on the
+ * server tick (DISPLAY_PIPELINE_SPEC.md Part A4), so a tick hitch doesn't
+ * stall the sound; each block carries the time its first sample plays
+ * (Part E2). Everything here happens downstream of {@link SpeakerAudio#drain()},
+ * the single output of the speaker's card. The listeners come from the last
+ * tick (a snapshot); the microphone sound field and the cone stay on the tick.
  */
 public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral.Owner {
 
@@ -36,7 +43,18 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
     private int seq;
     private int quietTicks;
     private int levelCooldown;
-    private boolean volumeDirty;
+    private volatile boolean volumeDirty;
+
+    /** How often the pump sends what was written (ms). */
+    static final int CADENCE_MS = 20;
+    /** Players in range at the last tick (the pump sends to these). */
+    private volatile List<ServerPlayer> listeners = List.of();
+    /** Audio the pump drained, for the tick to put into the air for microphones. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<short[]> forField = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** Loudest sample since the tick last looked, and whether anything played. */
+    private volatile int pumpPeak;
+    private volatile boolean pumpPlayed;
+    private java.util.concurrent.ScheduledFuture<?> pumpTask;
 
     public SpeakerBlockEntity(BlockPos pos, BlockState state) {
         super(SpeakerContent.SPEAKER_BE.get(), pos, state);
@@ -74,31 +92,69 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
             volumeDirty = false;
             setChanged();
         }
-        short[] pcm = audio.drain();
+        listeners = listeners(sl);
+        if (pumpTask == null && !isRemoved()) {
+            pumpTask = com.example.evanscomputermod.computer.pipeline.DisplayPump.scheduler().scheduleAtFixedRate(
+                    this::pumpAudio, CADENCE_MS, CADENCE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+        short[] pcm;
         //? if <=1.21.1 {
-        // Into the air too, for microphones nearby.
-        if (pcm.length > 0 && com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
+        // Into the air too, for microphones nearby (on the tick, as before).
+        boolean mics = com.example.evanscomputermod.voice.VoiceServer.anyMic();
+        while ((pcm = forField.poll()) != null) {
+            if (!mics) continue;
             Vec3 c = Vec3.atCenterOf(worldPosition);
             com.example.evanscomputermod.voice.SoundField.get().emit("speaker:" + sl.dimension().location() + ":" + worldPosition.asLong(),
                     sl.dimension().location().toString(), c.x, c.y, c.z, pcm, 0, pcm.length, audio.rate(), 1f);
         }
+        //?} else {
+        /*forField.clear();*/
         //?}
+        boolean played = pumpPlayed;
+        int peak = pumpPeak;
+        pumpPlayed = false;
+        pumpPeak = 0;
+        if (played) quietTicks = 0;
+        else quietTicks++;
+        updateCone(played ? levelOf(peak) : (quietTicks > 4 ? 0 : -1));
+    }
+
+    /**
+     * Display pump, every {@link #CADENCE_MS} ms: send what the card mixed
+     * since the last run. The block's first sample plays when the queue ahead
+     * of it has played: {@code now + buffered - this block}.
+     */
+    private void pumpAudio() {
+        if (isRemoved()) return;
+        short[] pcm = audio.drain();
+        if (pcm.length == 0) return;
+        int rate = Math.max(1, audio.rate());
+        long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        long pts = now + audio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate;
+        if (pts < now) pts = now;
+        java.util.UUID computer = peripheral.computer();
         int peak = 0;
-        if (pcm.length > 0) {
-            List<ServerPlayer> listeners = listeners(sl);
-            for (int off = 0; off < pcm.length; off += CHUNK) {
-                int n = Math.min(CHUNK, pcm.length - off);
-                for (int i = off; i < off + n; i++) peak = Math.max(peak, Math.abs(pcm[i]));
-                if (listeners.isEmpty()) continue;
-                byte[] block = encoder.encode(pcm, off, n);
-                SpeakerAudioPacket packet = new SpeakerAudioPacket(worldPosition, seq++, audio.rate(), n, block);
-                for (ServerPlayer p : listeners) PacketDistributor.sendToPlayer(p, packet);
+        List<ServerPlayer> to = listeners;
+        for (int off = 0; off < pcm.length; off += CHUNK) {
+            int n = Math.min(CHUNK, pcm.length - off);
+            for (int i = off; i < off + n; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+            if (to.isEmpty()) continue;
+            byte[] block = encoder.encode(pcm, off, n);
+            SpeakerAudioPacket packet = new SpeakerAudioPacket(worldPosition, seq++, rate, n, block,
+                    pts + off * 1_000_000L / rate, computer);
+            for (ServerPlayer p : to) {
+                if (!p.hasDisconnected()) PacketDistributor.sendToPlayer(p, packet);
             }
-            quietTicks = 0;
-        } else {
-            quietTicks++;
         }
-        updateCone(pcm.length > 0 ? levelOf(peak) : (quietTicks > 4 ? 0 : -1));
+        pumpPeak = Math.max(pumpPeak, peak);
+        pumpPlayed = true;
+        if (forField.size() < 50) forField.add(pcm);
+    }
+
+    private void stopPump() {
+        var t = pumpTask;
+        pumpTask = null;
+        if (t != null) t.cancel(false);
     }
 
     private static int levelOf(int peak) {
@@ -132,12 +188,14 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
     @Override
     public void setRemoved() {
         super.setRemoved();
+        stopPump();
         audio.close();
     }
 
     @Override
     public void onChunkUnloaded() {
         super.onChunkUnloaded();
+        stopPump();
         audio.close();
     }
 

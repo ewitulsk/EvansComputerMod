@@ -36,8 +36,46 @@ import java.util.zip.Deflater;
  * monitor itself). Image data for the hub is kept in a concurrent map.
  */
 public final class SceneExporter {
-    /** A built message and what it needs: the image keys its header references (null without a header). */
-    public record Step(int epoch, long from, long to, boolean keyframe, byte[] data, long[] images) {}
+    /**
+     * A built message and what it needs: the image keys its header references
+     * (null without a header). A keyframe also says which timed frame each
+     * canvas and pixel surface shows in it ({@code timedShown}, by
+     * {@link #timedKey}), so the hub sends a late joiner only the frames after.
+     */
+    public record Step(int epoch, long from, long to, boolean keyframe, byte[] data, long[] images,
+                       Map<Long, Long> timedShown) {
+        public Step(int epoch, long from, long to, boolean keyframe, byte[] data, long[] images) {
+            this(epoch, from, to, keyframe, data, images, Map.of());
+        }
+    }
+
+    /**
+     * Work for the hub's timed stream (protocol v2 CommitAt; built on the
+     * pump, not under the compositor's lock): a frame queued ({@link #FRAME},
+     * {@code argb} is the queue's own copy, never changed), a frame shown
+     * ({@link #SHOWN}), or a flush ({@link #FLUSH}, {@code argb} = what is
+     * shown now). {@code tier} is the display panel's (Tier 1 stays exact).
+     */
+    public record TimedJob(int kind, int target, int scope, int id, int w, int h, long seq, long ptsUs, int[] argb,
+                           int hint, int tier) {
+        public static final int FRAME = 0, SHOWN = 1, FLUSH = 2;
+
+        public long key() {
+            return timedKey(scope, id);
+        }
+    }
+
+    /** A timed target's key: a canvas by connection and id, a pixel surface by scene id (scope 0). */
+    public static long timedKey(int scope, int id) {
+        return ((long) scope << 32) | (id & 0xFFFFFFFFL);
+    }
+
+    /** Where timed jobs go (the hub), or null. */
+    private volatile Consumer<TimedJob> timedSink;
+
+    public void setTimedSink(Consumer<TimedJob> sink) {
+        this.timedSink = sink;
+    }
 
     private final Compositor comp;
     private final int epoch;
@@ -121,7 +159,70 @@ public final class SceneExporter {
             byte[] data = UiSceneCodec.pack(UiSceneCodec.KEYFRAME, epoch, body, deflater);
             keyframes++;
             keyframeBytes += data.length;
-            return new Step(epoch, 0, gen, true, data, lastImages.clone());
+            Map<Long, Long> shown = new HashMap<>();
+            for (Surface s : all) if (s.timed != null) shown.put(timedKey(0, ids.get(s)), s.timed.appliedSeq);
+            for (UiConnection c : comp.conns.values()) {
+                for (UiResource r : c.resources.values()) if (r.timed != null) shown.put(timedKey(c.id, r.id), r.timed.appliedSeq);
+            }
+            return new Step(epoch, 0, gen, true, data, lastImages.clone(), shown);
+        }
+    }
+
+    // =========================================================== timed frames (protocol v2)
+
+    private int sceneId(Surface s) {
+        Integer id = ids.get(s);
+        if (id == null) {
+            id = nextId++;
+            ids.put(s, id);
+        }
+        return id;
+    }
+
+    /** A frame was queued for a canvas ({@code c, r}) or a pixel surface ({@code s}). Compositor lock held. */
+    void timedFrame(Surface s, UiConnection c, UiResource r, TimedQueue.Frame f, int hint) {
+        Consumer<TimedJob> sink = timedSink;
+        if (sink == null) return;
+        int tier = comp.display.tier();
+        if (s != null) {
+            sink.accept(new TimedJob(TimedJob.FRAME, UiSceneCodec.TARGET_SURFACE, 0, sceneId(s), s.bw, s.bh, f.seq(), f.ptsUs(),
+                    f.argb(), hint, tier));
+        } else {
+            sink.accept(new TimedJob(TimedJob.FRAME, UiSceneCodec.TARGET_CANVAS, c.id, r.id, r.w, r.h, f.seq(), f.ptsUs(),
+                    f.argb(), hint, tier));
+        }
+    }
+
+    /**
+     * The compositor shows timed frame {@code seq} now. Its pixels went to
+     * clients ahead, so the step diff takes them as sent (no untimed resend).
+     * Compositor lock held.
+     */
+    void timedShown(Surface s, UiConnection c, UiResource r, long seq) {
+        if (s != null) {
+            shadows.put(s, copyInto(shadows.get(s), s.argb));
+            shadowVersions.put(s, s.pixelVersion);
+        } else {
+            long key = ((long) c.id << 32) | (r.id & 0xFFFFFFFFL);
+            canvasShadows.put(key, copyInto(canvasShadows.get(key), r.argb));
+            canvasVersions.put(key, r.version);
+        }
+        Consumer<TimedJob> sink = timedSink;
+        if (sink == null) return;
+        if (s != null) sink.accept(new TimedJob(TimedJob.SHOWN, UiSceneCodec.TARGET_SURFACE, 0, sceneId(s), s.bw, s.bh, seq, 0, null, 0, 0));
+        else sink.accept(new TimedJob(TimedJob.SHOWN, UiSceneCodec.TARGET_CANVAS, c.id, r.id, r.w, r.h, seq, 0, null, 0, 0));
+    }
+
+    /** The queued frames after {@code after} were dropped (QueueFlush). Compositor lock held. */
+    void timedFlushed(Surface s, UiConnection c, UiResource r, long after) {
+        Consumer<TimedJob> sink = timedSink;
+        if (sink == null) return;
+        if (s != null) {
+            sink.accept(new TimedJob(TimedJob.FLUSH, UiSceneCodec.TARGET_SURFACE, 0, sceneId(s), s.bw, s.bh, after, 0,
+                    s.argb.clone(), 0, 0));
+        } else {
+            sink.accept(new TimedJob(TimedJob.FLUSH, UiSceneCodec.TARGET_CANVAS, c.id, r.id, r.w, r.h, after, 0,
+                    r.argb.clone(), 0, 0));
         }
     }
 
@@ -173,7 +274,7 @@ public final class SceneExporter {
                 int[] shadow = shadows.get(s);
                 UiSceneCodec.PixelBlock b = diff(UiSceneCodec.TARGET_SURFACE, 0, id, s.argb, s.bw, s.bh, shadow);
                 if (b != null) pixels.add(b);
-                shadows.put(s, s.argb.clone());
+                shadows.put(s, copyInto(shadow, s.argb));
                 shadowVersions.put(s, s.pixelVersion);
             }
         }
@@ -189,7 +290,7 @@ public final class SceneExporter {
                 UiSceneCodec.PixelBlock b = diff(UiSceneCodec.TARGET_CANVAS, c.id, r.id, r.argb, r.w, r.h,
                         shadow != null && shadow.length == r.argb.length ? shadow : null);
                 if (b != null) pixels.add(b);
-                canvasShadows.put(key, r.argb.clone());
+                canvasShadows.put(key, copyInto(shadow, r.argb));
                 canvasVersions.put(key, r.version);
             }
         }
@@ -209,6 +310,16 @@ public final class SceneExporter {
         steps++;
         stepBytes += data.length;
         return new Step(epoch, from, gen, false, data, imgs);
+    }
+
+    /**
+     * {@code src} copied into {@code shadow} when it has the same size, else
+     * into a new array (DISPLAY_PIPELINE_SPEC.md Part A7: no clone per frame).
+     */
+    private static int[] copyInto(int[] shadow, int[] src) {
+        if (shadow == null || shadow.length != src.length) return src.clone();
+        System.arraycopy(src, 0, shadow, 0, src.length);
+        return shadow;
     }
 
     /** Changed tiles of {@code px} against {@code shadow} (all of them when there is no shadow), or null. */
@@ -368,6 +479,20 @@ public final class SceneExporter {
         if (n.tint != 0xFFFFFFFF) p.add(new UiProto.Prop.Tint(n.tint));
         if (!n.points.isEmpty()) p.add(new UiProto.Prop.Points(n.points));
         if (n.width != 1) p.add(new UiProto.Prop.Width(n.width));
+        if (n.hoverFill != null) p.add(new UiProto.Prop.HoverFill(n.hoverFill));
+        if (n.hoverBorderColor != null) p.add(new UiProto.Prop.HoverBorderColor(n.hoverBorderColor));
+        if (n.hoverColor != null) p.add(new UiProto.Prop.HoverColor(n.hoverColor));
+        if (n.pressedFill != null) p.add(new UiProto.Prop.PressedFill(n.pressedFill));
+        if (n.pressedBorderColor != null) p.add(new UiProto.Prop.PressedBorderColor(n.pressedBorderColor));
+        if (n.pressedColor != null) p.add(new UiProto.Prop.PressedColor(n.pressedColor));
+        if (n.scroll != 0) p.add(new UiProto.Prop.Scroll(n.scroll));
+        if (n.contentW != 0) p.add(new UiProto.Prop.ContentW(n.contentW));
+        if (n.contentH != 0) p.add(new UiProto.Prop.ContentH(n.contentH));
+        if (n.scrollX != 0) p.add(new UiProto.Prop.ScrollX(n.scrollX));
+        if (n.scrollY != 0) p.add(new UiProto.Prop.ScrollY(n.scrollY));
+        if (n.dragWindow != 0) p.add(new UiProto.Prop.DragWindow(n.dragWindow));
+        if (n.caret != null) p.add(new UiProto.Prop.Caret(n.caret));
+        if (n.caretOf != null) p.add(new UiProto.Prop.CaretOf(n.caretOf));
         p.removeIf(x -> !UiProto.nodeAllows(n.kind, x.tag()));
         p.sort(java.util.Comparator.comparingInt(UiProto.Prop::tag));
         return p;

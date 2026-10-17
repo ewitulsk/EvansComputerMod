@@ -21,24 +21,31 @@ public class ModNetwork {
                 // 3.1.0: KeyInputPacket (raw keys and text for the GUI).
                 // 3.2.0: GUI client rendering: ui_scene, ui_step, ui_scene_ack, ui_client_hello
                 //        (scene stream UiSceneCodec.VERSION 1, UI_PROTOCOL.md section 17).
-                .versioned("3.2.0");
+                // 3.3.0: display pipeline (DISPLAY_PIPELINE_SPEC.md): terminal_delta gains flags, presentation and send
+                //        times; terminal_ready and ui_scene_ack carry the client's receive time; scene stream v2
+                //        (timed pixels, lossy frames, flush markers); speaker_audio gains pts and the computer;
+                //        display_caps, ui_scroll and ui_predict.
+                .versioned("3.3.0");
+        // Acks and input are handled on the network thread (Part A3); the client side parses and decodes
+        // display packets off the render thread (Part A5).
+        PayloadRegistrar network = registrar.executesOn(net.neoforged.neoforge.network.registration.HandlerThread.NETWORK);
         
         // Register terminal input packet (client -> server)
-        registrar.playToServer(
+        network.playToServer(
                 TerminalInputPacket.TYPE,
                 TerminalInputPacket.STREAM_CODEC,
                 TerminalInputPacket::handle
         );
 
         // Raw keys (HID usages) and typed text for the GUI (client -> server)
-        registrar.playToServer(
+        network.playToServer(
                 KeyInputPacket.TYPE,
                 KeyInputPacket.STREAM_CODEC,
                 KeyInputPacket::handle
         );
 
         // Register mouse input packet (client -> server)
-        registrar.playToServer(
+        network.playToServer(
                 MouseInputPacket.TYPE,
                 MouseInputPacket.STREAM_CODEC,
                 MouseInputPacket::handle
@@ -60,11 +67,10 @@ public class ModNetwork {
                         com.example.evanscomputermod.controller.client.ControllerClient.onStatus(packet)));
 
         // Speaker audio (server -> client)
-        registrar.playToClient(
+        network.playToClient(
                 com.example.evanscomputermod.speaker.SpeakerAudioPacket.TYPE,
                 com.example.evanscomputermod.speaker.SpeakerAudioPacket.STREAM_CODEC,
-                (packet, ctx) -> ctx.enqueueWork(() ->
-                        com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
+                (packet, ctx) -> com.example.evanscomputermod.speaker.client.SpeakerClient.onAudioPacket(packet, ctx));
 
         // The GUI clipboard and the player's real one (both ways).
         registrar.playToServer(
@@ -77,30 +83,30 @@ public class ModNetwork {
                 ClipboardPackets.Set::handle);
 
         // Register delta sync packets
-        registrar.playToClient(
+        network.playToClient(
                 TerminalDeltaPacket.TYPE,
                 TerminalDeltaPacket.STREAM_CODEC,
                 (packet, ctx) -> ClientPacketHandler.handleTerminalDelta(packet, ctx)
         );
 
-        registrar.playToServer(
+        network.playToServer(
                 TerminalReadyPacket.TYPE,
                 TerminalReadyPacket.STREAM_CODEC,
                 TerminalReadyPacket::handle
         );
 
         // GUI client rendering: scene stream (server -> client), its acks and the client hello.
-        registrar.playToClient(
+        network.playToClient(
                 UiScenePackets.Scene.TYPE,
                 UiScenePackets.Scene.STREAM_CODEC,
                 (packet, ctx) -> com.example.evanscomputermod.client.ClientUiSceneHooks.handleScene(packet, ctx)
         );
-        registrar.playToClient(
+        network.playToClient(
                 UiScenePackets.Step.TYPE,
                 UiScenePackets.Step.STREAM_CODEC,
                 (packet, ctx) -> com.example.evanscomputermod.client.ClientUiSceneHooks.handleStep(packet, ctx)
         );
-        registrar.playToServer(
+        network.playToServer(
                 UiScenePackets.Ack.TYPE,
                 UiScenePackets.Ack.STREAM_CODEC,
                 UiScenePackets.Ack::handle

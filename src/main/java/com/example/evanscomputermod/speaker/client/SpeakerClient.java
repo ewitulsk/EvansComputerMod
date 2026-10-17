@@ -39,6 +39,11 @@ public final class SpeakerClient {
 
     private SpeakerClient() {}
 
+    /** Network thread: onto the render thread with its receive time (decoding is cheap). */
+    public static void onAudioPacket(SpeakerAudioPacket p, net.neoforged.neoforge.network.handling.IPayloadContext ctx) {
+        com.example.evanscomputermod.client.DisplayClientHooks.toMain(() -> onAudio(p));
+    }
+
     public static void onAudio(SpeakerAudioPacket p) {
         if (p.samples() <= 0 || p.samples() > SpeakerAudioPacket.MAX_SAMPLES) return;
         short[] pcm = ImaAdpcm.decode(p.data(), p.samples());
@@ -54,7 +59,16 @@ public final class SpeakerClient {
             PLAYING.put(p.pos().immutable(), playing);
             mc.getSoundManager().play(playing.sound);
         }
-        playing.stream.push(pcm);
+        // Lip sync (DISPLAY_PIPELINE_SPEC.md Part E2): while the speaker's computer streams timed
+        // frames, its audio plays with the same playout delay as the picture; otherwise at once.
+        long now = com.example.evanscomputermod.network.ClockSync.clientNowUs();
+        long delay = com.example.evanscomputermod.network.ClientPlayout.audioDelayUs(p.computer(), now);
+        var clock = com.example.evanscomputermod.network.ClockSync.INSTANCE;
+        if (delay >= 0 && p.ptsUs() != 0 && clock.known()) {
+            playing.stream.pushAt(pcm, clock.toClient(p.ptsUs()) + delay - now);
+        } else {
+            playing.stream.pushNow(pcm);
+        }
         playing.lastAudioMs = System.currentTimeMillis();
     }
 
