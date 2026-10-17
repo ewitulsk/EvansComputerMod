@@ -1437,6 +1437,22 @@ public final class Compositor {
         requestTick(0);
     }
 
+    /**
+     * Bring the app whose process is {@code pid} to the front: on a phone, an app launched
+     * again while it runs (telephonyd's incoming call, a notification) is raised, not started twice.
+     * The shell activates its topmost mapped window (safe mode focuses it). False if it has none.
+     */
+    public synchronized boolean raiseApp(int pid) {
+        UiWindow top = null;
+        for (UiWindow w : stack) if (w.surface.conn.pid == pid && !w.surface.conn.closed && w.surface.mapped) top = w;
+        if (top == null) return false;
+        if (top == focused) return true;
+        if (safeMode || shell == null) setFocus(top);
+        else shell.queue(new UiProto.WindowRequest(top.id, UiProto.WindowAction.ACTIVATE, 0));
+        requestTick(0);
+        return true;
+    }
+
     private void setFocus(UiWindow w) {
         if (w == focused) return;
         UiWindow old = focused;

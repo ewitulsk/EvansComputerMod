@@ -140,6 +140,8 @@ pub fn main() {
     let clock = Instant::now();
     let ms = || clock.elapsed().as_millis() as u64;
     let mut last_celld = 0u64;
+    // celld queries that failed in a row (it is busy or restarting): the bearer goes only after a few
+    let mut celld_misses = 0u32;
     // (carrier, bars) from celld, for `status`
     let mut cell: (String, u8) = (String::new(), 0);
     let mut last_frame = ms();
@@ -160,22 +162,30 @@ pub fn main() {
             last_celld = now;
             match celld::host::query("status", 300) {
                 Ok(t) => {
+                    celld_misses = 0;
                     let s = celld::ctl::Status::parse(&t);
                     cell = (if s.on_cell() { s.carrier.clone() } else { String::new() }, if s.on_cell() { s.bars } else { 0 });
                     let ip = s.ims_ip.split('/').next().and_then(Addr::parse_ip);
+                    // Idle on the cell (a pocketed phone) keeps the registration: a page brings the
+                    // session back, and "attaching" with a bearer is that resume (a service request),
+                    // not a new attach (that starts from searching, which drops the bearer).
+                    let resuming = s.state == "attaching" && ua.bearer().is_some();
                     match (ip, Addr::parse_ip(&s.pcscf)) {
                         (Some(ip), Some(p)) if s.on_cell() => ua.bearer_up(Bearer { ip, pcscf: Addr::new(p, 5060), domain: s.ims_domain.clone(), msisdn: s.msisdn.clone() }, now),
                         _ => {
-                            if ua.bearer().is_some() && !s.on_cell() {
+                            if ua.bearer().is_some() && !s.on_cell() && !resuming {
                                 ua.bearer_down(now);
                             }
                         }
                     }
                 }
                 Err(_) => {
-                    cell = (String::new(), 0);
-                    if ua.bearer().is_some() {
-                        ua.bearer_down(now);
+                    celld_misses += 1;
+                    if celld_misses >= 3 {
+                        cell = (String::new(), 0);
+                        if ua.bearer().is_some() {
+                            ua.bearer_down(now);
+                        }
                     }
                 }
             }
@@ -508,8 +518,9 @@ fn on_event(
             started.insert(call, (now, false, from.clone()));
             if phone {
                 uictl(&format!("ring 1 {}", enc(&who)));
-                // the Phone app shows the incoming call (full screen)
-                let _ = ecm_host_abi::apps::ctl(&["launch", "dev.ecm.dialer", "--incoming", &call.to_string()]);
+                // the Phone app shows the incoming call (full screen): launched through the GUI, so a
+                // running Phone is raised (a phone runs one instance per app), not started a second time
+                uictl(&format!("launch dev.ecm.dialer --incoming {call}"));
             }
             events.push(Event::new("incoming", &[("call", &call.to_string()), ("from", &from), ("hidden", if hidden { "1" } else { "0" }), ("waiting", if waiting { "1" } else { "0" })]));
         }
