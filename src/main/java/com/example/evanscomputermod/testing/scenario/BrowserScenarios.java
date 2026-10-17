@@ -599,6 +599,31 @@ public final class BrowserScenarios {
         b.await(r -> phoneShows(r, "The ring was built."), "the link loads page2.html", 20_000);
         b.expect("server", "GET /page2\\.html", "httpd served page2.html");
         b.mutate(r -> snapshot(r, "browser_phone_link"), "snapshot: the followed link");
+        b.note("Menu in the bottom bar: its menu opens above the bar, all on screen");
+        b.await(r -> {
+            int[] at = phoneAt(r, "Menu");
+            if (at == null) return "no Menu button";
+            PhoneGuiScenarios.tap(r, at);
+            return null;
+        }, "tap Menu", 5_000);
+        b.await(r -> {
+            var c = PhoneGuiScenarios.comp(r);
+            for (String item : new String[]{"Bookmark this page", "History", "Set as home page"})
+                if (c.locatePopupText(item, false) == null) return "'" + item + "' isn't on the screen";
+            return null;
+        }, "every entry of the menu is on the phone's screen", 5_000);
+        b.mutate(r -> snapshot(r, "browser_phone_menu"), "snapshot: the menu");
+        b.await(r -> {
+            int[] at = PhoneGuiScenarios.comp(r).locatePopupText("History", false);
+            if (at == null) return "no History";
+            PhoneGuiScenarios.tap(r, at);
+            return null;
+        }, "tap History", 5_000);
+        b.await(r -> {
+            Compositor.WindowInfo w = phoneWindow(r);
+            return w != null && w.title().startsWith("History") ? null : "window title " + (w == null ? "-" : w.title());
+        }, "the History page opens (about:history)", 10_000);
+        b.await(r -> phoneShows(r, "Older news"), "it lists the pages seen", 2_000);
         b.timeLimit(60_000);
         return b.build();
     }

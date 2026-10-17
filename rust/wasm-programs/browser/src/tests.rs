@@ -491,3 +491,17 @@ fn a_click_right_after_typing_in_the_same_batch() {
     assert_eq!(ecm_web::forms::value(dom, dom.by_id("name").unwrap()), "Pat");
     assert_eq!(ecm_web::forms::value(dom, dom.by_id("q").unwrap()), "tap");
 }
+
+#[test]
+fn the_phone_menu_opens_above_the_bottom_bar() {
+    let (mut b, mock) = start(ring(), 240, 400, Some("100.65.0.10"));
+    let menu = b.app.core.window(1).unwrap().rect_of("menu").unwrap();
+    let before = mock.sent_messages().len();
+    click(&mut b, &mock, "menu");
+    let create = mock.sent_messages()[before..]
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("the menu's popup");
+    assert!(create.y >= 0 && create.y + create.h <= menu.y, "above the Menu button {menu:?}: {create:?}");
+    assert!(create.x >= 0 && create.x + create.w <= 240, "inside the phone's width: {create:?}");
+}

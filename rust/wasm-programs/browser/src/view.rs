@@ -40,9 +40,10 @@ fn menu_button(m: &M) -> Element {
     let m = m.clone();
     button("Menu").id("menu").on_click(move |cx, _| {
         let w = cx.window();
-        let at = cx.core().window(w).and_then(|win| win.rect_of("menu")).map_or((0, 0), |r| (r.x, r.y + r.h));
+        let at = cx.core().window(w).and_then(|win| win.rect_of("menu")).unwrap_or(ecm_ui::window::Rect { x: 0, y: 0, w: 0, h: 0 });
         let mm = m.clone();
-        cx.popup_menu(at.0, at.1, MENU, move |cx, i| {
+        // Below the button on a desktop; above it in the phone's bottom bar.
+        cx.popup_menu_below(at, MENU, move |cx, i| {
             menu_action(&mm, i);
             cx.invalidate();
         });
