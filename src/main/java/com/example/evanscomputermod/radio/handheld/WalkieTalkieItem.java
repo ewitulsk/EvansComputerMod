@@ -49,6 +49,13 @@ public class WalkieTalkieItem extends HandheldRadioItem {
         return !k.isEmpty() && ControllerData.isValidKeyName(k) ? k : DEFAULT_PTT;
     }
 
+    /** The key bound on this radio, or "" when none was (it then uses a voice chat mod's push-to-talk, or the default). */
+    public static String explicitPtt(ItemStack stack) {
+        CompoundTag t = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+        String k = t.getString("ecm_ptt");
+        return !k.isEmpty() && ControllerData.isValidKeyName(k) ? k : "";
+    }
+
     /** Bind the push-to-talk key ("" restores the default). Invalid names are ignored. */
     public static void setPtt(ItemStack stack, String key) {
         if (key == null || !ControllerData.isValidKeyName(key)) return;

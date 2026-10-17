@@ -60,7 +60,7 @@
   "evanscomputermod.options.microphone": "Microphone Input",
   "evanscomputermod.options.microphone.tooltip": "Let Evans Computer Mod hear you: Microphone blocks, ePhone microphones and Walkie-Talkies. Off: your microphone is never opened.",
   "evanscomputermod.options.microphone_device": "Input Device",
-  "evanscomputermod.options.microphone_device.voice_mod": "Provided by %s",
+  "evanscomputermod.options.microphone_device.voice_mod": "%s's settings",
   "evanscomputermod.options.microphone_volume": "Input Volume",
   "evanscomputermod.options.microphone_mode": "Mic Mode",
   "evanscomputermod.options.microphone_mode.push_to_talk": "Push to Talk",

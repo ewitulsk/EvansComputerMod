@@ -360,6 +360,7 @@ dependencies {
         compileOnly 'de.maxhenkel.voicechat:voicechat-api:2.5.0'
         compileOnly('su.plo.voice.api:client:2.1.4') { transitive = false }
         compileOnly('su.plo.voice.api:common:2.1.4') { transitive = false }
+        compileOnly('su.plo.voice:protocol:2.1.4') { transitive = false }
         // FML 4 (NeoForge 21.1) doesn't put plain `implementation` libraries on the
         // game's classpath in dev runs (runClient/runServer/runGameTestServer), so
         // Chicory was missing there. The release jar bundles it anyway.

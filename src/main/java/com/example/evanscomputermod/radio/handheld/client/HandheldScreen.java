@@ -51,11 +51,13 @@ public class HandheldScreen extends Screen {
         var stack = Minecraft.getInstance().player.getItemInHand(hand);
         this.s = HandheldSettings.read(stack);
         this.walkie = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(stack);
-        this.ptt = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(stack);
+        this.ptt = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.explicitPtt(stack);
     }
 
     private String pttLabel() {
-        return bindingPtt ? "PTT: press a key..." : "PTT: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(ptt);
+        if (bindingPtt) return "PTT: press a key...";
+        return "PTT: " + (ptt.isEmpty() ? com.example.evanscomputermod.voice.client.VoiceClient.pttLabel(ItemStackOf.EMPTY_WALKIE)
+                : com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(ptt));
     }
 
     /** The server's answer to Scan. */
@@ -87,7 +89,8 @@ public class HandheldScreen extends Screen {
             pttButton = Button.builder(Component.literal(pttLabel()), b -> {
                 bindingPtt = !bindingPtt;
                 b.setMessage(Component.literal(pttLabel()));
-                setStatus(bindingPtt ? "Press the key for push-to-talk (Esc: cancel, Delete: default)" : "", 0xF0B429);
+                setStatus(bindingPtt ? "Press the key for push-to-talk (Esc: cancel, Delete: "
+                        + (com.example.evanscomputermod.voice.client.VoiceClient.usesVoiceMod() ? "use your voice chat mod's PTT)" : "default)") : "", 0xF0B429);
             }).bounds(cx - 60, y + 112, 120, 20).build();
             addRenderableWidget(pttButton);
         }
@@ -172,9 +175,9 @@ public class HandheldScreen extends Screen {
     /** Bind the Walkie-Talkie's push-to-talk key ("" = the default); the server stores it on the item. */
     private void bindPtt(String name) {
         if (!com.example.evanscomputermod.controller.ControllerData.isValidKeyName(name)) return;
-        ptt = name.isEmpty() ? com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT : name;
+        ptt = name;
         PacketDistributor.sendToServer(new HandheldPackets.PttKey(hand == InteractionHand.MAIN_HAND, name));
-        setStatus("Push-to-talk: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(ptt), 0x7CFC00);
+        setStatus(pttLabel().replace("PTT:", "Push-to-talk:"), 0x7CFC00);
     }
 
     private void setStatus(String text, int color) {
@@ -208,6 +211,12 @@ public class HandheldScreen extends Screen {
         g.drawCenteredString(font, "S " + "|".repeat(bars) + ".".repeat(10 - bars) + (dbm > -199 ? String.format("  %.0f dBm", dbm) : ""), cx, y - 38, 0xFFFFFF);
         g.drawCenteredString(font, "Volume " + s.volume() + "   Squelch " + s.squelch(), cx, y + 84, 0xAAAAAA);
         if (!status.isEmpty()) g.drawCenteredString(font, status, cx, y + 98, statusColor);
+    }
+
+    /** A Walkie-Talkie with no key of its own, for the label of "none bound". */
+    private static final class ItemStackOf {
+        static final net.minecraft.world.item.ItemStack EMPTY_WALKIE =
+                new net.minecraft.world.item.ItemStack(com.example.evanscomputermod.radio.handheld.RadioHandheldContent.WALKIE_TALKIE.get());
     }
 
     @Override

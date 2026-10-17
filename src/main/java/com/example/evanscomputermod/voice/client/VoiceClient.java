@@ -94,6 +94,42 @@ public final class VoiceClient {
         demand = flags;
     }
 
+    /** The Walkie-Talkie's push-to-talk is held: its own key, or (none bound) the voice chat mod's push-to-talk, or B. */
+    public static boolean pttDown(net.minecraft.world.item.ItemStack walkie) {
+        String key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.explicitPtt(walkie);
+        if (key.isEmpty()) {
+            if (plasmo) {
+                try {
+                    return com.example.evanscomputermod.voice.client.compat.PlasmoVoiceBridge.pttPressed();
+                } catch (Throwable t) {
+                    return false;
+                }
+            }
+            KeyMapping svcPtt = svc ? voiceModPtt() : null;
+            if (svcPtt != null) return com.example.evanscomputermod.controller.client.ControllerClient.isKeyDown(svcPtt.saveString());
+            key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT;
+        }
+        return com.example.evanscomputermod.controller.client.ControllerClient.isKeyDown(key);
+    }
+
+    /** What the Walkie-Talkie's push-to-talk is, for the HUD and its screen. */
+    public static String pttLabel(net.minecraft.world.item.ItemStack walkie) {
+        String key = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.explicitPtt(walkie);
+        if (!key.isEmpty()) return com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(key);
+        if (plasmo) return "Plasmo Voice's PTT";
+        KeyMapping svcPtt = svc ? voiceModPtt() : null;
+        if (svcPtt != null) return svcPtt.getTranslatedKeyMessage().getString() + " (Simple Voice Chat's PTT)";
+        return com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(
+                com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT);
+    }
+
+    /** Simple Voice Chat's push-to-talk key mapping ({@code key.push_to_talk}) when it is bound, or null. */
+    private static KeyMapping voiceModPtt() {
+        for (KeyMapping k : Minecraft.getInstance().options.keyMappings)
+            if (k.getName().equals("key.push_to_talk")) return k.isUnbound() ? null : k;
+        return null;
+    }
+
     /** A voice chat mod provides the microphone (ECM doesn't open it). */
     public static boolean usesVoiceMod() {
         return svc || plasmo;
@@ -118,25 +154,25 @@ public final class VoiceClient {
             return;
         }
         boolean enabled = VoiceClientConfig.enabled();
-        // The radio's push-to-talk: the key bound on the Walkie-Talkie in hand.
+        // The radio's push-to-talk: the key bound on the Walkie-Talkie in hand (or the voice chat mod's).
         boolean ptt = false;
         for (var h : net.minecraft.world.InteractionHand.values()) {
             var stack = mc.player.getItemInHand(h);
             if (com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(stack)
                     && com.example.evanscomputermod.radio.handheld.HandheldSettings.read(stack).on()) {
-                ptt = mc.screen == null && com.example.evanscomputermod.controller.client.ControllerClient.isKeyDown(
-                        com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(stack));
+                ptt = mc.screen == null && pttDown(stack);
                 break;
             }
         }
         if (ptt && !pttWas) com.example.evanscomputermod.speaker.client.HandheldAudioClient.mute();
         pttWas = ptt;
-        boolean talk = (TALK.isDown() && mc.screen == null) || ptt;
+        // With a voice chat mod, its own push-to-talk / voice activation decides when the microphone is live.
+        boolean talk = (!usesVoiceMod() && TALK.isDown() && mc.screen == null) || ptt;
         long nowMs = System.currentTimeMillis();
         if (talk) lastTalkMs = nowMs;
         // Push-to-talk opens the microphone only around Talk; voice activation (and a voice chat mod's
         // capture, which that mod gates itself) while something listens.
-        boolean pttOnly = !svc && VoiceClientConfig.mode() == VoiceClientConfig.Mode.PUSH_TO_TALK;
+        boolean pttOnly = !usesVoiceMod() && VoiceClientConfig.mode() == VoiceClientConfig.Mode.PUSH_TO_TALK;
         boolean wanted = enabled && demand != 0 && (!pttOnly || nowMs - lastTalkMs < PTT_LINGER_MS);
         CaptureBuffer.setAccepting(wanted);
         if (!svc && !plasmo) {
@@ -149,10 +185,11 @@ public final class VoiceClient {
         // Everything captured since the last tick, at the voice rate.
         List<short[]> parts = new ArrayList<>();
         int total = 0;
-        boolean fromSvc = false;
+        boolean fromVoiceMod = false;
         int peak = 0;
         CaptureBuffer.Block b;
-        int volume = VoiceClientConfig.inputVolume();
+        // A voice chat mod's audio already has its own input volume and filters applied: ours doesn't stack on top.
+        int volume = usesVoiceMod() ? 100 : VoiceClientConfig.inputVolume();
         while ((b = CaptureBuffer.poll()) != null) {
             if (resampler == null || resampler.inRate() != b.rate()) resampler = new Resampler(b.rate(), VoicePackets.VOICE_RATE);
             short[] in = b.pcm();
@@ -165,7 +202,7 @@ public final class VoiceClient {
             short[] r = resampler.process(in, 0, in.length);
             parts.add(r);
             total += r.length;
-            fromSvc |= b.source() == CaptureBuffer.Source.SIMPLE_VOICE_CHAT;
+            fromVoiceMod |= b.source() != CaptureBuffer.Source.OWN;
         }
         long now = System.currentTimeMillis();
         if (total > 0) {
@@ -175,7 +212,7 @@ public final class VoiceClient {
 
         boolean radio = (demand & VoicePackets.DEMAND_RADIO) != 0;
         boolean open;
-        if (fromSvc) open = true;   // Simple Voice Chat only hands over frames while it is sending
+        if (fromVoiceMod) open = true;   // the voice chat mod only hands over frames while you talk in it
         else if (VoiceClientConfig.mode() == VoiceClientConfig.Mode.PUSH_TO_TALK) open = talk;
         else open = talk || now - lastLoudMs < HANGOVER_MS;
         boolean send = wanted && total > 0 && (open || (radio && ptt));

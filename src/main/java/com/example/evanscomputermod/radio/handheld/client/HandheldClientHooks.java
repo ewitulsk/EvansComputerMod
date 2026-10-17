@@ -38,8 +38,7 @@ public final class HandheldClientHooks {
             } else {
                 g.drawString(mc.font, "S " + "|".repeat(bars) + ".".repeat(10 - bars), x, y + 10, 0xFFFFFF);
             }
-            if (walkie) g.drawString(mc.font, "PTT: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(
-                    com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(stack)), x, y + 20, 0xAAAAAA);
+            if (walkie) g.drawString(mc.font, "PTT: " + com.example.evanscomputermod.voice.client.VoiceClient.pttLabel(stack), x, y + 20, 0xAAAAAA);
         });
     }
 }

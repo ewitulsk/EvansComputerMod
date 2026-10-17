@@ -34,6 +34,7 @@ param(
     [switch]$NoStage,               # skip rebuilding/staging the WASM
     [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
     [switch]$Aeronautics,           # 1.21.1 GameTests: also load Create Aeronautics (libs/optional/create-aeronautics-bundled-*.jar)
+    [string]$VoiceMod = '',         # 1.21.1: also load a voice chat mod, svc or plasmo (libs/optional/voicechat-neoforge-1.21.1-*.jar / plasmovoice-neoforge-1.21.1-*.jar)
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
@@ -45,6 +46,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 # `powershell -File` passes "a,b" as one string; accept both forms.
+# -VoiceMod: the voice chat mod's jar in libs/optional (svc = Simple Voice Chat, plasmo = Plasmo Voice).
+function Get-VoiceModJar {
+    $pattern = switch ($VoiceMod) { 'svc' { 'voicechat-neoforge-1.21.1-*.jar' } 'plasmo' { 'plasmovoice-neoforge-1.21.1-*.jar' } default { throw "-VoiceMod must be svc or plasmo" } }
+    $jar = Get-ChildItem (Join-Path $root "libs\optional") -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $jar) { throw "-VoiceMod $VoiceMod needs libs/optional/$pattern (from Modrinth)" }
+    $jar.FullName
+}
+
 function Split-List($v) { @($v | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 $Rust = Split-List $Rust
 $JUnit = Split-List $JUnit
@@ -174,6 +183,7 @@ if ($GameTests.Count -gt 0) {
         New-Item -ItemType Directory -Force $mods | Out-Null
         Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
         if (-not $NoCreate) { Copy-Item (Join-Path $root "libs\create-1.21.1-*.jar") $mods }
+        if ($VoiceMod) { Copy-Item (Get-VoiceModJar) $mods }
         if ($Aeronautics) {
             # Create Aeronautics (bundles Simulated + Offroad; needs Create and Sable 2.x).
             # Not fetched automatically: copy create-aeronautics-bundled-1.21.1-*.jar into libs/optional.
@@ -229,6 +239,7 @@ if ($ClientChecks) {
         $directory = Join-Path $visualRoot $surface
         New-Item -ItemType Directory -Force "$directory/mods","$directory/config" | Out-Null
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
+        if ($VoiceMod) { Copy-Item (Get-VoiceModJar) "$directory/mods" }
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
     }
     # Pick a free port below Windows' ephemeral range (49152+), where outgoing connections

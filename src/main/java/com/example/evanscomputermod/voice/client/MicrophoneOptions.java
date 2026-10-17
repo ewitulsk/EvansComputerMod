@@ -28,6 +28,12 @@ import java.util.function.Consumer;
  * output Device), input volume 0-200 %, mode and the voice activation level.
  * They are the same values as {@link VoiceClientConfig} (the mod's config file
  * and its Mods > Config screen), saved as they change.
+ *
+ * <p>With Simple Voice Chat or Plasmo Voice installed, that mod's own
+ * microphone settings (device, volume, push-to-talk / voice activation) are
+ * the ones that apply, so only Microphone Input (whether this mod may hear
+ * you at all), a row saying whose settings are used, and the indicator are
+ * shown: nothing here can contradict the voice chat mod.
  */
 public final class MicrophoneOptions {
 
@@ -49,6 +55,10 @@ public final class MicrophoneOptions {
         if (list == null) return;
         list.addBig(enabled());
         list.addBig(device());
+        if (VoiceClient.usesVoiceMod()) {
+            list.addSmall(indicator());
+            return;
+        }
         list.addSmall(volume(), mode());
         list.addSmall(activation(), indicator());
     }
