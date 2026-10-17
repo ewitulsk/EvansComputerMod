@@ -53,5 +53,11 @@ public final class TerminalTests {
     public static void terminal_jobs_vars(GameTestHelper h) {
         TestDriver.scenario(h, NS, TerminalScenarios.ALL.get("terminal_jobs_vars"), true);
     }
+
+    /** GUI copy goes to the player's clipboard, their clipboard pastes into the Editor, the launcher's Console item returns to the console. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gui_console_clipboard")
+    public static void gui_console_clipboard(GameTestHelper h) {
+        TestDriver.scenario(h, NS, TerminalScenarios.ALL.get("gui_console_clipboard"), true);
+    }
 }
 //?}

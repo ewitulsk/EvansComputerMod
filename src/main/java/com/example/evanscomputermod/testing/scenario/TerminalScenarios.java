@@ -56,6 +56,13 @@ import java.util.regex.Pattern;
  * shell | less} pages a pipeline's output with keys from the keyboard;
  * {@code echo -e "\a"} rings the bell (control: no bell before).
  *
+ * <p>{@code gui_console_clipboard}: the desktop and the player's real
+ * clipboard. In the Text Editor the player copies a line (Ctrl+A, Ctrl+C) and
+ * it goes to their real clipboard; then they paste (Ctrl+V) text from their
+ * real clipboard (their client sends it before the paste key) and the Editor
+ * shows it (control: before, the GUI clipboard held the Editor's line). The
+ * launcher's Console item goes back to the console, where commands run.
+ *
  * <p>Not covered here: drawing the selection, double/triple click and the
  * clipboard happen in the player's own client ({@code TerminalScreen}); the
  * scenario player has no client. The bytes those keys send are checked in
@@ -66,7 +73,7 @@ public final class TerminalScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
-        for (Scenario s : List.of(lineEditing(), scrollback(), manual(), pipes(), repl(), jobsAndVariables())) ALL.put(s.name, s);
+        for (Scenario s : List.of(lineEditing(), scrollback(), manual(), pipes(), repl(), jobsAndVariables(), guiConsoleClipboard())) ALL.put(s.name, s);
     }
 
     private TerminalScenarios() {
@@ -395,6 +402,49 @@ public final class TerminalScenarios {
                 .await(r -> bells(r) >= 1 ? null : "no bell", "the bell rang", 5_000)
                 .timeLimit(60_000)
                 .build();
+    }
+
+    // ------------------------------------------------------------ gui_console_clipboard
+
+    private static Scenario guiConsoleClipboard() {
+        var b = Scenario.builder("gui_console_clipboard",
+                        "The desktop's copy and paste use the player's real clipboard; the launcher's Console item returns to the console")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .realTime()
+                .send("pc", "gui")
+                .expect("pc", "^gui: started", "the desktop starts");
+        GuiScenarios.launch(b, "Text Editor", "editor")
+                .await(r -> GuiScenarios.shows(r, "editor", "New file"), "the Text Editor is ready", 10_000)
+                .note("Copy in the Editor: the text goes to the player's real clipboard")
+                .mutate(r -> GuiScenarios.type(r, "copied from the editor"), "type a line")
+                .await(r -> GuiScenarios.shows(r, "editor", "copied from the editor"), "the Editor shows it", 5_000)
+                .mutate(r -> {
+                    GuiScenarios.key(r, ScenarioPlayer.hidOf('a'), CTRL);
+                    GuiScenarios.key(r, ScenarioPlayer.hidOf('c'), CTRL);
+                }, "Ctrl+A, Ctrl+C")
+                .await(r -> "copied from the editor".equals(r.computer("pc").lastClipboardToPlayer()) ? null
+                        : "sent: '" + r.computer("pc").lastClipboardToPlayer() + "'", "the copy is sent to the player's clipboard", 5_000)
+                .note("Paste from the player's real clipboard: the client sends it, then the paste key")
+                .await(r -> GuiScenarios.comp(r).clipboardText().equals("copied from the editor") ? null : "clipboard: " + GuiScenarios.comp(r).clipboardText(),
+                        "control: the GUI clipboard holds the Editor's line", 2_000)
+                .mutate(r -> {
+                    GuiScenarios.key(r, 0x4D, 0); // End
+                    GuiScenarios.enter(r);
+                    r.pushClipboard("pc", "pasted from outside");
+                    GuiScenarios.key(r, ScenarioPlayer.hidOf('v'), CTRL);
+                }, "End, Enter, then Ctrl+V with 'pasted from outside' on the player's clipboard")
+                .await(r -> GuiScenarios.shows(r, "editor", "pasted from outside"), "the Editor pasted the real clipboard", 5_000)
+                .note("The launcher's Console item: back to the console (the GUI keeps running)")
+                .mutate(r -> GuiScenarios.clickText(r, "taskbar", "Apps"), "click Apps on the taskbar")
+                .await(r -> GuiScenarios.visible(r, "popup", "Console"), "the launcher lists Console", 5_000)
+                .mutate(r -> GuiScenarios.clickText(r, "popup", "Console"), "click Console")
+                .await(r -> GuiScenarios.ui(r) != null && !GuiScenarios.ui(r).guiVisible() ? null : "the GUI is still shown",
+                        "the console is shown", 5_000)
+                .send("pc", "echo back-in-console")
+                .expect("pc", "^back-in-console$", "the console runs commands")
+                .timeLimit(60_000);
+        return b.build();
     }
 
     // ------------------------------------------------------------ repl_line_editing

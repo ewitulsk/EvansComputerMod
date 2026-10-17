@@ -2637,6 +2637,42 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /** Typed text from a player (§7 Text), for the GUI. */
+    /** The player who last gave this computer keys or a clipboard (who gets its copies). */
+    private volatile java.util.UUID uiPlayer;
+    /** The last text sent to a player's real clipboard (for checks). */
+    private volatile String lastClipboardToPlayer = "";
+
+    public void noteUiPlayer(java.util.UUID player) {
+        uiPlayer = player;
+    }
+
+    /** The player's real clipboard, sent by their client before a paste key. */
+    public void clipboardFromPlayer(java.util.UUID player, String text) {
+        uiPlayer = player;
+        uiManager.clipboardFromPlayer(text);
+    }
+
+    /** An app copied text: put it on the real clipboard of the player using the computer. */
+    public void clipboardToPlayer(String text) {
+        lastClipboardToPlayer = text;
+        IComputerHost h = host;
+        java.util.UUID who = uiPlayer;
+        if (h == null || who == null || h.getServer() == null) return;
+        var server = h.getServer();
+        server.execute(() -> {
+            net.minecraft.server.level.ServerPlayer p = server.getPlayerList().getPlayer(who);
+            if (p != null && !(p instanceof net.neoforged.neoforge.common.util.FakePlayer)) {
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p,
+                        new com.example.evanscomputermod.network.ClipboardPackets.Set(text));
+            }
+        });
+    }
+
+    /** The last text an app copied for the player's real clipboard ("" if none). */
+    public String lastClipboardToPlayer() {
+        return lastClipboardToPlayer;
+    }
+
     public void handleTextEvent(String text) {
         if (text != null && !text.isEmpty()) uiManager.text(text);
     }

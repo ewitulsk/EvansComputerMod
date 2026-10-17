@@ -41,4 +41,9 @@ public final class ClientPacketHandler {
         ClientPacketDistributor.sendToServer(
                 new TerminalReadyPacket(computerId, (byte) IComputerHost.DISPLAY_OWN, 0));
     }
+
+    /** Text an app on a computer copied: the player's real clipboard. */
+    public static void setClipboard(String text) {
+        net.minecraft.client.Minecraft.getInstance().keyboardHandler.setClipboard(text);
+    }
 }

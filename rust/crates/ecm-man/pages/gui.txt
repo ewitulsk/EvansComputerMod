@@ -44,7 +44,16 @@ KEYS
     Ctrl+Alt+Backspace
         Switch between the console and the GUI, from either side (like
         gui toggle). Only the side on screen gets the keys. It does
-        nothing on an ePhone, which is always in the GUI.
+        nothing on an ePhone, which is always in the GUI. The desktop's
+        launcher (Apps) also has a Console item that goes back to the
+        console; type gui show (or press the keys again) to return.
+
+CLIPBOARD
+    Copy and paste in GUI apps use your real computer's clipboard: what
+    an app copies (Ctrl+C, a Copy menu item) lands on your clipboard
+    outside the game, and a paste key (Ctrl+V, Ctrl+Shift+V,
+    Shift+Insert) pastes what you copied anywhere, in or out of the game.
+    The same holds on the ePhone.
 
 FILES
     /etc/ui.toml

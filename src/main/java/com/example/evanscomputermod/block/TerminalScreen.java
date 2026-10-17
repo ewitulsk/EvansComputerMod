@@ -755,6 +755,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         boolean ctrl = (modifiers & 2) != 0;   // GLFW_MOD_CONTROL
         boolean shift = (modifiers & 1) != 0;  // GLFW_MOD_SHIFT
         boolean alt = (modifiers & 4) != 0;    // GLFW_MOD_ALT
+        if ((ctrl && keyCode == 86) || (shift && keyCode == 260)) {
+            // A paste key: the GUI's paste reads the real clipboard, sent first.
+            pushClipboard();
+        }
         sendRawKey(keyCode, modifiers, true);
         altTyped = false;
 
@@ -850,6 +854,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             case 258 -> shift ? "\u001b[Z" : "\t";      // Tab / Shift+Tab
             default -> null;
         };
+    }
+
+    /** Send the player's clipboard to the computer (the GUI pastes it). */
+    private void pushClipboard() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        String clip = Minecraft.getInstance().keyboardHandler.getClipboard();
+        if (clip == null) return;
+        ClientPacketDistributor.sendToServer(new com.example.evanscomputermod.network.ClipboardPackets.Push(
+                te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, clip));
     }
 
     private void copySelection() {

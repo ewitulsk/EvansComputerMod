@@ -415,6 +415,13 @@ public final class ScenarioRun {
             throw new IllegalStateException(node + " refused the player's key");
     }
 
+    /** The player's real clipboard, as their client sends it before a paste key. */
+    public void pushClipboard(String node, String text) {
+        player().sitAt(where(node));
+        if (!player().pushClipboard(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text))
+            throw new IllegalStateException(node + " refused the player's clipboard");
+    }
+
     /** A left click at a framebuffer pixel of {@code node}'s screen. */
     public void click(String node, int x, int y) {
         player().sitAt(where(node));

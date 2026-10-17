@@ -15,7 +15,9 @@ DESCRIPTION
     it), Wi-Fi bars (a click opens Settings on Wi-Fi), cellular bars
     when a modem is fitted, and the clock (HH:MM).
 
-    The launcher lists the core apps (Terminal, Files, Text Editor,
+    The launcher's Console item goes back to the console (the GUI keeps
+    running; gui show or Ctrl+Alt+Backspace returns). The launcher lists
+    the core apps (Terminal, Files, Text Editor,
     Settings, Notes, Visual Programmer), then every app installed under
     /apps, the App Store among them. It is read again each time it
     opens, so an app you just installed is there at once.
