@@ -388,9 +388,15 @@ public final class DisplaySyncHub {
                 long gen = headGen + 1;
                 commit(new Step(headGen, gen, TerminalDeltaPacket.createFlush(computerId, displayId, gen, after), false, 0, false));
                 flushMarkers++;
-                // The head goes back to what the display shows (the dropped frames never will be).
-                head.commitShadowGfx(d.getGfxWidth(), d.getGfxHeight(), d.getPixelData(), d.getPalette(),
-                        d.getDisplayMode(), d.getPixelFormat());
+                // The head goes back to what the screen showed at the flush: what clients show once they
+                // drop the frames after it. What changed since then goes out as an ordinary delta.
+                PresentQueue.Frame f = qs.flushedFrame();
+                if (f != null && f.fits(d)) {
+                    head.commitShadowGfx(f.width(), f.height(), f.pixels(), f.palette() != null ? f.palette() : d.getPalette(),
+                            f.mode(), f.format());
+                } else {
+                    for (ClientSyncState st : viewers.values()) st.needsKeyframe = true;
+                }
             }
             timedPending.removeIf(s -> s.seq > qs.flushedAfterSeq());
             timedSeq = Math.min(timedSeq, qs.appliedSeq());

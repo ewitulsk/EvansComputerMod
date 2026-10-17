@@ -278,6 +278,8 @@ public final class ClientPrediction {
 
     /** Put the server's values back (before a message is applied, and before predicting again). */
     void undo() {
+        // Damage where the predicted values were drawn, then where the server's are.
+        for (int i = 0; i < saved.size(); i++) m.damageNode(savedIn.get(i), saved.get(i).n);
         for (int i = saved.size() - 1; i >= 0; i--) {
             Saved v = saved.get(i);
             v.n.fill = v.fill;

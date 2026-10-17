@@ -52,7 +52,13 @@ public final class ClientPlayout {
         long received, onTime, late, dropped, shown;
 
         public synchronized double delayMs() {
-            return delayUs / 1000.0;
+            return delayNowUs() / 1000.0;
+        }
+
+        /** The delay in use now: the client option if it is set, else the adaptive one. */
+        synchronized long delayNowUs() {
+            if (fixedDelayMs >= 0) return Math.min(Math.max(MIN_DELAY_US, maxPlayoutMs * 1000L), fixedDelayMs * 1000L);
+            return (long) delayUs;
         }
 
         public synchronized double jitterMs() {
@@ -103,9 +109,7 @@ public final class ClientPlayout {
     public static long audioDelayUs(UUID computer, long clientNowUs) {
         Computer c = computer == null ? null : COMPUTERS.get(computer);
         if (c == null || clientNowUs - c.lastTimedUs > TIMED_ACTIVE_US) return -1;
-        synchronized (c) {
-            return (long) c.delayUs;
-        }
+        return c.delayNowUs();
     }
 
     /**
@@ -139,10 +143,7 @@ public final class ClientPlayout {
         ClockSync clock = ClockSync.INSTANCE;
         clock.note(d.sendUs(), recvUs);
         Computer c = computer(computerId);
-        long due;
-        synchronized (c) {
-            due = clock.toClient(d.ptsUs()) + (long) c.delayUs;
-        }
+        long due = clock.toClient(d.ptsUs()) + c.delayNowUs();
         c.lastTimedUs = recvUs;
         c.arrived(clock.excessDelayUs(d.sendUs(), recvUs), Math.max(0, recvUs - due));
         QUEUES.computeIfAbsent(key, k -> new ArrayDeque<>()).addLast(new Pending(d, due));
@@ -181,10 +182,7 @@ public final class ClientPlayout {
         ClockSync clock = ClockSync.INSTANCE;
         clock.note(sendUs, recvUs);
         Computer c = computer(computerId);
-        long due;
-        synchronized (c) {
-            due = clock.toClient(ptsUs) + (long) c.delayUs;
-        }
+        long due = clock.toClient(ptsUs) + c.delayNowUs();
         c.lastTimedUs = recvUs;
         c.arrived(clock.excessDelayUs(sendUs, recvUs), Math.max(0, recvUs - due));
         return due;

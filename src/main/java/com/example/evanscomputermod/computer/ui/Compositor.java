@@ -678,15 +678,16 @@ public final class Compositor {
         byte[] restore = c.isShell() ? null : host.restoreFor(c.pid);
         c.queue(new UiProto.Welcome(c.version, c.appId == null ? "" : c.appId, display.info(), theme,
                 UiFonts.METRICS_VERSION, List.of(), restore != null));
-        if (c.version >= 2) {
-            c.queue(new UiProto.QueueLimits(com.example.evanscomputermod.EcmConfig.displayQueueFrames(),
-                    com.example.evanscomputermod.EcmConfig.displayQueueMs()));
-        }
         if (restore != null) c.queue(new UiProto.Restore(restore));
         List<UiProto.NotificationAction> waiting = c.isShell() ? null : pendingActions.remove(c.appId);
         if (waiting != null) for (UiProto.NotificationAction a : waiting) c.queue(a);
         List<String> files = c.isShell() ? null : pendingOpenFiles.remove(c.pid);
         if (files != null) for (String f : files) c.queue(new UiProto.OpenFile(f));
+        // Version 2: the queue limits for CommitAt, after what has to come right after Welcome.
+        if (c.version >= 2) {
+            c.queue(new UiProto.QueueLimits(com.example.evanscomputermod.EcmConfig.displayQueueFrames(),
+                    com.example.evanscomputermod.EcmConfig.displayQueueMs()));
+        }
         if (c.isShell()) {
             shell = c;
             shellConnectedMs = host.nowMs();

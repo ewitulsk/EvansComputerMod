@@ -24,7 +24,7 @@ class DisplaySyncHubTest {
     private static final UUID B = UUID.randomUUID();
 
     private final TerminalDisplay server = new TerminalDisplay(40, 10);
-    private final DisplaySyncHub hub = new DisplaySyncHub(1);
+    private DisplaySyncHub hub = new DisplaySyncHub(1);
     /** Each viewer's client display and the packets it got in the last pass. */
     private final Map<UUID, TerminalDisplay> clients = new HashMap<>();
     private final Map<UUID, List<TerminalDeltaPacket>> got = new HashMap<>();
@@ -101,8 +101,10 @@ class DisplaySyncHubTest {
         assertTrue(got.isEmpty());
     }
 
+    /** With a window of one frame (the old flow control), a viewer still waiting for its ack falls behind. */
     @Test
     void aViewerThatFellBehindCatchesUpFromTheHistory() {
+        hub = new DisplaySyncHub(1, 1, 1L << 20);
         sync(A, B);
         ack(A); // B's ack for the keyframe is still on its way
 
@@ -118,8 +120,15 @@ class DisplaySyncHubTest {
         sync(A, B);
         assertEquals(2, hub.deltaBuilds(), "still one build per frame");
         assertEquals(1, got.get(A).size());
-        assertEquals(2, got.get(B).size(), "B gets the frame it missed, then this one");
-        assertSame(got.get(A).get(0), got.get(B).get(1));
+        assertEquals(1, got.get(B).size(), "B gets the frame it missed (one frame in its window)");
+        TerminalDeltaPacket missed = got.get(B).get(0);
+        TerminalDeltaPacket latest = got.get(A).get(0);
+        ack(A);
+        ack(B);
+        sync(A, B);
+        assertEquals(1, got.get(B).size(), "then this one, from the history");
+        assertSame(latest, got.get(B).get(0), "the same packet A got");
+        assertNotSame(missed, latest);
         assertEquals(1, hub.keyframeBuilds(), "no keyframe needed to catch up");
         assertShows(A);
         assertShows(B);
@@ -127,6 +136,7 @@ class DisplaySyncHubTest {
 
     @Test
     void aViewerBeyondTheHistoryGetsAKeyframe() {
+        hub = new DisplaySyncHub(1, 1, 1L << 20);
         sync(A, B);
         ack(A);
         for (int i = 0; i < DisplaySyncHub.HISTORY_MAX + 2; i++) {

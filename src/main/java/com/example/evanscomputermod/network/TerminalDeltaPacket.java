@@ -272,7 +272,8 @@ public record TerminalDeltaPacket(
             // Pixel format byte at the top of the gfx section. Drives
             // tile-byte sizing on the parser.
             raw.write(gfxDelta.pixelFormat());
-            raw.write(gfxDelta.paletteChanged() ? 1 : 0);
+            // A palette change without a palette (none to send) is no change on the wire.
+            raw.write(gfxDelta.paletteChanged() && gfxDelta.palette() != null ? 1 : 0);
             if (gfxDelta.paletteChanged() && gfxDelta.palette() != null) {
                 for (int i = 0; i < 256; i++) {
                     int argb = gfxDelta.palette()[i];

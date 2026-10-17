@@ -462,7 +462,7 @@ public final class DisplayDevice {
         TerminalDisplay out = scanout.get();
         if (out == null) return queue.flush();
         synchronized (out) {
-            return queue.flush();
+            return queue.flush(out);
         }
     }
 

@@ -34,15 +34,21 @@ public final class PresentQueue {
         }
     }
 
-    /** What a hub needs in one consistent read. */
-    public record State(long appliedSeq, int flushEpoch, long flushedAfterSeq, List<Frame> pending, TerminalDisplay target) {}
+    /**
+     * What a hub needs in one consistent read. {@code flushedFrame} is what the
+     * scanout showed when the last flush happened (clients show it once they
+     * drop the frames after it), or null.
+     */
+    public record State(long appliedSeq, int flushEpoch, long flushedAfterSeq, List<Frame> pending, TerminalDisplay target,
+                        Frame flushedFrame) {}
 
     private final ArrayDeque<Frame> queued = new ArrayDeque<>();
     private long nextSeq = 1;
     private long appliedSeq;
     private int flushEpoch;
-    /** The last flush dropped everything after this frame. */
+    /** The last flush dropped everything after this frame, which the scanout showed then. */
     private long flushedAfterSeq;
+    private Frame flushedFrame;
     private long lastPtsUs = Long.MIN_VALUE;
     /** The scanout the frames are for (a hub only uses a queue that feeds its display). */
     private TerminalDisplay target;
@@ -124,7 +130,21 @@ public final class PresentQueue {
         if (spare.size() < 4) spare.addLast(f.pixels());
     }
 
-    /** Drop every frame not shown yet (seek, pause, stop). Returns how many. */
+    /**
+     * Drop every frame not shown yet (seek, pause, stop). {@code shown} is the
+     * scanout (the caller holds its monitor): its picture is kept as what the
+     * flush leaves on screen. Returns how many frames were dropped.
+     */
+    public synchronized int flush(TerminalDisplay shown) {
+        if (shown != null && shown.getPixelData() != null) {
+            int[] pal = shown.getPalette();
+            flushedFrame = new Frame(appliedSeq, 0, shown.getDisplayMode(), shown.getGfxWidth(), shown.getGfxHeight(),
+                    shown.getPixelFormat(), pal == null ? null : pal.clone(), shown.getPixelData().clone());
+        }
+        return flush();
+    }
+
+    /** Drop every frame not shown yet. Returns how many. */
     public synchronized int flush() {
         int n = queued.size();
         for (Frame f : queued) if (spare.size() < 4) spare.addLast(f.pixels());
@@ -138,7 +158,7 @@ public final class PresentQueue {
     }
 
     public synchronized State state() {
-        return new State(appliedSeq, flushEpoch, flushedAfterSeq, List.copyOf(queued), target);
+        return new State(appliedSeq, flushEpoch, flushedAfterSeq, List.copyOf(queued), target, flushedFrame);
     }
 
     public synchronized long appliedSeq() {
