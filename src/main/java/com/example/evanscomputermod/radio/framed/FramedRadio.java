@@ -100,6 +100,12 @@ public final class FramedRadio {
 
         /** A peripheral event for attached computers ({@code framed_rx}). */
         default void event(String name) {}
+
+        /**
+         * A page for the identity the radio watches ({@code wake tmsi N}) arrived:
+         * wake the device's computer if it sleeps (any thread).
+         */
+        default void page() {}
     }
 
     private record Peer(double rssiDbm, double sinrDb, int cqi, int reported, long seenUs, long delayUs, long frames) {}
@@ -272,13 +278,20 @@ public final class FramedRadio {
     /**
      * One control command (the {@code /dev/sdrctl} / {@code /dev/framesctl} framed lines):
      * {@code phy lte|mmwave}, {@code role bs|ue}, {@code channel N}, {@code phy_bw HZ},
-     * {@code power DBM}, {@code address HEX}, {@code promisc 0|1}. Returns false if the
-     * command isn't a framed one.
+     * {@code power DBM}, {@code address HEX}, {@code promisc 0|1}, and the wake filter
+     * {@code wake tmsi N} / {@code wake off}. Returns false if the command isn't a framed one.
      */
     public boolean control(String[] p) {
         if (p.length == 0) return false;
         String arg = p.length > 1 ? p[1] : null;
         switch (p[0]) {
+            case "wake" -> {
+                // the modem's wake on page (docs/TELEPHONY.md): while the phone sleeps its
+                // computer is stopped; the radio stays on the air and watches the paging frames
+                if ("off".equals(arg)) wakeTmsi = 0;
+                else if ("tmsi".equals(arg) && p.length > 2) wakeTmsi = (int) Long.parseLong(p[2]);
+                else throw new IllegalArgumentException("wake tmsi N | wake off");
+            }
             case "phy" -> setProfile(PhyProfile.byId(need(p)));
             case "role" -> setRole(parseRole(need(p)));
             case "channel" -> setChannel(Integer.parseInt(need(p)));
@@ -384,6 +397,8 @@ public final class FramedRadio {
         m.put("harq_retx", harqRetx);
         m.put("harq_failed", harqFailed);
         m.put("beacons_sent", beaconsSent);
+        m.put("wake_tmsi", wakeTmsi == 0 ? "off" : Integer.toUnsignedString(wakeTmsi));
+        m.put("page_wakes", pageWakes);
         m.put("blocked", blocked);
         int active = 0;
         for (Beacon b : beacons) if (b != null) active++;
@@ -737,6 +752,10 @@ public final class FramedRadio {
             return;
         }
         byte[] payload = java.util.Arrays.copyOfRange(h.air, AIR_HEADER, h.air.length);
+        if (wakeTmsi != 0 && dst == BROADCAST && pagesTmsi(payload, wakeTmsi)) {
+            pageWakes++;
+            host.page();
+        }
         int sub = subchannelOf(e.channel(), rx);
         push(FramedRecords.rx(flags, src, dst, s, cqi, CqiTable.cqiOf(e.modulation()), r.rssiDbm(), sinr, r.timestampMicros(),
                 Math.floorDiv(e.startMicros() + delay, profile.slotUs), sub, dst == address ? report : 0, delay, payload));
@@ -756,6 +775,35 @@ public final class FramedRadio {
         if (e.payload() != null) h ^= java.util.Arrays.hashCode(e.payload());
         h ^= h >>> 33; h *= 0xff51afd7ed558ccdL; h ^= h >>> 33; h *= 0xc4ceb9fe1a85ec53L; h ^= h >>> 33;
         return (h >>> 11) * 0x1.0p-53;
+    }
+
+    /** The TMSI the wake filter watches (0: off). */
+    private volatile int wakeTmsi;
+    /** Pages that woke the device. */
+    private volatile long pageWakes;
+
+    public int wakeTmsi() {
+        return wakeTmsi;
+    }
+
+    public long pageWakes() {
+        return pageWakes;
+    }
+
+    /**
+     * Is {@code payload} an ecm-cell Paging message ({@code 0x09}, a count, then
+     * big-endian 32-bit TMSIs: rust/crates/ecm-cell/src/air.rs) naming {@code tmsi}?
+     */
+    static boolean pagesTmsi(byte[] payload, int tmsi) {
+        if (payload.length < 2 || (payload[0] & 0xff) != 0x09) return false;
+        int n = payload[1] & 0xff;
+        if (payload.length != 2 + 4 * n) return false;
+        for (int i = 0; i < n; i++) {
+            int o = 2 + 4 * i;
+            int t = (payload[o] & 0xff) << 24 | (payload[o + 1] & 0xff) << 16 | (payload[o + 2] & 0xff) << 8 | payload[o + 3] & 0xff;
+            if (t == tmsi) return true;
+        }
+        return false;
     }
 
     private void push(byte[] record) {

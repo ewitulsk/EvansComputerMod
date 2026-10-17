@@ -43,7 +43,7 @@ public class SimCardItem extends CardItem {
         SimIdentity id = identity(stack);
         SimSecret s = secret(stack);
         if (id == null || s == null || !s.known()) return null;
-        return new SimCard(id.carrier(), id.imsi(), s.keyHex());
+        return new SimCard(id.carrier(), id.imsi(), s.keyHex(), id.msisdn());
     }
 
     /** The smart card in {@code stack} (changes the stack in place), or null when it isn't a SIM card. */
@@ -87,6 +87,8 @@ public class SimCardItem extends CardItem {
             return;
         }
         lines.accept(Component.translatable("item.evanscomputermod.sim_card.carrier", s.carrier()).withStyle(ChatFormatting.AQUA));
+        if (!s.msisdn().isEmpty())
+            lines.accept(Component.translatable("item.evanscomputermod.sim_card.number", s.numberText()).withStyle(ChatFormatting.WHITE));
         lines.accept(Component.translatable("item.evanscomputermod.sim_card.imsi", s.imsiText()).withStyle(ChatFormatting.GRAY));
         lines.accept(Component.translatable("item.evanscomputermod.sim_card.use").withStyle(ChatFormatting.DARK_GRAY));
     }

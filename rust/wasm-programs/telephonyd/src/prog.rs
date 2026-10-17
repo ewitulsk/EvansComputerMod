@@ -137,6 +137,7 @@ pub fn main() {
     let mut last_celld = 0u64;
     let mut last_frame = ms();
     let mut volte_reported: Option<(bool, String)> = None;
+    let mut wakelock_at = 0u64;
     let mut voicemail_waiting = 0u32;
     let mut mms_jobs: Vec<(String, String, String)> = Vec::new();
     // incoming calls being rung: id -> (number, start)
@@ -333,9 +334,15 @@ pub fn main() {
             uictl(&format!("volte {} {}", volte.0 as u8, if volte.1.is_empty() { "-" } else { &volte.1 }));
             volte_reported = Some(volte);
         }
-        // a ringing or live call keeps a sleeping phone's computer awake
-        if phone && ua.calls().iter().any(|c| c.state != CallState::Ended) && now % 1000 < 20 {
-            uictl("wakelock 3000");
+        // a ringing or live call keeps a sleeping phone's computer awake (the platform's wake
+        // lock: each renewal lasts at most 10 s, so renew every 5 s; release when the calls end)
+        let in_call = ua.calls().iter().any(|c| c.state != CallState::Ended);
+        if phone && in_call && now.saturating_sub(wakelock_at) >= 5000 {
+            wakelock_at = now;
+            uictl("wakelock 10000");
+        } else if phone && !in_call && wakelock_at != 0 {
+            wakelock_at = 0;
+            uictl("wakelock 0");
         }
     }
 }

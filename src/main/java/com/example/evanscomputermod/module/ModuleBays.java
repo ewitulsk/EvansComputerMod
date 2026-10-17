@@ -67,6 +67,9 @@ public final class ModuleBays {
         /** A live module's slot changed (installed or removed). */
         void onModuleChanged(String slotName, @Nullable IComputerModule module);
 
+        /** A module heard a page for its device: wake the computer if it sleeps (see {@link IModuleHost#wakeForPage}). */
+        default void wakeForPage() {}
+
         /** Name programs use for {@code slot} (default {@link #SLOT_NAMES}; the ePhone says {@code module_1/2}). */
         default String slotName(int slot) {
             return SLOT_NAMES[slot];
@@ -349,6 +352,11 @@ public final class ModuleBays {
         @Override
         public void markDirty() {
             owner.onBaysChanged();
+        }
+
+        @Override
+        public void wakeForPage() {
+            owner.wakeForPage();
         }
     }
 }

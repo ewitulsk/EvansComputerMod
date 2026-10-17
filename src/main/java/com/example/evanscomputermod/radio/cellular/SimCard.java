@@ -10,12 +10,18 @@ import java.util.regex.Pattern;
  * ({@link SimCardItem#sim}) on the server only (clients never have K); the card answers
  * challenges with it ({@code card/SimAuth}, through the {@code sim} peripheral). Pure.
  */
-public record SimCard(String carrier, long imsi, String keyHex) {
+public record SimCard(String carrier, long imsi, String keyHex, String msisdn) {
     /** Carrier ids: 1-24 characters of a-z, 0-9, '-' and '_'. */
     public static final Pattern CARRIER_ID = Pattern.compile("[a-z0-9_-]{1,24}");
     public static final int KEY_BYTES = 16;
 
+    /** A card without a number. */
+    public SimCard(String carrier, long imsi, String keyHex) {
+        this(carrier, imsi, keyHex, "");
+    }
+
     public SimCard {
+        if (msisdn == null) msisdn = "";
         if (carrier == null || !CARRIER_ID.matcher(carrier).matches()) throw new IllegalArgumentException("bad carrier id: " + carrier);
         if (keyHex == null || keyHex.length() != KEY_BYTES * 2) throw new IllegalArgumentException("bad SIM key");
         keyHex = keyHex.toLowerCase(Locale.ROOT);
