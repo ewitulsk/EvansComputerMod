@@ -63,6 +63,16 @@ for dir in rust/wasm-programs/*/; do
     fi
 done
 
+# Interactive GUI apps must compile before they run (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES,
+# 2 MiB): a bigger module starts interpreted and stays so while open, too slow to type into.
+for app in browser; do
+    f="wasm-bin/$app.wasm"
+    if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 2097152 ]; then
+        echo "error: $f is $(wc -c < "$f") bytes, over the 2 MiB compile-before-run limit (see the size profile in rust/Cargo.toml)"
+        exit 1
+    fi
+done
+
 ls wasm-bin/*.wasm | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
 
 # The Tech Village repository's package (docs/TECH_VILLAGE_NETWORK.md "Apps"): Chat packed

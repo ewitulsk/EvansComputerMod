@@ -186,3 +186,28 @@ opt-level = 2
 # to sit in the kernel's own Cargo.toml, where Cargo silently ignores it.)
 [profile.release.package.terminal-os]
 opt-level = "s"
+
+# The Browser (with QuickJS) must stay under the runtime's 2 MiB compile-before-run limit
+# (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES): a bigger module starts interpreted, and an open
+# Browser stays interpreted, far too slow for typing into a page.
+[profile.release.package.browser]
+opt-level = "s"
+strip = "symbols"
+
+[profile.release.package.ecm-web]
+opt-level = "s"
+
+[profile.release.package.ecm-js]
+opt-level = "s"
+
+[profile.release.package.rquickjs-core]
+opt-level = "s"
+
+[profile.release.package.rquickjs-sys]
+opt-level = "s"
+
+[profile.release.package.ecm-ui]
+opt-level = "s"
+
+[profile.release.package.miniz_oxide]
+opt-level = "s"

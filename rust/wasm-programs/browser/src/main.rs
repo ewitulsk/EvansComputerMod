@@ -29,13 +29,8 @@ impl Transport for HostTransport {
     fn exchange(&mut self, host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, FetchError> {
         let ip = match parse_ipv4(host) {
             Some(ip) => ip,
-            None => {
-                let mut addr = SockAddrIn::default();
-                if socket::getaddrinfo(host, &mut addr) != 0 {
-                    return Err(FetchError::Resolve(host.into()));
-                }
-                addr.ip()
-            }
+            // The kernel's stub resolver: /etc/hosts, then /etc/resolv.conf's servers and search domains.
+            None => socket::resolve(host).map_err(|e| FetchError::Resolve(host.into(), e.describe()))?,
         };
         let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
         if fd == -13 {

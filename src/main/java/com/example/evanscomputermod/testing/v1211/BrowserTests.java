@@ -46,6 +46,12 @@ public final class BrowserTests {
         TestDriver.scenario(h, NS, BrowserScenarios.ALL.get("browser_js"), true);
     }
 
+    /** At a Tech Village house PC (the ring booted, as DnsTests.ring): sites by name, the registrar's forms, a new .ecm name; controls: nosuch.ring, the same name twice. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".dns")
+    public static void browser_dns(GameTestHelper h) {
+        DnsTests.ring(h, NS, BrowserScenarios.ALL.get("browser_dns"));
+    }
+
     private BrowserTests() {}
 }
 //?}
