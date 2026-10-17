@@ -24,7 +24,7 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 public final class TechClientChecks {
   private static final int SETTLE_TICKS = 40, MAX_WAIT_TICKS = 600;
   private static final long TIMEOUT_MS = 900_000;
-  private static int settled, waited, connectedQuads, stopTicks = -1;
+  private static int settled, waited, stalled, connectedQuads, stopTicks = -1;
   private static long started;
   private static volatile String shot;
   private static volatile Vec3 shotFeet;
@@ -97,6 +97,10 @@ public final class TechClientChecks {
       // Far views may never report every section compiled; after the cap, capture anyway.
       if (!(arrived && stateReady && (compiled || ++waited > MAX_WAIT_TICKS))) {
         settled = 0;
+        // A stalled shot says why in the log (the server only sees that nothing came).
+        if (++stalled % 100 == 0)
+          EvansComputerMod.LOGGER.info("Tech client: waiting for {}: arrived={} stateReady={} compiled={} waited={}", name, arrived,
+              stateReady, compiled, waited);
         return;
       }
       if (++settled < SETTLE_TICKS) return;

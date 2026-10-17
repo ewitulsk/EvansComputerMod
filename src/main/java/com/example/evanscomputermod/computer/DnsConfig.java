@@ -35,6 +35,9 @@ public final class DnsConfig {
     public static boolean resolverOnIspRouter() {
         Boolean o = resolverOnIspOverride;
         if (o != null) return o;
+        // -Devanscomputermod.dns.resolverOnIspRouter=true|false (test runs; wins over the file).
+        String prop = System.getProperty("evanscomputermod.dns.resolverOnIspRouter");
+        if (prop != null) return Boolean.parseBoolean(prop);
         try {
             return SPEC.isLoaded() ? RESOLVER_ON_ISP_ROUTER.get() : false;
         } catch (RuntimeException e) {
