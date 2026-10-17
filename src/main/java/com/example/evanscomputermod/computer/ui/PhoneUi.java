@@ -83,6 +83,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     static final long AUDIO_IDLE_MS = 2_000;
     /** Extra time past the save deadline the computer keeps running before it sleeps. */
     static final long SLEEP_GRACE_EXTRA_MS = 300;
+    /**
+     * With celld running, the computer stays up this long after the phone is pocketed: celld reads
+     * {@code state asleep} from {@code /dev/uictl phone} (every 250 ms) and goes idle on its cell, so
+     * the network pages the phone instead of sending to a computer that can't hear (docs/TELEPHONY.md).
+     */
+    static final long CELLD_IDLE_GRACE_MS = 800;
 
     /** What the phone hardware reports, for the status bar ({@code /dev/uictl phone}). */
     public interface Status {
@@ -203,7 +209,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     int launch(String appId, List<String> args) {
         if (apps == null || apps.manifest(appId) == null) return -1;
         for (AppInstance i : apps.running()) {
-            if (i.appId().equals(appId) && i.pid() > 0) return i.pid();
+            if (i.appId().equals(appId) && i.pid() > 0) {
+                // one instance per app on a phone: a running one comes to the front
+                Compositor c = ui.compositor();
+                if (c != null) c.raiseApp(i.pid());
+                return i.pid();
+            }
         }
         try {
             AppInstance i = apps.launch(appId, args);
@@ -316,13 +327,14 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
      */
     public long willSleep() {
         awake = false;
-        if (apps == null) return 0;
+        long cell = celldPid > 0 ? CELLD_IDLE_GRACE_MS : 0;
+        if (apps == null) return cell;
         long n = apps.running().stream().filter(i -> i.state() == AppInstance.State.RUNNING).count();
-        if (n == 0) return 0;
+        if (n == 0) return cell;
         worker.execute(() -> {
             if (!awake) enforce(true);
         });
-        return Math.min(2_000, n * EcmConfig.appsSaveStateDeadlineMs() + SLEEP_GRACE_EXTRA_MS);
+        return Math.max(cell, Math.min(2_000, n * EcmConfig.appsSaveStateDeadlineMs() + SLEEP_GRACE_EXTRA_MS));
     }
 
     /** Back in hand: the foreground app runs again. */

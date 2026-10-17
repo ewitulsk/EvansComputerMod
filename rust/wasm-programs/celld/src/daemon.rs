@@ -271,6 +271,9 @@ impl Daemon {
                     TunFrame::ArpReply(r) => io.tun_write(&r),
                     TunFrame::Ipv4(p) => {
                         let n = p.len() as u64;
+                        if self.ue.status().state == "idle" {
+                            io.log(&format!("traffic resumes the session: {}", packet_desc(p)));
+                        }
                         if self.ue.send_ip(p.to_vec(), now) {
                             self.tx_bytes += n;
                             self.tx_packets += 1;
@@ -288,6 +291,9 @@ impl Daemon {
                     TunFrame::ArpReply(r) => io.ims_write(&r),
                     TunFrame::Ipv4(p) => {
                         let n = p.len() as u64;
+                        if self.ue.status().state == "idle" {
+                            io.log(&format!("traffic resumes the session: {}", packet_desc(p)));
+                        }
                         if self.ue.send_ip(p.to_vec(), now) {
                             self.tx_bytes += n;
                             self.tx_packets += 1;
@@ -682,5 +688,31 @@ impl Daemon {
             }
             _ => format!("error unknown command '{}' (status, cells, up, down, idle, roaming on|off)\n", line.trim()),
         }
+    }
+}
+
+/// `udp 10.250.0.2:5060 -> 100.65.2.1:5060` for a log line.
+fn packet_desc(p: &[u8]) -> String {
+    if p.len() < 20 {
+        return format!("{} bytes", p.len());
+    }
+    let ihl = ((p[0] & 0x0f) as usize) * 4;
+    let ip = |o: usize| format!("{}.{}.{}.{}", p[o], p[o + 1], p[o + 2], p[o + 3]);
+    let port = |o: usize| if p.len() >= o + 2 { u16::from_be_bytes([p[o], p[o + 1]]).to_string() } else { "-".into() };
+    let proto = match p[9] {
+        1 => "icmp",
+        6 => "tcp",
+        17 => "udp",
+        _ => "ip",
+    };
+    if p[9] == 17 && p.len() > ihl + 8 {
+        // a SIP request or status line says what woke the link
+        let body = &p[ihl + 8..];
+        let line: String = body.iter().take_while(|&&b| b != b'\r' && b != b'\n').take(48).map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect();
+        format!("{proto} {}:{} -> {}:{} {line}", ip(12), port(ihl), ip(16), port(ihl + 2))
+    } else if p[9] == 6 {
+        format!("{proto} {}:{} -> {}:{}", ip(12), port(ihl), ip(16), port(ihl + 2))
+    } else {
+        format!("{proto} {} -> {}", ip(12), ip(16))
     }
 }
