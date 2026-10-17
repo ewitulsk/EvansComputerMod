@@ -684,9 +684,23 @@ public final class Compositor {
         UiConnection app = (UiConnection) n[0];
         UiProto.NotificationAction action = new UiProto.NotificationAction((String) n[1], ni.action());
         if (app == null) {
-            // A system notice about an app (the background limit): tapping it opens that app.
+            // A system notice about an app (the background limit, telephonyd's missed call or
+            // new text): tapping it opens that app, which gets NotificationAction{tag, action}
+            // so it can show the right screen (the thread, the call log).
             String appId = (String) n[2];
-            if (appId != null && !appId.isEmpty()) host.launch(0, appId, List.of());
+            if (appId == null || appId.isEmpty()) return;
+            String tag = (String) n[1];
+            if (tag != null && !tag.isEmpty()) {
+                for (UiConnection c : conns.values()) {
+                    if (appId.equals(c.appId) && c.hello && !c.closed && !c.isShell()) {
+                        c.queue(action);
+                        host.raise(appId);
+                        return;
+                    }
+                }
+                pendingActions.computeIfAbsent(appId, k -> new ArrayList<>()).add(action);
+            }
+            host.launch(0, appId, List.of());
             return;
         }
         if (!app.closed) {

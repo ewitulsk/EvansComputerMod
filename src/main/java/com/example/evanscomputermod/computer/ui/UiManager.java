@@ -731,6 +731,12 @@ public final class UiManager implements CompositorHost {
      * or {@code /dev/uictl launch}).
      */
     @Override
+    public void raise(String appId) {
+        PhoneUi p = phone;
+        if (p != null) p.launch(appId, List.of());
+    }
+
+    @Override
     public int launch(int fromPid, String appId, List<String> args) {
         var apps = computer.getAppManager();
         if (apps != null && appId != null && apps.manifest(appId) != null) {
