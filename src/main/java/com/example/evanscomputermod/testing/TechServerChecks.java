@@ -152,6 +152,7 @@ public final class TechServerChecks {
         case 10 -> chat(level);
         case 15 -> cell(level);
         case 16 -> coreLog(level);
+        case 18 -> telVillage(level);
         case 17 -> storePhone(server, level, player);
         case 11 -> screenshots(server, level, player);
         case 12 -> finish(server, player);
@@ -195,7 +196,7 @@ public final class TechServerChecks {
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
             "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "fiber_tap_peering", "runbook",
-            "chat_villages", "cell_store_" + a, "cell_store_" + b, "cell_core_db", "cell_span_sites", "cell_tech_village",
+            "chat_villages", "cell_store_" + a, "cell_store_" + b, "cell_core_db", "cell_span_sites", "cell_tech_village", "tel_tech_village",
             "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
@@ -938,6 +939,13 @@ public final class TechServerChecks {
    * scenario from village a's Phone Store to village b's.
    */
   private static void cell(ServerLevel level) throws Exception {
+    if (cellRun == null && telPassed) {
+      BlockPos origin = TechCellChecks.store(visits.get(a), TechCellChecks.STORE_INSIDE);
+      cellRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL.get("cell_tech_village"), level, origin,
+          msg -> LOG.info("[cell_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
+      cellRun.build();
+      return;
+    }
     if (cellRun == null) {
       var plan = data.cells(level);
       for (int n : new int[] {a, b}) {
@@ -983,10 +991,8 @@ public final class TechServerChecks {
       pass("cell_span_sites", "chord=" + WorldNetwork.linkName(a, b) + " sites=" + spans.size() + " largestGap=" + (int) gap
           + " generated=" + placed + " avgPlaceMs=" + String.format("%.2f", com.example.evanscomputermod.worldgen.CellSites.PLACE_NANOS.get() / 1e6 / Math.max(1, placed))
           + " ms=" + elapsed());
-      BlockPos origin = TechCellChecks.store(visits.get(a), TechCellChecks.STORE_INSIDE);
-      cellRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL.get("cell_tech_village"), level, origin,
-          msg -> LOG.info("[cell_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
-      cellRun.build();
+      // telephony first (tel_tech_village, phase 18, in village b's Phone Store), then the ride
+      next(18);
       return;
     }
     var state = cellRun.tick();
@@ -1008,6 +1014,34 @@ public final class TechServerChecks {
     var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
     LOG.info("ECM_RUNBOOK core $ cored handovers\n{}", ScenarioRun.screen(core.headlessDisplay()).stripTrailing());
     next(17);
+  }
+
+  // ------------------------------------------------------------------ 18: telephony in a village
+
+  private static ScenarioRun telRun;
+  private static boolean telPassed;
+
+  /**
+   * The {@code tel_tech_village} scenario in village b's Phone Store (before the ride, which
+   * leaves b's display phones alone): two display phones register with the core's IMS, one calls
+   * and texts the other, and calls 611. Then back to phase 15 for {@code cell_tech_village}.
+   */
+  private static void telVillage(ServerLevel level) {
+    if (telRun == null) {
+      BlockPos origin = TechCellChecks.store(visits.get(b), TechCellChecks.STORE_INSIDE);
+      telRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.TelephonyScenarios.ALL.get("tel_tech_village"), level, origin,
+          msg -> LOG.info("[tel_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
+      telRun.build();
+      return;
+    }
+    var state = telRun.tick();
+    if (state == ScenarioRun.State.PASSED) {
+      pass("tel_tech_village", "village " + b + " ms=" + elapsed());
+      telPassed = true;
+      next(15);
+      return;
+    }
+    check(state != ScenarioRun.State.FAILED, "tel_tech_village failed: " + telRun.failure() + "\n" + telRun.dump());
   }
 
   // ------------------------------------------------------------------ 17: the repository on a store phone

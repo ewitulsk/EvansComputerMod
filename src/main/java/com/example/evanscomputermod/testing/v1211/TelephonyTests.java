@@ -63,6 +63,11 @@ public final class TelephonyTests {
         run(h, "tel_ivr");
     }
 
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".interconnect")
+    public static void tel_interconnect(GameTestHelper h) {
+        run(h, "tel_interconnect");
+    }
+
     /** The scenario, real time; a failure report gets the last lines of every computer's screen. */
     private static void run(GameTestHelper h, String name) {
         Scenario s = TelephonyScenarios.ALL.get(name);

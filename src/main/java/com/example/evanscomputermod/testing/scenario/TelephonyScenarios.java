@@ -126,62 +126,108 @@ public final class TelephonyScenarios {
     }
 
     /**
+     * A carrier as the scenarios build it: its core and cell site computers (scenario nodes), the core's Card
+     * Reader/Writer, the subscriber pool, a number block, the IMS pool and SIP domain, the backhaul addresses,
+     * the site's id and LTE channel, and (for tel_interconnect) the core's address on the carriers' shared LAN.
+     */
+    record Carrier(String core, String site, BlockPos reader, String name, String pool, String block, String imsPool, String domain,
+                   String coreIp, String siteIp, String siteId, int channel, String lanIp) {
+        /** The block's E.164 prefix: 214-555 -> +1214555. */
+        String prefix() {
+            return "+1" + block.replace("-", "");
+        }
+    }
+
+    static final Carrier RED = new Carrier("core", "site", READER, CARRIER, POOL, BLOCK, IMS_POOL, DOMAIN, CORE_IP, SITE_IP, "site-a", 1, "10.0.50.1");
+
+    /** Which carrier's SIM each person gets. */
+    static final Map<String, Carrier> HOME = new java.util.HashMap<>(Map.of(ANN, RED, BEA, RED, CAL, RED));
+
+    /**
      * Everyone takes a new ePhone; the core (cored with a number block and IMS, imsd, smscd, mmscd, mrfd) and the site
      * come up; Ann writes a SIM per person ({@code cored sim new}: an IMSI and the block's next number) and hands
      * the others theirs and an LTE Modem; each fits modem and SIM in their phone; every phone attaches and registers
      * (VoLTE). {@code simOnly} people get a SIM (a number) but no phone.
      */
     static void network(Scenario.Builder b, List<String> people, List<String> simOnly) {
+        takePhones(b, people, SPOT);
+        coreUp(b, RED);
+        imsUp(b, RED);
+        siteUp(b, RED);
+        phonesOn(b, people, simOnly, SPOT);
+    }
+
+    /** Ann takes a new ePhone into her off hand (it boots while she builds); the others take theirs and hold them. */
+    static void takePhones(Scenario.Builder b, List<String> people, Map<String, Vec3> spot) {
         b.mutate(r -> {
-            hand(r, ANN).givePhone(r, SPOT.get(ANN));
+            hand(r, ANN).givePhone(r, spot.get(ANN));
             hand(r, ANN).phoneToOffHand(r);
         }, "Ann takes a new ePhone (it boots while she builds) and puts it in her off hand");
         for (String p : people) {
             if (p.equals(ANN)) continue;
-            b.mutate(r -> hand(r, p).givePhone(r, SPOT.get(p)), p + " takes a new ePhone and holds it, " + (int) SPOT.get(p).x
+            b.mutate(r -> hand(r, p).givePhone(r, spot.get(p)), p + " takes a new ePhone and holds it, " + (int) spot.get(p).x
                     + " blocks east [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]");
         }
-        b.send("site", "ifconfig eth0 " + SITE_IP + "/24");
-        b.send("core", "ifconfig eth0 " + CORE_IP + "/24");
-        b.expect("core", "eth0: inet 10\\.0\\.40\\.1/24", "the core has " + CORE_IP);
-        b.expect("site", "eth0: inet 10\\.0\\.40\\.2/24", "the site has " + SITE_IP);
-        b.note("core: the subscriber database, a number block, the IMS bearer, site-a's credential, the core");
-        b.send("core", "cored init " + CARRIER + " " + POOL);
-        b.expectOrFail("core", "^cored: carrier cell-red pool 100\\.65\\.2\\.0/24", "cored writes /etc/cored.db", "^cored: (?!carrier)");
-        b.send("core", "cored block add " + BLOCK);
-        b.expectOrFail("core", "^block 214-555 added", "the number block 214-555", "^cored: ");
-        b.send("core", "cored ims pool=" + IMS_POOL + " domain=" + DOMAIN);
-        b.expectOrFail("core", "^ims pool 10\\.250\\.0\\.0/16 pcscf \\S+ domain red\\.ecm", "the IMS bearer (VoLTE, texts)", "^cored: ");
-        b.send("core", "cored site-add site-a " + CellularScenarios.secret("site-a"));
-        b.expect("core", "site site-a added", "site-a's credential");
-        b.send("core", "cored start &");
-        b.expect("core", "cored: carrier cell-red pool 100\\.65\\.2\\.0/24, cell0 ", "cored runs");
-        b.note("core: the IMS servers beside cored (calls, texts, picture messages, voicemail and 611)");
-        for (String[] d : new String[][]{{"imsd", "imsd: red\\.ecm on "}, {"smscd", "smscd: SMSC of red\\.ecm on "},
-                {"mmscd", "mmscd: MMSC of red\\.ecm at "}, {"mrfd", "mrfd: media server of red\\.ecm on "}}) {
-            b.send("core", d[0] + " start &");
-            b.expectOrFail("core", d[1], d[0] + " runs", "^" + d[0] + ": (the HSS|can't|bind|no )");
+    }
+
+    /** The backhaul's addresses; cored: the database, the number block, the IMS bearer, the site's credential, the core. */
+    static void coreUp(Scenario.Builder b, Carrier c) {
+        b.send(c.site(), "ifconfig eth0 " + c.siteIp() + "/24");
+        b.send(c.core(), "ifconfig eth0 " + c.coreIp() + "/24");
+        b.expect(c.core(), "eth0: inet " + Pattern.quote(c.coreIp()) + "/24", c.core() + " has " + c.coreIp());
+        b.expect(c.site(), "eth0: inet " + Pattern.quote(c.siteIp()) + "/24", c.site() + " has " + c.siteIp());
+        b.note(c.core() + ": the subscriber database, a number block, the IMS bearer, " + c.siteId() + "'s credential, the core");
+        b.send(c.core(), "cored init " + c.name() + " " + c.pool());
+        b.expectOrFail(c.core(), "^cored: carrier " + Pattern.quote(c.name()) + " pool " + Pattern.quote(c.pool()), "cored writes /etc/cored.db",
+                "^cored: (?!carrier)");
+        b.send(c.core(), "cored block add " + c.block());
+        b.expectOrFail(c.core(), "^block " + c.block() + " added", "the number block " + c.block(), "^cored: ");
+        b.send(c.core(), "cored ims pool=" + c.imsPool() + " domain=" + c.domain());
+        b.expectOrFail(c.core(), "^ims pool " + Pattern.quote(c.imsPool()) + " pcscf \\S+ domain " + Pattern.quote(c.domain()),
+                "the IMS bearer (VoLTE, texts)", "^cored: ");
+        b.send(c.core(), "cored site-add " + c.siteId() + " " + CellularScenarios.secret(c.siteId()));
+        b.expect(c.core(), "site " + Pattern.quote(c.siteId()) + " added", c.siteId() + "'s credential");
+        b.send(c.core(), "cored start &");
+        b.expect(c.core(), "cored: carrier " + Pattern.quote(c.name()) + " pool " + Pattern.quote(c.pool()) + ", cell0 ", "cored runs");
+    }
+
+    /** The IMS servers beside cored: imsd, smscd, mmscd, mrfd. */
+    static void imsUp(Scenario.Builder b, Carrier c) {
+        b.note(c.core() + ": the IMS servers beside cored (calls, texts, picture messages, voicemail and 611)");
+        String d = Pattern.quote(c.domain());
+        for (String[] s : new String[][]{{"imsd", "imsd: " + d + " on "}, {"smscd", "smscd: SMSC of " + d + " on "},
+                {"mmscd", "mmscd: MMSC of " + d + " at "}, {"mrfd", "mrfd: media server of " + d + " on "}}) {
+            b.send(c.core(), s[0] + " start &");
+            b.expectOrFail(c.core(), s[1], s[0] + " runs", "^" + s[0] + ": (the HSS|can't|bind|no )");
         }
-        CellularScenarios.siteUp(b, "site", "site-a", CARRIER, CORE_IP, 1, PhyProfile.LTE, 1, "");
+    }
+
+    static void siteUp(Scenario.Builder b, Carrier c) {
+        CellularScenarios.siteUp(b, c.site(), c.siteId(), c.name(), c.coreIp(), 1, PhyProfile.LTE, c.channel(), "");
+    }
+
+    /** A SIM per person at their carrier's core, the phones booted, modem and SIM in, attached and registered. */
+    static void phonesOn(Scenario.Builder b, List<String> people, List<String> simOnly, Map<String, Vec3> spot) {
         List<String> all = new ArrayList<>(people);
         all.addAll(simOnly);
-        for (String p : all) writeSim(b, p, people.contains(p));
+        for (String p : all) writeSim(b, HOME.get(p), p, people.contains(p));
         for (String p : people) b.await(r -> hand(r, p).guiBooted(r), p + "'s phone has booted into its shell", 40_000);
         b.mutate(r -> {
             Handset a = hand(r, ANN);
-            a.standAt(r, SPOT.get(ANN));
+            a.standAt(r, spot.get(ANN));
             a.phoneToHand(r);
-        }, "Ann walks 20 blocks east of the antenna, the phone back in her main hand");
+        }, "Ann walks back to her place, the phone back in her main hand");
         for (String p : people) {
             b.note(p + ": sneak-right-click the phone (its slot screen), shift-click the LTE Modem and the SIM into it");
             b.mutate(r -> hand(r, p).fitModemAndSim(r), p + "'s slot screen: LTE Modem and SIM in");
         }
         for (String p : people) {
+            String carrier = HOME.get(p).name();
             b.await(r -> {
                 PhoneUi u = hand(r, p).ui(r);
                 return u != null && u.celldPid() > 0 && u.telephonydPid() > 0 ? null : p + ": events " + (u == null ? "-" : u.events());
             }, p + "'s phone starts celld and telephonyd by itself", 15_000);
-            b.await(r -> hand(r, p).statusHas(r, "\ncarrier " + CARRIER + "\n"), p + "'s status bar shows " + CARRIER + " (attached)", 25_000);
+            b.await(r -> hand(r, p).statusHas(r, "\ncarrier " + carrier + "\n"), p + "'s status bar shows " + carrier + " (attached)", 25_000);
         }
         for (String p : people) b.await(r -> volte(r, p), p + "'s phone registers: VoLTE and the number in the status bar", 25_000);
     }
@@ -196,22 +242,22 @@ public final class TelephonyScenarios {
     static final Pattern WROTE = Pattern.compile("^cored: wrote SIM IMSI (\\d{15}) \\((\\w+)\\), number (\\+\\d+)", Pattern.MULTILINE);
 
     /** A blank SIM into the core's reader, {@code cored sim new --label}, taken out; someone else's handed over with an LTE Modem. */
-    static void writeSim(Scenario.Builder b, String p, boolean phone) {
+    static void writeSim(Scenario.Builder b, Carrier c, String p, boolean phone) {
         String label = p.toLowerCase(java.util.Locale.ROOT);
-        b.note("core: a SIM for " + p + ". A blank card clicked into the Card Reader/Writer, cored sim new, taken out by hand");
-        b.mutate(r -> CellularScenarios.insertBlank(r, READER), "right-click the Card Reader/Writer with a blank SIM card");
-        b.send("core", "cored sim new --label " + label);
-        b.expectOrFail("core", "^cored: wrote SIM IMSI \\d{15} \\(" + label + "\\), number \\+1214555\\d{4}",
+        b.note(c.core() + ": a SIM for " + p + ". A blank card clicked into the Card Reader/Writer, cored sim new, taken out by hand");
+        b.mutate(r -> CellularScenarios.insertBlank(r, c.reader()), "right-click " + c.core() + "'s Card Reader/Writer with a blank SIM card");
+        b.send(c.core(), "cored sim new --label " + label);
+        b.expectOrFail(c.core(), "^cored: wrote SIM IMSI \\d{15} \\(" + label + "\\), number " + Pattern.quote(c.prefix()) + "\\d{4}",
                 "cored writes the SIM and gives it the block's next number", "^cored: (?!wrote|the card)");
         b.mutate(r -> {
-            Matcher m = WROTE.matcher(r.screen("core"));
+            Matcher m = WROTE.matcher(r.screen(c.core()));
             String imsi = null, number = null;
             while (m.find()) if (m.group(2).equals(label)) {
                 imsi = m.group(1);
                 number = m.group(3);
             }
             if (imsi == null) {
-                r.fail("no SIM for " + label + " on the core's screen");
+                r.fail("no SIM for " + label + " on " + c.core() + "'s screen");
                 return;
             }
             Handset h = hand(r, p);
@@ -220,7 +266,7 @@ public final class TelephonyScenarios {
             Inventory ann = r.player().entity().getInventory();
             ann.selected = 8;
             ann.setItem(8, ItemStack.EMPTY);
-            r.player().useEmpty(r.abs(READER), Direction.NORTH, false);
+            r.player().useEmpty(r.abs(c.reader()), Direction.NORTH, false);
             int s = Handset.slotOfSim(ann, imsi);
             if (s < 0) {
                 r.fail("taking the card out gave Ann no SIM " + imsi + ": " + r.player().heard());
@@ -236,7 +282,8 @@ public final class TelephonyScenarios {
             to.setItem(20, sim);
             to.setItem(21, new ItemStack(CellularContent.modem(PhyProfile.LTE)));
             r.say("§7  " + p + " has SIM " + imsi + " (number " + number + ") and an LTE Modem");
-        }, "take the SIM out of the reader (empty hand)" + (p.equals(ANN) || !phone ? "" : " and hand it to " + p + " with an LTE Modem"));
+        }, "take the SIM out of the reader (empty hand)" + (p.equals(ANN) || !phone ? "" : " and hand it to " + p + " with an LTE Modem"
+                + " [exception: items handed between players by moving them between inventories, docs/SCENARIO_EXCEPTIONS.md]"));
     }
 
     // ------------------------------------------------------------ helpers for the steps
@@ -277,20 +324,35 @@ public final class TelephonyScenarios {
         for (int round = 0; round < 2; round++) {
             final int n = round;
             clear(b, who);
-            b.mutate(r -> hand(r, who).type(r, "tel calls\n"), who + "'s Terminal: tel calls");
+            b.mutate(r -> {
+                hand(r, who).type(r, "tel calls\n");
+                hand(r, who).typedAt = System.currentTimeMillis();
+            }, who + "'s Terminal: tel calls (again every second until it shows)");
             b.await(r -> {
                 Handset x = hand(r, who);
                 String joined = x.screen(r).replace("\n", " ");
                 Matcher m = VOICE.matcher(joined);
-                if (!joined.contains("active") || !m.find()) return who + "'s screen:\n" + x.screen(r);
-                long in = Long.parseLong(m.group(1)), out = Long.parseLong(m.group(2));
-                if (n == 0) {
-                    if (in == 0 || out == 0) return who + ": no voice yet:\n" + x.screen(r);
-                    x.mark = in;
-                    x.memo = in + "/" + out;
+                long in = -1, out = -1;
+                while (m.find()) {
+                    in = Long.parseLong(m.group(1));
+                    out = Long.parseLong(m.group(2));
+                }
+                String why;
+                if (!joined.contains("active") || in < 0) why = who + "'s screen:\n" + x.screen(r);
+                else if (n == 0 && (in == 0 || out == 0)) why = who + ": no voice yet:\n" + x.screen(r);
+                else if (n == 1 && in <= x.mark) why = who + ": the counter didn't move (" + x.memo + " then " + in + "/" + out + ")";
+                else {
+                    if (n == 0) {
+                        x.mark = in;
+                        x.memo = in + "/" + out;
+                    }
                     return null;
                 }
-                return in > x.mark ? null : who + ": the counter didn't move (" + x.memo + " then " + in + "/" + out + ")";
+                if (System.currentTimeMillis() - x.typedAt > 1_000) {
+                    x.type(r, "tel calls\n");
+                    x.typedAt = System.currentTimeMillis();
+                }
+                return why;
             }, n == 0 ? what : who + ": tel calls again: more voice packets came in", 10_000);
         }
     }
@@ -325,13 +387,15 @@ public final class TelephonyScenarios {
         String[] rows = screen.split("\n", -1);
         StringBuilder joined = new StringBuilder();
         int[] ends = new int[rows.length];
+        // spaces left out: the Terminal wraps at a word, so a space can become a line break
         for (int i = 0; i < rows.length; i++) {
-            joined.append(rows[i]);
+            joined.append(rows[i].replace(" ", ""));
             ends[i] = joined.length();
         }
-        int at = joined.lastIndexOf(line);
+        String want = line.replace(" ", "");
+        int at = joined.lastIndexOf(want);
         if (at < 0) return null;
-        int end = at + line.length(), row = 0;
+        int end = at + want.length(), row = 0;
         while (row < rows.length - 1 && ends[row] < end) row++;
         return String.join("\n", java.util.Arrays.copyOfRange(rows, row + 1, rows.length));
     }
@@ -704,6 +768,8 @@ public final class TelephonyScenarios {
                 "scripts: a Lua one-liner with phone.on_sms waits on Bea's phone; a Python one-liner with phone.sms_send on Ann's sends"
                         + " a text; Lua prints it");
         network(b, List.of(ANN, BEA), List.of());
+        b.note("Bea: Terminal, lua, a one-liner that prints each text phone.on_sms hands it and waits (phone.run); Ann: Terminal,"
+                + " python, phone.sms_send to Bea's number; Lua prints the text and Ann's number. Ctrl+T ends the Lua script");
         openTerminal(b, BEA);
         clear(b, BEA);
         b.mutate(r -> hand(r, BEA).type(r, "lua\n"), "Bea's Terminal: lua");
@@ -739,6 +805,7 @@ public final class TelephonyScenarios {
     static Scenario ivr() {
         var b = start("tel_ivr", "Ann calls 611 on the Phone app's keypad, presses 2 on the in-call keypad, and gets a text with her number");
         network(b, List.of(ANN), List.of());
+        b.note("Ann: Phone, Keypad, 611, Call. The carrier's support line (mrfd's IVR) answers; 1 texts the data used, 2 the number");
         openApp(b, ANN, "Phone", DIALER);
         dialOnKeypad(b, ANN, r -> "611", "611");
         b.await(r -> inCall(r, ANN), "611 answers: Ann is in the call", 15_000);
@@ -759,8 +826,456 @@ public final class TelephonyScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------ tel_interconnect
+
+    static final String DAN = "Dan";
+    static final BlockPos CORE_B = new BlockPos(16, 1, -6), READER_B = CORE_B.west(), SITE_B = FramedScenarios.B;
+    /** The carriers' LAN switch (above the floor between the cores) and IANA's computer (the DNS root, ianad) south of it, its screen to the south. */
+    static final BlockPos LAN_SW = new BlockPos(8, 2, -6), IANA = new BlockPos(8, 1, -4);
+    static final String IANA_IP = "10.0.50.53", PEER_SECRET = "nni-red-blue-7f3a";
+    static final Carrier BLUE = new Carrier("coreB", "siteB", READER_B, "cell-blue", "100.66.2.0/24", "972-555", "10.251.0.0/16", "blue.ecm",
+            "10.0.41.1", "10.0.41.2", "site-b", 4, "10.0.50.2");
+    /** Between the two sites: red's antenna (x 3) points east at them, blue's (x 13) west. */
+    static final Map<String, Vec3> SPOT_TWO = Map.of(ANN, new Vec3(8.5, 0, 2.5), DAN, new Vec3(8.5, 0, -2.5));
+    static final String TEXT_AB = "hello from red", TEXT_BA = "hi back from blue";
+
     static {
-        for (Scenario s : List.of(register(), call(), callAsleep(), sms(), mmsGroup(), scripts(), ivr())) ALL.put(s.name, s);
+        HOME.put(DAN, BLUE);
+    }
+
+    static Scenario.Path backhaulB() {
+        return Scenario.Path.from(CORE_B.below()).go(Direction.SOUTH, 6);
+    }
+
+    /** The root zone: the ecm. TLD delegated to IANA's own server (ianad adds e164.arpa). */
+    static final String ROOT_ZONE = String.join("\n",
+            "$TTL 300",
+            "@        SOA ns.ecm. admin.ecm. 1 60 30 600 30",
+            "@        NS  ns.ecm.",
+            "ecm.     NS  ns.ecm.",
+            "ns.ecm.  A   " + IANA_IP);
+    /** ecm.: the two carriers' SIP domains (their borders on the LAN, A and SRV). */
+    static final String ECM_ZONE = String.join("\n",
+            "$ORIGIN ecm.",
+            "$TTL 300",
+            "@              SOA ns admin 1 60 30 600 30",
+            "@              NS  ns",
+            "ns             A   " + IANA_IP,
+            "red            A   " + RED.lanIp(),
+            "_sip._udp.red  SRV 10 0 5060 red",
+            "blue           A   " + BLUE.lanIp(),
+            "_sip._udp.blue SRV 10 0 5060 blue");
+
+    static Scenario.Builder startInterconnect(String name, String what) {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -8, 24, 0, 6));
+        floor.removeAll(backhaul().blocks());
+        floor.removeAll(backhaulB().blocks());
+        Scenario.Path lanA = Scenario.Path.from(LAN_SW.west()).go(Direction.WEST, 7);
+        Scenario.Path lanB = Scenario.Path.from(LAN_SW.east()).go(Direction.EAST, 7);
+        Scenario.Path lanIana = Scenario.Path.from(LAN_SW.south()).go(Direction.DOWN, 1);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(backhaul().blocks());
+        foot.addAll(backhaulB().blocks());
+        foot.addAll(lanA.blocks());
+        foot.addAll(lanB.blocks());
+        foot.addAll(lanIana.blocks());
+        foot.addAll(FramedScenarios.station(SITE));
+        foot.addAll(FramedScenarios.station(SITE_B));
+        foot.add(READER);
+        foot.add(READER_B);
+        return Scenario.builder(name, what)
+                .asPlayer()
+                .realTime()
+                .host("core", CORE, "-")
+                .host("site", SITE, "-")
+                .host("coreB", CORE_B, "-")
+                .host("siteB", SITE_B, "-")
+                .host("iana", IANA, "-", Direction.SOUTH)
+                .switchNode("sw", LAN_SW)
+                .link("backhaul", "core", Direction.DOWN, "site", Direction.DOWN, backhaul())
+                .link("backhaulB", "coreB", Direction.DOWN, "siteB", Direction.DOWN, backhaulB())
+                .link("lanA", "sw", Direction.WEST, "core", Direction.UP, lanA)
+                .link("lanB", "sw", Direction.EAST, "coreB", Direction.UP, lanB)
+                .link("lanIana", "sw", Direction.SOUTH, "iana", Direction.NORTH, lanIana)
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+                    FramedScenarios.build(r, SITE);
+                    FramedScenarios.build(r, SITE_B);
+                    r.player().place(CardContent.CARD_READER.get(), r.abs(READER), Direction.NORTH,
+                            s -> s.getValue(CardReaderBlock.FACING) == Direction.NORTH);
+                    r.player().place(CardContent.CARD_READER.get(), r.abs(READER_B), Direction.NORTH,
+                            s -> s.getValue(CardReaderBlock.FACING) == Direction.NORTH);
+                }, TelephonyScenarios::cleanup))
+                .note("Setup (done for you): two carriers side by side. cell-red: its core cabled (bottom) to its cell site, a Card"
+                        + " Reader/Writer on the core's east side, the site's Advanced SDR, coax and LTE Sector Antenna pointing east."
+                        + " cell-blue: the same mirrored 16 blocks east, its antenna pointing west, its reader on the core's west side."
+                        + " The cores' tops are cabled to a switch, and so is IANA's computer south of it: the carriers' LAN.");
+    }
+
+    /** Per run, each carrier's ENUM key as IANA printed it (the carrier keeps it for porting in). */
+    private static final Map<ScenarioRun, Map<String, String>> KEYS = Collections.synchronizedMap(new WeakHashMap<>());
+
+    static final Pattern PORT_CODE = Pattern.compile("port-out code for \\+\\d+ is ([0-9a-f]{6}-[0-9a-f]{8})");
+
+    /** {@code domain enum apply} at a carrier's core (its first block: IANA prints the ENUM key once), then {@code cored enum-key}. */
+    static void enumApply(Scenario.Builder b, Carrier c) {
+        b.note(c.core() + ": apply to IANA for block " + c.prefix() + " for " + c.domain() + "; IANA checks the domain resolves,"
+                + " publishes the block's NAPTR and prints the carrier's ENUM key once; cored keeps it (for port-out codes)");
+        b.send(c.core(), "domain --iana http://" + IANA_IP + "/ enum apply " + c.prefix() + " " + c.domain());
+        b.expectOrFail(c.core(), "is held by " + Pattern.quote(c.domain()) + "; its ENUM key is", "IANA grants the block and prints the key", "^domain: ");
+        b.sendFn(c.core(), r -> {
+            Matcher m = Pattern.compile("its ENUM key is ([0-9a-f]{32})").matcher(r.screen(c.core()).replace("\n", ""));
+            String key = null;
+            while (m.find()) key = m.group(1);
+            if (key != null) KEYS.computeIfAbsent(r, k -> new java.util.concurrent.ConcurrentHashMap<>()).put(c.domain(), key);
+            return "cored enum-key " + (key == null ? "(no key on the screen)" : key);
+        }, "cored enum-key <the key>");
+        b.expectOrFail(c.core(), "enum key set", "cored has the carrier's ENUM key", "^cored: ");
+    }
+
+    /** {@code imsd peer add} (the other carrier's domain, its border on the LAN, the shared secret) and the border address. */
+    static void peer(Scenario.Builder b, Carrier c, Carrier other) {
+        b.send(c.core(), "imsd config set public_ip " + c.lanIp());
+        b.expectOrFail(c.core(), "imsd: saved", c.core() + ": imsd's border is its LAN address", "^imsd: (?!saved)");
+        b.send(c.core(), "imsd peer add " + other.domain() + " " + other.lanIp() + " " + PEER_SECRET);
+        b.expectOrFail(c.core(), "imsd: peer " + Pattern.quote(other.domain()) + " added", c.core() + " peers with " + other.domain(), "^imsd: (?!peer)");
+    }
+
+    static Scenario interconnect() {
+        var b = startInterconnect("tel_interconnect",
+                "two carriers (cell-red 214-555 at red.ecm, cell-blue 972-555 at blue.ecm), each with its own core, IMS and site,"
+                        + " cabled through a LAN switch with IANA's DNS root: ENUM blocks from ianad (domain enum apply), imsd peering with a"
+                        + " shared secret; Ann (red) calls Dan (blue), they talk, she texts him and he texts back; control: blue drops the"
+                        + " peer entry, Ann's next call is refused (403, call not allowed); then Dan ports his number to red (cored port-code, cored number ... ported,"
+                        + " domain enum port, cored number release) and Ann's call to it rings him on red");
+        takePhones(b, List.of(ANN, DAN), SPOT_TWO);
+        coreUp(b, RED);
+        coreUp(b, BLUE);
+
+        b.note("The carriers' LAN: the switch's three ports as L2 ports in VLAN 1; the cores' tops and IANA's computer on 10.0.50.0/24");
+        b.send("sw", "switch on").expect("sw", "Switch started", "switch running");
+        b.send("sw", "switch");
+        for (Direction face : new Direction[]{Direction.WEST, Direction.EAST, Direction.SOUTH}) {
+            String p = b.eth("sw", face);
+            b.send("sw", "interface " + p, "no routing");
+            b.expect("sw", "converted to L2", p + " is an L2 port");
+            b.send("sw", "exit");
+        }
+        for (String[] h : new String[][]{{"core", RED.lanIp()}, {"coreB", BLUE.lanIp()}, {"iana", IANA_IP}}) {
+            String eth = b.eth(h[0], h[0].equals("iana") ? Direction.NORTH : Direction.UP);
+            b.send(h[0], "ifconfig " + eth + " " + h[1] + "/24");
+            b.expect(h[0], eth + ": inet " + Pattern.quote(h[1]) + "/24", h[0] + " has " + h[1] + " on the LAN");
+        }
+
+        b.note("IANA's computer: the root zone (ecm. delegated to itself), the ecm. zone with both carriers' domains, ianad's"
+                + " settings; the cores' resolvers point at it");
+        Map<String, Map<String, String>> files = new LinkedHashMap<>();
+        files.put("iana", new java.util.TreeMap<>(Map.of(
+                "/etc/named.conf", "zone . primary /etc/named/root.zone\nzone ecm primary /etc/named/ecm.zone",
+                "/etc/named/root.zone", ROOT_ZONE,
+                "/etc/named/ecm.zone", ECM_ZONE,
+                "/etc/resolv.conf", "nameserver 127.0.0.1",
+                "/etc/ianad.conf", "enum-ns ns.ecm")));
+        files.put("core", Map.of("/etc/resolv.conf", "nameserver " + IANA_IP));
+        files.put("coreB", Map.of("/etc/resolv.conf", "nameserver " + IANA_IP));
+        PlayerKit.typeFiles(b, files);
+        DnsScenarios.startNamed(b, "iana", "zone ecm\\.: loaded serial 1", "IANA's named serves . and ecm.");
+        b.send("iana", "ianad &");
+        b.expect("iana", "number block applications on port 80", "ianad takes applications (it adds e164.arpa to named)");
+        b.send("core", "dig -t SRV _sip._udp.blue.ecm");
+        b.expect("core", "_sip\\._udp\\.blue\\.ecm\\.\\s+\\d+ IN SRV\\s+10 0 5060 blue\\.ecm\\.", "red's core resolves blue's SIP border");
+
+        enumApply(b, RED);
+        enumApply(b, BLUE);
+        b.send("core", "dig -t NAPTR " + enumName(BLUE.prefix()));
+        b.expect("core", "NAPTR.*sip:.*@blue\\.ecm", "ENUM: blue's block points at blue.ecm (dig -t NAPTR)");
+
+        b.note("Peering: each core lists the other carrier (its domain, its border on the LAN, the same secret), then the IMS servers start");
+        peer(b, RED, BLUE);
+        peer(b, BLUE, RED);
+        imsUp(b, RED);
+        imsUp(b, BLUE);
+        siteUp(b, RED);
+        siteUp(b, BLUE);
+        phonesOn(b, List.of(ANN, DAN), List.of(), SPOT_TWO);
+
+        b.note("Ann (red) calls Dan (blue): 10 digits, another area code; red's imsd finds blue.ecm by ENUM and sends the call to its border");
+        openTerminal(b, ANN);
+        run(b, ANN, r -> "tel dial " + hand(r, DAN).number.substring(2), "tel dial <Dan's 10 digits>", "tel: calling", "^tel: (?!calling)",
+                "Ann: tel dial Dan", 10_000);
+        b.await(r -> {
+            Handset h = hand(r, DAN);
+            PhoneUi u = h.ui(r);
+            String w = h.shows(r, "Phone", "Incoming call");
+            return w == null && u != null && u.ringingWho() != null ? null
+                    : (w == null ? "Dan's phone doesn't ring" : w) + "\ntelephonyd.log:\n" + h.log(r, "var/log/telephonyd.log", 600);
+        }, "Dan's phone rings: a call from the other carrier", 20_000);
+        b.await(r -> hand(r, DAN).shows(r, "Phone", digits(hand(r, ANN).number).substring(4, 7)), "it shows Ann's number", 3_000);
+        b.await(r -> hand(r, DAN).tap(r, "Phone", "Answer"), "Dan taps Answer", 5_000);
+        b.await(r -> inCall(r, DAN), "Dan is in the call", 10_000);
+        voiceFlows(b, ANN, "tel calls: the call to Dan is active, voice both ways through both carriers' relays");
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.await(r -> hand(r, DAN).shows(r, "Phone", "Call ended"), "Dan's Phone: Call ended", 10_000);
+        b.mutate(r -> hand(r, ANN).phoneToOffHand(r), "Ann: the phone into her off hand (still awake), to type at the cores too");
+        b.send("core", "cat /var/log/cdr/imsd.cdr");
+        b.expect("core", "to=" + Pattern.quote(BLUE.prefix()) + "\\d{4}.*result=answered", "red's call record: to blue's number, answered");
+
+        b.note("Texts both ways: Ann's SMSC hands the text to blue's border, blue's SMSC delivers it");
+        run(b, ANN, r -> "sms send " + hand(r, DAN).number.substring(2) + " " + TEXT_AB, "sms send <Dan> " + TEXT_AB, "sms: sending to",
+                "^sms: (?!sending)", "Ann: sms send", 10_000);
+        b.await(r -> notified(r, DAN, MESSAGES, TEXT_AB), "Dan gets Ann's text", 30_000);
+        openTerminal(b, DAN);
+        run(b, DAN, r -> "sms send " + hand(r, ANN).number.substring(2) + " " + TEXT_BA, "sms send <Ann> " + TEXT_BA, "sms: sending to",
+                "^sms: (?!sending)", "Dan: sms send", 10_000);
+        b.await(r -> notified(r, ANN, MESSAGES, TEXT_BA), "Ann gets Dan's reply", 30_000);
+
+        b.note("Control: blue removes red from its peers and restarts imsd; Ann's next call reaches blue's border, which refuses it (403)");
+        b.send("coreB", "imsd peer remove red.ecm");
+        b.expect("coreB", "imsd: peer red\\.ecm removed", "blue drops the peer entry");
+        b.send("coreB", "imsd stop");
+        b.expect("coreB", "stopping", "blue's imsd stops");
+        b.waitMs(1_500, "it exits");
+        b.send("coreB", "imsd start &");
+        b.expectOrFail("coreB", "imsd: blue\\.ecm on .*0 peer\\(s\\)", "blue's imsd runs again, with no peers", "^imsd: (the HSS|can't|bind|no )");
+        run(b, ANN, r -> "tel dial " + hand(r, DAN).number.substring(2), "tel dial <Dan>", "tel: calling", "^tel: (?!calling)", "Ann dials Dan again", 10_000);
+        run(b, ANN, "tel log 1", "out .*call not allowed", null, "Ann's tel log: call not allowed (blue answered 403)", 20_000);
+        b.send("coreB", "imsd log 5");
+        b.expect("coreB", "INVITE from unlisted peer .*: 403", "blue's imsd log: the INVITE from an unlisted peer got 403");
+        port(b);
+        b.timeLimit(150_000);
+        return b.build();
+    }
+
+    /**
+     * Dan moves his number from blue to red: blue gives him a port-out code ({@code cored port-code}), red writes him a
+     * SIM and gives it the number ({@code cored number ... ported}), red asks IANA to repoint the number
+     * ({@code domain enum port} with the code and red's key), blue releases it; Dan swaps SIMs, his phone attaches to
+     * red and registers with his old number, and Ann's call to that number now rings him on red.
+     */
+    static void port(Scenario.Builder b) {
+        b.note("Porting: Dan takes his number from blue to red");
+        b.sendFn("coreB", r -> "cored port-code " + hand(r, DAN).number, "cored port-code <Dan's number>");
+        b.expectOrFail("coreB", "port-out code for " + Pattern.quote(BLUE.prefix()) + "\\d{4} is [0-9a-f]{6}-[0-9a-f]{8}",
+                "blue prints Dan's port-out code", "^cored: (?!port-out)");
+        b.mutate(r -> {
+            Matcher m = PORT_CODE.matcher(r.screen("coreB").replace("\n", ""));
+            String code = null;
+            while (m.find()) code = m.group(1);
+            Handset d = hand(r, DAN);
+            d.memo = code == null ? "" : code;
+            d.typed = d.number; // the number that moves
+        }, "Dan notes the code (and his number)");
+        b.note("Dan takes his blue SIM out; Ann writes him a red SIM and red gives it Dan's number (ported in)");
+        b.mutate(r -> hand(r, DAN).simOut(r), "Dan: slot screen, the blue SIM out");
+        writeSim(b, RED, DAN, true);
+        b.mutate(r -> hand(r, DAN).number = hand(r, DAN).typed, "-");
+        b.sendFn("core", r -> "cored number " + hand(r, DAN).imsi + " " + hand(r, DAN).number + " ported", "cored number <the new SIM> <Dan's number> ported");
+        b.expectOrFail("core", "number " + Pattern.quote(BLUE.prefix()) + "\\d{4} \\(ported in\\)", "red gives the new SIM Dan's number", "^cored: ");
+        b.sendFn("core", r -> "domain --iana http://" + IANA_IP + "/ enum port " + hand(r, DAN).number + " " + RED.domain() + " " + hand(r, DAN).memo
+                + " " + KEYS.getOrDefault(r, Map.of()).getOrDefault(RED.domain(), "-"), "domain enum port <Dan's number> red.ecm <code> <red's key>");
+        b.expectOrFail("core", "is ported to red\\.ecm \\(from blue\\.ecm\\)", "IANA points Dan's number at red.ecm", "^domain: ");
+        b.sendFn("coreB", r -> "cored number release " + hand(r, DAN).number, "cored number release <Dan's number>");
+        b.expectOrFail("coreB", "released " + Pattern.quote(BLUE.prefix()), "blue releases the number", "^cored: ");
+        b.sendFn("core", r -> "dig -t NAPTR " + enumName(hand(r, DAN).number), "dig -t NAPTR <Dan's number's name>");
+        b.expect("core", "NAPTR.*sip:.*@red\\.ecm", "ENUM: Dan's number now points at red.ecm (a record of its own over the block's)");
+        b.mutate(r -> hand(r, DAN).simIn(r), "Dan: the red SIM in");
+        b.await(r -> hand(r, DAN).statusHas(r, "\ncarrier " + RED.name() + "\n"), "Dan's phone attaches to red", 30_000);
+        b.await(r -> volte(r, DAN), "Dan's phone registers on red with his old number", 30_000);
+        b.note("Ann calls the number as before: red finds it is its own now (ported in) and rings Dan");
+        run(b, ANN, r -> "tel dial " + hand(r, DAN).number.substring(2), "tel dial <Dan>", "tel: calling", "^tel: (?!calling)", "Ann dials Dan's number", 10_000);
+        b.await(r -> hand(r, DAN).shows(r, "Phone", "Incoming call"), "Dan's phone rings, on red", 20_000);
+        b.await(r -> hand(r, DAN).tap(r, "Phone", "Answer"), "Dan taps Answer", 5_000);
+        b.await(r -> inCall(r, DAN), "Dan is in the call", 10_000);
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.send("core", "imsd status");
+        b.expect("core", "reg " + Pattern.quote(BLUE.prefix()) + "\\d{4} ", "red's imsd: the ported number is registered on red (the call stayed inside red)");
+    }
+
+    /** {@code +1972555} -> {@code 5.5.5.2.7.9.1.e164.arpa} (the block's ENUM name). */
+    static String enumName(String prefix) {
+        StringBuilder s = new StringBuilder();
+        String d = prefix.replace("+", "");
+        for (int i = d.length() - 1; i >= 0; i--) s.append(d.charAt(i)).append('.');
+        return s + "e164.arpa";
+    }
+
+    // ------------------------------------------------------------ tel_tech_village
+
+    /** The display phones of this village's Phone Store (their provisioned computers). */
+    static java.util.Set<java.util.UUID> displayPhones(ScenarioRun r) {
+        var s = CellVillageScenarios.st(r);
+        var d = com.example.evanscomputermod.computer.WorldNetwork.get(r.level());
+        java.util.Set<java.util.UUID> ids = new java.util.HashSet<>();
+        for (int slot = 1; slot <= com.example.evanscomputermod.computer.CellPlan.PHONES; slot++) ids.add(d.identity(r.level(), s.a, "store.phone" + slot));
+        return ids;
+    }
+
+    static int displayPhonesHeld(ScenarioRun r) {
+        var ids = displayPhones(r);
+        Inventory inv = r.player().entity().getInventory();
+        int n = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++)
+            if (inv.getItem(i).is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())
+                    && ids.contains(com.example.evanscomputermod.phone.PhoneItemData.id(inv.getItem(i)))) n++;
+        return n;
+    }
+
+    /** Hit display frames (survival: the phone drops) and pick the phones up until Ann holds two of the store's phones. */
+    static String takeTwoDisplayPhones(ScenarioRun r) {
+        if (displayPhonesHeld(r) >= 2) return null;
+        var s = CellVillageScenarios.st(r);
+        BlockPos table = com.example.evanscomputermod.testing.TechCellChecks.store(s.va, com.example.evanscomputermod.testing.TechCellChecks.TABLE);
+        CellVillageScenarios.follow(r, s, Vec3.atCenterOf(table));
+        var box = new net.minecraft.world.phys.AABB(table).inflate(5, 3, 5);
+        boolean dropped = !r.level().getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box,
+                e -> e.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())).isEmpty();
+        if (!dropped) {
+            var frame = r.level().getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class, box).stream()
+                    .filter(f -> f.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get()))
+                    .min(java.util.Comparator.comparingDouble(f -> f.distanceToSqr(Vec3.atCenterOf(table)))).orElse(null);
+            if (frame == null) return "no phone left on the display table";
+            Vec3 eye = frame.position().add(0, 1.5, 0).add(Vec3.atLowerCornerOf(s.va.datacenter().getRotation().rotate(Direction.SOUTH).getNormal()).scale(1.5));
+            r.player().lookFrom(eye, frame.position());
+            var p = r.player().entity();
+            p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+            try {
+                p.attack(frame);
+            } finally {
+                p.setGameMode(net.minecraft.world.level.GameType.CREATIVE);
+            }
+            r.say("§7  hit the display frame at " + frame.blockPosition().toShortString() + ": the phone drops");
+            return "picking it up";
+        }
+        String why = r.player().pickUp(table.above(), com.example.evanscomputermod.phone.PhoneContent.EPHONE.get());
+        return why != null ? why : displayPhonesHeld(r) + " display phone(s) held";
+    }
+
+    /**
+     * Ann holds one display phone and uses it (it keeps the computer generation provisioned for it); the other goes to
+     * Bea [exception: items handed between players], who holds and uses hers. Both stand in the store.
+     */
+    static void holdDisplayPhones(ScenarioRun r) {
+        var ids = displayPhones(r);
+        Inventory inv = r.player().entity().getInventory();
+        List<Integer> slots = new ArrayList<>();
+        for (int i = 0; i < inv.getContainerSize(); i++)
+            if (ids.contains(com.example.evanscomputermod.phone.PhoneItemData.id(inv.getItem(i)))) slots.add(i);
+        if (slots.size() < 2) {
+            r.fail("Ann holds " + slots.size() + " display phones");
+            return;
+        }
+        com.example.evanscomputermod.phone.PhoneConfig.override("battery.enabled", false);
+        Handset a = hand(r, ANN), bea = hand(r, BEA);
+        ItemStack first = inv.getItem(slots.get(0)), second = inv.getItem(slots.get(1));
+        inv.setItem(slots.get(0), ItemStack.EMPTY);
+        inv.setItem(slots.get(1), ItemStack.EMPTY);
+        inv.setItem(0, first);
+        inv.selected = 0;
+        com.example.evanscomputermod.phone.PhoneServer.track(r.player().entity());
+        r.player().useHeld(false);
+        a.phone = com.example.evanscomputermod.phone.PhoneItemData.id(inv.getItem(0));
+        PhoneScenarios.st(r).phone = a.phone;
+        bea.standAt(r, new Vec3(1.5, 0, 0.5));
+        Inventory bi = bea.inv(r);
+        bi.setItem(0, second);
+        bi.selected = 0;
+        com.example.evanscomputermod.phone.PhoneServer.track(bea.other.entity());
+        bea.other.useHeld(false);
+        bea.phone = com.example.evanscomputermod.phone.PhoneItemData.id(bi.getItem(0));
+        if (a.phone == null || bea.phone == null || !ids.contains(a.phone) || !ids.contains(bea.phone)) {
+            r.fail("using the display phones did not keep their computers: " + a.phone + ", " + bea.phone);
+            return;
+        }
+        r.say("§7  Ann holds display phone " + a.phone.toString().substring(0, 8) + ", Bea " + bea.phone.toString().substring(0, 8));
+    }
+
+    static final Pattern STATUS_NUMBER = Pattern.compile("\nnumber (\\+\\d{11})\n");
+
+    /** Null once {@code who}'s phone is registered (VoLTE) with a number of the store's lines (NPA-555-0100 to 0103); keeps the number. */
+    static String storeLine(ScenarioRun r, String who) {
+        Handset h = hand(r, who);
+        String st = h.status(r);
+        Matcher m = STATUS_NUMBER.matcher(st);
+        if (!st.contains("\nvolte 1\n") || !m.find()) return who + "'s uictl phone:\n" + st + "\ntelephonyd.log:\n" + h.log(r, "var/log/telephonyd.log", 800);
+        h.number = m.group(1);
+        if (!h.number.matches("\\+1\\d{3}555010[0-3]")) {
+            r.fail(who + "'s store phone has number " + h.number + ", not one of the display lines 0100-0103");
+            return null;
+        }
+        return null;
+    }
+
+    static final String VILLAGE_TEXT = "meet at the data center";
+
+    static Scenario techVillage() {
+        var b = Scenario.builder("tel_tech_village",
+                        "telephony in a Tech Village: two phones from a Phone Store's display (numbered lines of the village's block) attach"
+                                + " and register with the core's IMS; Ann calls Bea and they talk, she texts her, and she calls the carrier's 611"
+                                + " (press 2: a text with her number)")
+                .asPlayer()
+                .realTime()
+                .inWorld()
+                .timeLimit(240_000);
+        b.note("Stand in a Tech Village's Phone Store. Built by the world: the store's cell site, the display phones (each with an LTE"
+                + " Modem and a SIM numbered from the village's block: lines 0100-0103), and the carrier core in one village's data center,"
+                + " which runs imsd, smscd, mmscd and mrfd beside cored (services.cfg). Bea is a second player"
+                + " [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]");
+        b.await(r -> CellVillageScenarios.st(r).va.datacenter() == null ? "no Phone Store in village " + CellVillageScenarios.st(r).a : null,
+                "find this village's Phone Store", 5_000);
+        b.mutate(r -> {
+            Inventory inv = r.player().entity().getInventory();
+            for (int i = 0; i < inv.getContainerSize(); i++)
+                if (inv.getItem(i).is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())) inv.setItem(i, ItemStack.EMPTY);
+        }, "Ann puts away the phones she carries (creative inventory)");
+        b.note("Take two phones from the display table: hit their item frames, pick them up; hand one to Bea");
+        b.await(TelephonyScenarios::takeTwoDisplayPhones, "two display phones are in Ann's inventory", 20_000);
+        b.mutate(TelephonyScenarios::holdDisplayPhones, "Ann holds one and uses it; Bea gets the other, holds it and uses it"
+                + " [exception: items handed between players by moving them between inventories, docs/SCENARIO_EXCEPTIONS.md]");
+        for (String p : List.of(ANN, BEA)) b.await(r -> hand(r, p).guiBooted(r), p + "'s phone has booted into its shell", 60_000);
+        for (String p : List.of(ANN, BEA)) {
+            b.await(r -> {
+                PhoneUi u = hand(r, p).ui(r);
+                return u != null && u.celldPid() > 0 && u.telephonydPid() > 0 ? null : p + ": events " + (u == null ? "-" : u.events());
+            }, p + "'s phone starts celld and telephonyd (its modem and SIM are in)", 20_000);
+            b.await(r -> hand(r, p).statusHas(r, "\ncarrier " + CellVillageScenarios.plan(r).carrier + "\n"), p + "'s phone attaches to the store's cell site", 30_000);
+            b.await(r -> storeLine(r, p), p + "'s phone registers with the core's IMS: VoLTE and its store line's number", 40_000);
+        }
+        b.note("Ann calls Bea (7 digits: the same area code)");
+        openTerminal(b, ANN);
+        run(b, ANN, r -> "tel dial " + local(hand(r, BEA).number), "tel dial <Bea>", "tel: calling", "^tel: (?!calling)", "Ann: tel dial Bea", 10_000);
+        b.await(r -> hand(r, BEA).shows(r, "Phone", "Incoming call"), "Bea's phone rings: the incoming-call screen", 25_000);
+        b.await(r -> hand(r, BEA).tap(r, "Phone", "Answer"), "Bea taps Answer", 5_000);
+        b.await(r -> inCall(r, BEA), "Bea is in the call", 10_000);
+        voiceFlows(b, ANN, "tel calls: the call is active, voice both ways through the core's relay");
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.await(r -> hand(r, BEA).shows(r, "Phone", "Call ended"), "Bea's Phone: Call ended", 10_000);
+        b.note("Ann texts Bea");
+        run(b, ANN, r -> "sms send " + local(hand(r, BEA).number) + " " + VILLAGE_TEXT, "sms send <Bea> " + VILLAGE_TEXT, "sms: sending to",
+                "^sms: (?!sending)", "Ann: sms send", 10_000);
+        b.await(r -> notified(r, BEA, MESSAGES, VILLAGE_TEXT), "Bea gets the text (a notification)", 30_000);
+        b.note("Ann calls 611 (the store's sign says so), presses 2: the support line texts her number");
+        run(b, ANN, "tel dial 611", "tel: calling", "^tel: (?!calling)", "Ann: tel dial 611", 10_000);
+        run(b, ANN, "tel calls", "active", null, "611 answers", 20_000);
+        b.waitMs(1_500, "the support line's greeting");
+        run(b, ANN, "tel dtmf 2", PROMPT, "^tel: ", "Ann presses 2 (tel dtmf 2)", 10_000);
+        b.await(r -> {
+            String why = notified(r, ANN, MESSAGES, "your number is");
+            if (why != null) return why;
+            var n = hand(r, ANN).notifications(r).stream().filter(x -> x.body().contains("your number is")).findFirst().orElseThrow();
+            return digits(n.body()).contains(digits(hand(r, ANN).number).substring(1)) ? null : "the text says " + n.body();
+        }, "a text from the support line: your number is Ann's", 30_000);
+        run(b, ANN, "tel hangup", PROMPT, "^tel: ", "Ann hangs up", 10_000);
+        b.mutate(r -> {
+            Inventory inv = r.player().entity().getInventory();
+            for (int i = 0; i < inv.getContainerSize(); i++)
+                if (inv.getItem(i).is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())) inv.setItem(i, ItemStack.EMPTY);
+            hand(r, BEA).forget(r);
+            CellVillageScenarios.release(r);
+        }, "Ann and Bea put their phones away (the ticking area around the player ends)");
+        return b.build();
+    }
+
+    static {
+        for (Scenario s : List.of(register(), call(), callAsleep(), sms(), mmsGroup(), scripts(), ivr(), interconnect(), techVillage())) ALL.put(s.name, s);
     }
 }
 //?}
