@@ -563,7 +563,19 @@ public class ProcessManager {
         WasmInstance instance = null;
 
         try {
-            WasmModuleHandle module = runtime.compile(wasmBytes);
+            WasmModuleHandle module;
+            try {
+                module = runtime.compile(wasmBytes);
+            } catch (WasmTrap e) {
+                // A program the bound runtime can't load runs on Chicory instead.
+                WasmRuntime fallback = e.kind() == WasmTrap.Kind.LINK_ERROR ? WasmManager.fallbackRuntime() : null;
+                if (fallback == null) throw e;
+                EvansComputerMod.LOGGER.info("WASI PID {} ({}): {} can't load it ({}), running it on {}",
+                        pid, argv.length > 0 ? argv[0] : "?", runtime.providerName(), e.getMessage(),
+                        fallback.providerName());
+                runtime = fallback;
+                module = runtime.compile(wasmBytes);
+            }
 
             // Build the import list. Handlers reference state.instance for
             // memory access; we set state.instance below before any host

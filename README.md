@@ -458,6 +458,8 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 | `echo` | `echo <text>` | Print text |
 | `python` | `python` | Start the Python REPL |
 | `python` | `python <file>` | Run a Python script |
+| `lua` | `lua` | Start the Lua 5.2 REPL |
+| `lua` | `lua <file> [args]` | Run a Lua script |
 | `ifconfig` | `ifconfig` | Show all network interfaces |
 | `ifconfig` | `ifconfig eth0 10.0.0.1/24` | Configure interface with CIDR |
 | `ifconfig` | `ifconfig eth0 up/down` | Bring interface up/down |
@@ -1189,6 +1191,33 @@ Each computer has a MAC address (6 bytes, derived from its UUID) and an IPv4 add
 
 ---
 
+## Lua
+
+The terminal also runs Lua 5.2 (PUC-Rio Lua, the version ComputerCraft programs are written for, through [mlua](https://github.com/mlua-rs/mlua)). Start it with `lua` for an interactive REPL, or `lua script.lua [args]` to run a file; the arguments are in `arg` (and `...`).
+
+```
+> lua
+Lua 5.2 (PUC-Rio, via mlua)
+> 6 * 7
+42
+> for i = 1, 3 do
+>> print(i)
+>> end
+```
+
+Lua's own libraries work as usual (`string`, `table`, `math`, `coroutine`, `bit32`, `io` and `os` on the computer's files); `unpack` and `loadstring` are there for older scripts. Two modules, available as globals or through `require`:
+
+- `shell`: the same functions as Python's [`terminal` module](#terminal-module): `write`, `println`, `clear`, `set_cursor`, `get_width`, `get_height`, `sleep`, `input`, `read_file`, `write_file`, `file_exists`, `delete_file`, `file_size`, `list_files` (a list), redstone with `set_redstone`, `get_redstone`, `get_all_redstone` and the sides `shell.DOWN` .. `shell.RIGHT`.
+- `peripheral`: `list()` (a list of `{name=, type=}`), `methods(name)` (type and method names), `call(name, method, ...)`, `wrap(name)` (a table with one function per method) and `wait_event([filter], [timeout_s])`. A peripheral's error is raised as a Lua error.
+
+```lua
+local speaker = peripheral.wrap("left")
+print(speaker.type)
+for side = shell.DOWN, shell.RIGHT do shell.set_redstone(side, 15) end
+```
+
+Try it with `/ecm scenario spawn lua_basics` (1.21.1). Lua errors use WASM exception handling, which the Wasmtime sidecar's engine doesn't have: with the sidecar installed, `lua` runs on the built-in Chicory runtime.
+
 ## Networking — Technical Details
 
 ### Cables, faces and segments
@@ -1624,6 +1653,7 @@ public class DroneEntity extends Entity implements IComputerHost {
 
 - Java 21
 - Rust toolchain with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) for `lua` (Lua's C sources): unpack it and set `WASI_SDK_PATH`, or put it in `/opt/wasi-sdk`, `~/wasi-sdk` or `C:\wasi-sdk`. Without it `scripts/stage-wasm.sh` skips `lua` with a warning.
 - Gradle (wrapper included)
 
 ### Build

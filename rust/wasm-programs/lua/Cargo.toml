@@ -1,0 +1,15 @@
+[package]
+name = "lua"
+version = "0.1.0"
+edition = "2021"
+
+# Lua 5.2 (PUC-Rio C sources, built by mlua's `vendored` feature). Building it for
+# wasm32-wasip1 needs wasi-sdk: set WASI_SDK_PATH (see build.rs and scripts/stage-wasm.sh).
+[[bin]]
+name = "lua"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+mlua = { version = "0.12", features = ["lua52", "vendored"] }
