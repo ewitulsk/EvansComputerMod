@@ -92,6 +92,11 @@ PROGRAMS
     Ctrl+T
         Always stops the foreground program and returns to the prompt.
 
+    Esc
+        A key like any other: programs get it (edit uses it to leave a
+        question), and no program exits on it. At the Terminal block,
+        Shift+Esc closes the screen.
+
 COPY AND PASTE
     At the Terminal block, drag with the mouse to select text (double
     click selects a word, triple click a line). Ctrl+C or Ctrl+Shift+C

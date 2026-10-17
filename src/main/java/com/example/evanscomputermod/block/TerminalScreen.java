@@ -758,9 +758,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         sendRawKey(keyCode, modifiers, true);
         altTyped = false;
 
-        // Escape closes the screen.
+        // Esc is a key for the computer (programs never exit on it: Ctrl+C
+        // does that); Shift+Esc closes the screen.
         if (keyCode == 256) {
-            this.onClose();
+            if (shift) this.onClose();
+            else sendInput("\u001b");
             return true;
         }
 
@@ -1398,6 +1400,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             gfxTexture = null;
         }
         super.onClose();
+    }
+
+    /** Esc goes to the computer; Shift+Esc closes the screen (see handleKeyPressed). */
+    @Override
+    public boolean shouldCloseOnEsc() {
+        return false;
     }
 
     @Override

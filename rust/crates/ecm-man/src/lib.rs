@@ -474,7 +474,8 @@ impl Pager {
         }
         let max = self.max_top(rows);
         match k {
-            Key::Char(b'q') | Key::Char(b'Q') | Key::CtrlC | Key::Escape => return Action::Quit,
+            // Esc never quits (Ctrl+C or q does): it only cancels a search being typed.
+            Key::Char(b'q') | Key::Char(b'Q') | Key::CtrlC => return Action::Quit,
             Key::Char(b' ') | Key::Char(b'f') | Key::PageDown => self.top = (self.top + rows).min(max),
             Key::Char(b'b') | Key::PageUp => self.top = self.top.saturating_sub(rows),
             Key::Char(b'd') => self.top = (self.top + rows / 2).min(max),
@@ -543,7 +544,7 @@ impl Pager {
 /// The pager's own help screen (h).
 pub const PAGER_HELP: &str = "\
 Pager keys (any key returns)
-  q  Esc  Ctrl+C       quit
+  q  Ctrl+C            quit
   Space  f  PgDn       next page
   b  PgUp              previous page
   Enter  j  Down       one line down

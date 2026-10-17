@@ -14,7 +14,7 @@ DESCRIPTION
     wrap onto the next row.
 
 KEYS
-      q  Esc  Ctrl+C       quit
+      q  Ctrl+C            quit
       Space  f  PgDn       next page
       b  PgUp              previous page
       Enter  j  Down       one line down

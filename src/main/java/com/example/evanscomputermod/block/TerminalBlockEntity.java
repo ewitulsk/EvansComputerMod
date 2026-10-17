@@ -271,7 +271,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     @Override
     public void bell() {
-        if (level != null && !level.isClientSide) {
+        if (level instanceof net.minecraft.server.level.ServerLevel) {
             level.playSound(null, worldPosition, net.minecraft.sounds.SoundEvents.NOTE_BLOCK_BELL.value(),
                     net.minecraft.sounds.SoundSource.BLOCKS, 0.6f, 1.5f);
         }

@@ -131,6 +131,8 @@ fn pager_moves_searches_and_quits() {
         p.key(k, h);
     }
     assert!(p.draw(80, h).contains("Pattern not found: nothing"));
+    assert_eq!(p.key(Key::Escape, h), Action::Redraw, "Esc doesn't quit");
+    assert_eq!(p.key(Key::CtrlC, h), Action::Quit);
     assert_eq!(p.key(Key::Char(b'q'), h), Action::Quit);
     let mut r = KeyReader::default();
     assert_eq!(r.feed(b"\x1b"), vec![Key::Escape]);

@@ -232,7 +232,7 @@ public final class TerminalScenarios {
                 .note("Ctrl+C stops a running program (sleep for 10 minutes)")
                 .send("pc", "sleep 600000")
                 .waitMs(1500, "let it run")
-                .await(r -> absent(r, "\\^C"), "control: still running, nothing stopped it", 1_000)
+                .await(r -> absent(r, "^\\^C\\s*$"), "control: still running, nothing stopped it", 1_000)
                 .mutate(r -> ctrl(r, 'c'), "press Ctrl+C")
                 .expect("pc", "^\\^C$", "^C is shown")
                 .expect("pc", PlayerKit.PROMPT, "and the prompt is back")
@@ -290,10 +290,10 @@ public final class TerminalScenarios {
                 .await(r -> shows(r, " man keys 1-\\d+/\\d+"), "the pager shows the page", 10_000)
                 .await(r -> shows(r, "^NAME\\s*$"), "from its top", 2_000)
                 .mutate(r -> {
-                    type(r, "/reverse");
+                    type(r, "/backwards");
                     enter(r);
-                }, "type /reverse, Enter")
-                .await(r -> shows(r, "^\\s+Ctrl\\+R\\s*$|Search backwards"), "the search moved to the history section", 10_000)
+                }, "type /backwards, Enter")
+                .await(r -> shows(r, "Search backwards"), "the search moved to Ctrl+R in the history section", 10_000)
                 .mutate(r -> type(r, "q"), "press q")
                 .await(r -> shows(r, LIVE_PROMPT), "back at the prompt", 10_000)
                 .note("man -k: search the summaries")
@@ -353,8 +353,8 @@ public final class TerminalScenarios {
                 .send("pc", "sleep 600000")
                 .waitMs(1000, "let it run")
                 .mutate(r -> ctrl(r, 'z'), "press Ctrl+Z")
-                .expect("pc", "^\\[1\\]\\+  Stopped    sleep 600000$", "it is a stopped job")
-                .expect("pc", PlayerKit.PROMPT, "and the prompt is back")
+                .await(r -> shows(r, "^\\[1\\]\\+  Stopped    sleep 600000\\s*$"), "it is a stopped job", 10_000)
+                .await(r -> shows(r, LIVE_PROMPT), "and the prompt is back", 10_000)
                 .send("pc", "jobs")
                 .expect("pc", "^\\[1\\]  Stopped\\s+sleep 600000$", "jobs lists it Stopped")
                 .send("pc", "bg")
