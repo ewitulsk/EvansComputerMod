@@ -3073,9 +3073,12 @@ public class ComputerInstance implements AutoCloseable {
         IComputerHost h = attachedHost();
         var wa = h == null ? null : h.getWorldAccess();
         var level = wa == null ? null : wa.getLevel();
-        if (level != null) return level.getDayTime();
-        if (h != null && h.getServer() != null) return h.getServer().overworld().getDayTime();
-        return null;
+        if (level == null && h != null && h.getServer() != null) level = h.getServer().overworld();
+        if (level == null) return null;
+        //? if <=1.21.1 {
+        return level.getDayTime();
+        //?} else
+        /*return level.getOverworldClockTime();*/
     }
 
     /** This computer's number in its world ({@link ComputerNumbers}), or -1. */
