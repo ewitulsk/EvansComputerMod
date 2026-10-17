@@ -5,7 +5,7 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
  * Each player's own microphone choices ({@code config/evanscomputermod-voice-client.toml},
- * also under Mods → Evans Computer Mod → Config). The microphone is off until
+ * shown in Options > Music & Sounds and under Mods > Evans Computer Mod > Config). The microphone is off until
  * the player turns it on here; it is never opened while it is off.
  */
 public final class VoiceClientConfig {
@@ -24,11 +24,12 @@ public final class VoiceClientConfig {
     public static final ModConfigSpec.IntValue ACTIVATION_DB;
     public static final ModConfigSpec.ConfigValue<String> DEVICE;
     public static final ModConfigSpec.BooleanValue SHOW_INDICATOR;
+    public static final ModConfigSpec.IntValue INPUT_VOLUME;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
         ENABLED = b.comment("Microphone input: let Evans Computer Mod hear you through your microphone (Microphone",
-                        "blocks, ePhone microphones, handheld radios' push-to-talk). Off: your microphone is never opened.")
+                        "blocks, ePhone microphones, Walkie-Talkies). Off: your microphone is never opened.")
                 .define("microphoneInput", false);
         MODE = b.comment("PUSH_TO_TALK: you are heard only while you hold the Talk key.",
                         "VOICE_ACTIVATION: you are heard when you speak, while a microphone near you is recording.",
@@ -42,6 +43,8 @@ public final class VoiceClientConfig {
                 .define("device", "");
         SHOW_INDICATOR = b.comment("Show a microphone indicator on the HUD while your voice is being sent.")
                 .define("showIndicator", true);
+        INPUT_VOLUME = b.comment("Input volume, percent: your microphone is amplified by this much before it is sent (100 = as captured).")
+                .defineInRange("inputVolume", 100, 0, 200);
         SPEC = b.build();
     }
 
@@ -76,6 +79,14 @@ public final class VoiceClientConfig {
             return SPEC.isLoaded() ? DEVICE.get() : "";
         } catch (RuntimeException e) {
             return "";
+        }
+    }
+
+    public static int inputVolume() {
+        try {
+            return SPEC.isLoaded() ? INPUT_VOLUME.get() : 100;
+        } catch (RuntimeException e) {
+            return 100;
         }
     }
 

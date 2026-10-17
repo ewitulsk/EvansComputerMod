@@ -190,6 +190,27 @@ class MicAudioTest {
     }
 
     @Test
+    void aQuietVoiceStillModulatesFully() {
+        // A voice at -30 dBFS (a far-off or quiet microphone): the mic ALC brings it up to full deviation.
+        VoiceModulator mod = new VoiceModulator(VoiceModulator.Mode.FM, 24000, 48000, 5000);
+        HandheldDemod demod = new HandheldDemod();
+        int n = 48000;
+        float[] audio = new float[n];
+        for (int i = 0; i < n; i++) audio[i] = (float) (0.0316 * Math.sin(2 * Math.PI * 800 * i / 24000.0));
+        float[] out = demod.fm(mod.modulate(audio), 2 * n, 2, 48000, 5000);
+        double e = 0;
+        for (int i = n / 2; i < n; i++) e += out[i] * out[i];
+        double rms = Math.sqrt(e / (n / 2.0));
+        assertTrue(rms > 0.25, "a -30 dBFS voice comes out at a normal level, rms " + rms);
+        // Silence with only capsule hiss isn't pumped up to full level.
+        VoiceModulator.Alc alc = new VoiceModulator.Alc(24000);
+        java.util.Random rnd = new java.util.Random(1);
+        double peak = 0;
+        for (int i = 0; i < 48000; i++) peak = Math.max(peak, Math.abs(alc.step(rnd.nextGaussian() * 1.8e-4)));
+        assertTrue(peak < 0.05, "hiss stays quiet, peak " + peak);
+    }
+
+    @Test
     void amVoiceSurvivesTheHandheldReceiver() {
         VoiceModulator mod = new VoiceModulator(VoiceModulator.Mode.AM, 24000, 48000, 0);
         HandheldDemod demod = new HandheldDemod();

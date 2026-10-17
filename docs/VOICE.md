@@ -12,7 +12,8 @@ link budget, noise and interference of every other radio signal).
 |---|---|
 | **Microphone** (block) | A desk microphone. Next to a Terminal it is a `microphone` peripheral and `/dev/mic`. Its tally lamp lights while a program records. Recipe: wool over a copper ingot over three iron ingots. |
 | **ePhone microphone** | Every ePhone has one (peripheral `microphone`, `/dev/mic`), at the holder's hand. |
-| **Handheld Radio** | Receives AM, shortwave and VHF FM as before, and transmits 5 W narrow FM on VHF two-way channels (not the 88-108 MHz broadcast band) while its holder holds **Talk**. Half duplex: it hears nothing while it talks. |
+| **Walkie-Talkie** | A two-way FM radio for VHF (30-300 MHz) and UHF (300-512 MHz, starts on FRS / PMR channel 1, 462.5625 MHz) channels. It receives like the Handheld Radio, and while its holder holds its **push-to-talk key** it transmits their voice: 5 W narrow FM. Half duplex, like a real one: it hears nothing while it talks (its speaker cuts out at once, and the HUD shows `TX (receive off)`). The PTT key is bound on the item itself, the way the Wireless Controller binds its buttons: sneak + right-click opens the tuning screen, click **PTT**, press any key (Escape cancels, Delete restores the default, B). Recipe: lightning rod over iron / note block / iron over copper / redstone / copper. |
+| **Handheld Radio** | Unchanged: a receive-only AM / shortwave / VHF FM receiver (it now tunes UHF too). Holding a PTT key with one in hand transmits nothing. |
 | **Speaker** | Unchanged for listeners, and now also a sound source microphones hear. |
 | **AirPods** | Paired with an ePhone and worn, they are its speaker and microphone over Bluetooth: the phone's sound plays only in the wearer's ears (it is not in the air), and `/dev/mic` hears the wearer's mouth ([BLUETOOTH.md](BLUETOOTH.md)). |
 
@@ -83,48 +84,70 @@ level meter (it records from the microphone while the page is open).
 
 ## Your microphone (client)
 
-Each player decides whether the mod may hear them: **Microphone input** in
-Mods > Evans Computer Mod > Config (`config/evanscomputermod-voice-client.toml`),
-off by default. While it is off the microphone is never opened.
+Each player decides whether the mod may hear them: **Microphone Input** in
+Minecraft's own **Options > Music & Sounds**, under the output Device, off by
+default. While it is off the microphone is never opened. Beside it:
+
+- **Input Device**: the system's microphones, listed when the screen opens
+  (like the output Device), or System Default. With a voice chat mod installed
+  it says the microphone is provided by that mod.
+- **Input Volume**: 0-200 %, applied to your microphone before it is sent
+  (and before voice activation measures it).
+- **Mic Mode** (Push to Talk / Voice Activation), **Activation Level**, **Mic Indicator**.
+
+The same values are in `config/evanscomputermod-voice-client.toml` and
+Mods > Evans Computer Mod > Config.
 
 When it is on, the server tells the client what wants the player's voice (a
-Microphone within range that a program is reading, or a switched-on Handheld
-Radio in hand) and the microphone is opened only then. A HUD indicator shows
-`MIC` (red dot while the voice is sent) or `TX` while the radio transmits.
+Microphone within range that a program is reading, or a switched-on
+Walkie-Talkie in hand) and the microphone is opened only then. A HUD indicator
+shows `MIC` (red dot while the voice is sent) or `TX` while the radio transmits.
 
-- **Push to talk** (default): you are heard only while you hold **Talk** (B).
+- **Push to talk** (default): microphones hear you only while you hold
+  **Talk** (B, in Controls).
 - **Voice activation**: you are heard when you speak louder than
   `activationLevelDb`, while a microphone near you records.
-- A Handheld Radio always transmits only while Talk is held (its PTT).
+- A Walkie-Talkie transmits only while its own PTT key (bound on the item) is
+  held, whatever the mode.
 
 The voice goes to the server at 24 kHz, IMA ADPCM (about 12 KB/s while you
 talk). Server operators can refuse players' voices with `microphone.playerVoices`.
 
 ### Proximity voice chat mods
 
-ECM never opens the microphone a second time next to a voice chat mod:
+ECM never opens the microphone a second time next to a voice chat mod, and
+never applies microphone settings of its own on top of the mod's: the mod's
+settings are the ones that apply.
 
 - **Simple Voice Chat**: ECM is a Simple Voice Chat plugin and takes the audio
-  Simple Voice Chat already captures (`ClientSoundEvent`). Simple Voice Chat
-  decides when the microphone is live (its own push-to-talk or voice
-  activation), so to talk on an ECM radio hold ECM's Talk *and* talk in Simple
-  Voice Chat. Players near you still hear you through Simple Voice Chat as
-  usual; ECM doesn't change or block its audio.
+  Simple Voice Chat already captures and processes (`ClientSoundEvent`): its
+  microphone, its amplification and filters, and its push-to-talk or voice
+  activation decide when and how you are heard. Players near you still hear you
+  through Simple Voice Chat as usual; ECM doesn't change or block its audio.
 - **Plasmo Voice**: ECM is a Plasmo Voice client add-on and takes each frame
-  Plasmo Voice captures (`AudioCaptureEvent`); ECM's own push-to-talk / voice
-  activation decides what is sent to ECM. Plasmo Voice's own audio is left as
-  it is.
+  after Plasmo Voice has processed it (`AudioCaptureProcessedEvent`), only
+  while Plasmo Voice's own activation is on (you are talking in it). Plasmo
+  Voice's own audio is left as it is.
+- With either installed, Music & Sounds shows only Microphone Input (whether
+  ECM may hear you at all), "Input Device: <mod>'s settings" and the indicator;
+  ECM's Input Volume, Mic Mode and Activation Level are hidden and not used,
+  and ECM's Talk key is not used.
+- A Walkie-Talkie with no PTT key of its own uses the voice chat mod's
+  push-to-talk (Simple Voice Chat's `key.push_to_talk` once you bind it in
+  Controls, it ships unbound; Plasmo Voice's PTT hotkey), so one key talks
+  both nearby and on the radio. A key bound on the Walkie-Talkie still wins;
+  Delete on its PTT button goes back to the voice chat mod's.
 - Without either, ECM uses OpenAL capture (the OpenAL Minecraft already ships,
   so no extra native code), 48 kHz mono, opened only while needed.
 
 ## Radio voice
 
-A Handheld Radio's transmitter takes its microphone (the sound field at the
+A Walkie-Talkie's transmitter takes its microphone (the sound field at the
 holder's mouth, so the holder first and anything loud nearby), band-limits it
 to 3 kHz, pre-emphasises it (75 µs, matching the receivers' de-emphasis),
 FM-modulates it at ±5 kHz deviation and puts it on the medium as an I/Q
 emission at 37 dBm on its channel. Any receiver hears it as it hears anything
-else: another Handheld Radio, an SDR running `rx_fm`, a scanner, with range,
+else: another Walkie-Talkie, a Handheld Radio, an SDR running `rx_fm`, a scanner, with range,
 walls, fading and other transmitters on the same channel. A server can veto it
 like any transmission (`RadioTransmitEvent`, kind `handheld`).
 
@@ -134,7 +157,7 @@ like any transmission (`RadioTransmitEvent`, kind `handheld`).
 |---|---|
 | `mic_record` | A Microphone records a Speaker's beep (`arecord`, Python and Lua `audio.open_mic`); quiet when nothing plays; the tally lamp. |
 | `mic_voice` | A Microphone records a player talking two blocks away, not from 40 blocks; the server asks for the player's voice only while a program records. |
-| `radio_voice` | Push-to-talk on a Handheld Radio heard on another 24 blocks away (not before Talk, not 30 kHz off); a computer talking through `radio_station /dev/mic`. |
+| `radio_voice` | Push-to-talk (bound to Caps Lock on the tuning screen) on a Walkie-Talkie, heard on another 24 blocks away on UHF 462.5625 MHz; the talker's radio plays nothing while it talks; controls: nothing before PTT, nothing on the next channel, nothing from a receive-only Handheld Radio; a computer talking through `radio_station /dev/mic`. |
 
 Tests: `scripts/Test.ps1 -JUnit MicAudioTest -McVersion 26.1` (sound card,
 sound field, modulator against the handheld's demodulator);

@@ -154,6 +154,7 @@ public final class RadioVisualLayout {
       List.of(
           "handheld_radio",
           "microphone",
+          "walkie_talkie",
           "controller_receiver_module",
           "interface_probe",
           "fiber_span",

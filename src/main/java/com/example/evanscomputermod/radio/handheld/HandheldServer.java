@@ -32,8 +32,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * player only, so weak stations hiss and fade. Nothing runs for radios that are
  * off or not held.
  *
- * <p>On a two-way channel (VHF outside the broadcast band) the radio also
- * transmits: while its holder holds the Talk key, its microphone (what the
+ * <p>A Walkie-Talkie on a two-way channel (VHF / UHF, not the broadcast band)
+ * also transmits: while its holder holds its push-to-talk key, its microphone (what the
  * {@link SoundField} carries at the holder's mouth, their voice first) is
  * FM-modulated and put on the medium at {@link #TX_POWER_DBM}. Like a real
  * walkie-talkie it is half duplex: it hears nothing while it talks.
@@ -56,14 +56,17 @@ public final class HandheldServer {
     public static ItemStack held(ServerPlayer p) {
         for (InteractionHand h : InteractionHand.values()) {
             ItemStack s = p.getItemInHand(h);
-            if (s.getItem() instanceof HandheldRadioItem) return s;
+            if (s.getItem() instanceof HandheldRadioItem) return s;   // a Handheld Radio or a Walkie-Talkie
         }
         return ItemStack.EMPTY;
     }
 
-    /** The radio can transmit where it is tuned: VHF two-way channels, not the broadcast or AM/shortwave listening bands. */
-    public static boolean canTransmit(HandheldSettings s) {
-        return s.band() == HandheldBand.VHF && !s.band().wide(s.freqHz());
+    /**
+     * The radio in {@code stack} can transmit where it is tuned: only a Walkie-Talkie, and only on the VHF / UHF
+     * two-way channels (not the FM broadcast band).
+     */
+    public static boolean canTransmit(ItemStack stack, HandheldSettings s) {
+        return WalkieTalkieItem.isWalkie(stack) && WalkieTalkieItem.tunes(s.band()) && !s.band().wide(s.freqHz());
     }
 
     /** A player's radio session, if their radio is on (tests). */
@@ -84,7 +87,7 @@ public final class HandheldServer {
             stop(player.getUUID());
             return;
         }
-        sessions.computeIfAbsent(player.getUUID(), id -> new Session(id)).tick(player, s, medium);
+        sessions.computeIfAbsent(player.getUUID(), id -> new Session(id)).tick(player, s, canTransmit(stack, s), medium);
     }
 
     /** Weakest signal Seek stops on: about 9 dB over a handheld's noise floor in a 6 kHz channel. */
@@ -182,10 +185,10 @@ public final class HandheldServer {
             this.id = new UUID(player.getMostSignificantBits() ^ 0x48616E64L, player.getLeastSignificantBits());
         }
 
-        void tick(ServerPlayer player, HandheldSettings s, RadioMedium medium) {
+        void tick(ServerPlayer player, HandheldSettings s, boolean canTransmit, RadioMedium medium) {
             var eye = player.getEyePosition();
             Pose pose = Pose.at(player.level().dimension().location().toString(), eye.x, eye.y - 0.3, eye.z);
-            if (com.example.evanscomputermod.voice.VoiceServer.talking(player.getUUID()) && canTransmit(s)) {
+            if (com.example.evanscomputermod.voice.VoiceServer.talking(player.getUUID()) && canTransmit) {
                 micAt = com.example.evanscomputermod.voice.VoiceServer.mouth(player);
                 transmit(pose, s, medium);
                 return;

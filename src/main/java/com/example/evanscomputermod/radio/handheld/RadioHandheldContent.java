@@ -22,12 +22,18 @@ public final class RadioHandheldContent {
     public static final DeferredItem<Item> HANDHELD_RADIO = ITEMS.registerItem("handheld_radio",
             props -> new HandheldRadioItem(props.stacksTo(1)));
 
+    public static final DeferredItem<Item> WALKIE_TALKIE = ITEMS.registerItem("walkie_talkie",
+            props -> new WalkieTalkieItem(props.stacksTo(1)));
+
     private RadioHandheldContent() {}
 
     public static void register(IEventBus modBus) {
         ITEMS.register(modBus);
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {
-            if (e.getTabKey() == ModCreativeTabs.TAB.getKey()) e.accept(HANDHELD_RADIO.get());
+            if (e.getTabKey() == ModCreativeTabs.TAB.getKey()) {
+                e.accept(HANDHELD_RADIO.get());
+                e.accept(WALKIE_TALKIE.get());
+            }
         });
         modBus.addListener(RadioHandheldContent::onPayloads);
         NeoForge.EVENT_BUS.addListener(HandheldServer::onPlayerTick);
@@ -56,6 +62,15 @@ public final class RadioHandheldContent {
         r.playToServer(HandheldPackets.Settings.TYPE, HandheldPackets.Settings.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {
             if (ctx.player() instanceof ServerPlayer player) applySettings(player, p);
         }));
+        r.playToServer(HandheldPackets.PttKey.TYPE, HandheldPackets.PttKey.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer player) applyPtt(player, p);
+        }));
+    }
+
+    /** The tuning screen bound a Walkie-Talkie's push-to-talk key. */
+    public static void applyPtt(ServerPlayer player, HandheldPackets.PttKey p) {
+        ItemStack stack = player.getItemInHand(p.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+        if (WalkieTalkieItem.isWalkie(stack)) WalkieTalkieItem.setPtt(stack, p.key());
     }
 
     /** The tuning screen's settings arrived for the radio in a hand. */
@@ -63,6 +78,7 @@ public final class RadioHandheldContent {
         ItemStack stack = player.getItemInHand(p.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
         if (!(stack.getItem() instanceof HandheldRadioItem)) return;
         HandheldBand band = HandheldBand.values()[Math.floorMod(p.band(), HandheldBand.values().length)];
+        if (WalkieTalkieItem.isWalkie(stack) && !WalkieTalkieItem.tunes(band)) return;
         new HandheldSettings(p.on(), band, band.clamp(p.freqHz()), Math.max(0, Math.min(100, p.volume())),
                 Math.max(0, Math.min(100, p.squelch()))).write(stack);
     }

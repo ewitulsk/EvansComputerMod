@@ -86,7 +86,7 @@ public final class VoiceServer {
         else TALKING.remove(id);
     }
 
-    /** The player holds the Talk key. */
+    /** The player holds their radio's push-to-talk key. */
     public static boolean talking(UUID player) {
         return TALKING.contains(player);
     }
@@ -114,7 +114,7 @@ public final class VoiceServer {
         var stack = HandheldServer.held(p);
         if (!stack.isEmpty()) {
             HandheldSettings s = HandheldSettings.read(stack);
-            if (s.on() && HandheldServer.canTransmit(s)) {
+            if (s.on() && HandheldServer.canTransmit(stack, s)) {
                 flags |= VoicePackets.DEMAND_RADIO;
                 if (talking(p.getUUID())) flags |= VoicePackets.DEMAND_ON_AIR;
             }
