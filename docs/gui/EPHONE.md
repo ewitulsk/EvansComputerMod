@@ -133,7 +133,7 @@ battery) goes to players within 48 blocks once a second and on change.
   (`IComputerHost.acceptsInput`, checked by `ComputerTargets.resolveInput`). Pointer events reach
   programs through `mouse_poll` once they capture the mouse. Escape closes; the screen closes
   itself if the phone leaves the hand.
-- **In hand** (P5b: slots go to the open app, the switch-app key to the shell; see
+- **In hand** (P5b: slots go to the open app; a slot the open app hasn't claimed, or any slot at home, goes to the app with the active media session if it claimed it (`Compositor.activeMedia`: Music's Play/Pause, Previous, Next from home and in the background); the switch-app key to the shell; see
   [Input](#input)): `PhoneClient` reads the seven mappings with `isDown`/`consumeClick` only and never
   touches another mapping, so binding slot 1 to W both walks and presses the slot (NeoForge sets
   every mapping on a key). Presses go out as `PhonePackets.Hotkey(phone, slot, down)` (slot 0 =

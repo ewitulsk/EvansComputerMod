@@ -1916,18 +1916,36 @@ public final class Compositor {
     /**
      * Hotkey slot {@code slot} (1-6) went down or up on an ePhone in hand: a
      * {@code Hotkey} for the app whose window is open (focused), if it claimed the
-     * slot. Returns the app id it went to, or null (no open app, or not claimed).
+     * slot; otherwise for the app with the active media session if it claimed the slot.
+     * Returns the app id it went to, or null (nobody claimed it).
      */
     public synchronized String hotkey(int slot, boolean down) {
         if (slot < 1 || slot > 6) return null;
         UiWindow w = focused;
-        if (w == null || w.surface.conn.closed || w.surface.conn.legacy != null) return null;
-        UiConnection c = w.surface.conn;
-        String[] slots = hotkeyClaims.get(c.id);
-        if (slots == null || slots[slot] == null) return null;
+        UiConnection c = w == null || w.surface.conn.closed || w.surface.conn.legacy != null ? null : w.surface.conn;
+        String[] slots = c == null ? null : hotkeyClaims.get(c.id);
+        if (slots == null || slots[slot] == null) {
+            // Not claimed on screen (or at home): the app holding the active media session gets
+            // it, so Music's Play/Pause works from home and in the background.
+            c = mediaHotkeyTarget(slot);
+            if (c == null) return null;
+        }
         c.queue(new UiProto.Hotkey(slot, down));
         drainFails();
         return c.appId == null ? "" : c.appId;
+    }
+
+    /** The connection of the active media session ({@link #activeMedia}) if it claimed {@code slot}. */
+    private UiConnection mediaHotkeyTarget(int slot) {
+        MediaEntry m = activeMedia();
+        if (m == null) return null;
+        for (Map.Entry<Integer, MediaEntry> e : media.entrySet()) {
+            if (e.getValue() != m) continue;
+            UiConnection mc = conns.get(e.getKey());
+            String[] s = mc == null || mc.closed ? null : hotkeyClaims.get(mc.id);
+            return s != null && s[slot] != null ? mc : null;
+        }
+        return null;
     }
 
     /** The OS "switch app" key: the shell switches to the next open app; without a shell the next window gets focus. */

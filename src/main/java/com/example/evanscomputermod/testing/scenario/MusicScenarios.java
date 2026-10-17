@@ -501,9 +501,10 @@ public final class MusicScenarios {
         }, "move the phone back to hotbar slot 1 and hold it");
         b.await(r -> PhoneGuiScenarios.host(r).state() == com.example.evanscomputermod.phone.PhoneState.AWAKE ? null
                 : "phone " + PhoneGuiScenarios.host(r).state(), "the phone is awake in hand", 5_000);
-        b.note("(Hotkeys go to the app on screen: the shell routes them to the focused window.)");
-        PhoneGuiScenarios.openApp(b, "Music", MUSIC);
+        b.note("At home, Music not on screen: a slot no on-screen app claims goes to the app with the active media session");
         b.mutate(r -> PhoneGuiScenarios.hotkey(r, 1), "press hotkey slot 1 (Play/Pause)");
+        b.await(r -> PhoneGuiScenarios.phone(r).events().stream().anyMatch(e -> e.contains("hotkey 1 down -> " + MUSIC)) ? null
+                : "events " + PhoneGuiScenarios.phone(r).events(), "the press went to Music (background), not nobody", 3_000);
         phoneSilent(b, "paused: the speaker is quiet");
         b.mutate(r -> PhoneGuiScenarios.hotkey(r, 1), "press hotkey slot 1 again");
         phonePlays(b, 2_000, "playing again");
