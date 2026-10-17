@@ -406,7 +406,9 @@ public final class BrowserScenarios {
             other[0] = vil(r).n % 10 + 1;
             pc.clickText(r, "Tech Village " + other[0]);
         }, "click the next village's link (Tech Village n+1)");
-        b.await(r -> pc.shows(r, "http://100." + (64 + other[0]) + ".0.10/"), "the address bar has the next village's site", 10_000);
+        // The site links the other villages by name (web.vN.ring, resolved by the village's DNS); a ring without DNS by address.
+        b.await(r -> pc.shows(r, "http://web.v" + other[0] + ".ring/") == null ? null : pc.shows(r, "http://100." + (64 + other[0]) + ".0.10/"),
+                "the address bar has the next village's site (http://web.v(n+1).ring/)", 10_000);
         b.await(r -> {
             Compositor.WindowInfo w = pc.window(r);
             String want = "Tech Village " + other[0] + " - AS " + (65000 + other[0]);
