@@ -6,7 +6,7 @@
 //! Wi-Fi join and theme switch, and the Editor.
 
 use ecm_apps::desktop::{self, Desktop, BORDER, TITLE_H};
-use ecm_apps::sys::{CellState, DisplayState, MockSys, Network};
+use ecm_apps::sys::{CellState, DisplayState, MockSys, Network, UploadState};
 use ecm_apps::{editor, files, settings, terminal};
 use ecm_ui::samples::welcome;
 use ecm_ui::{App, MockConnection, TEXT_MIME};
@@ -553,6 +553,50 @@ fn files_lists_opens_and_manages_files() {
     let ok = hit(&app, 1, "ok");
     run(&mut app, &m, &mut t, click(1, ok));
     assert!(!root.join("shopping.txt").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn files_uploads_from_the_players_computer_only_when_it_can() {
+    let root = temp_root("files-upload");
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    let m = mock("files", 640, 400);
+    let sys = MockSys::new(&root);
+    let mut app = files::app(Box::new(m.clone()), Box::new(sys.clone()), Some("/home")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 360, proto::window_states::ACTIVATED)]);
+    // No add-on (on the server or in the player's game): no Upload button.
+    assert!(app.core.window(1).unwrap().hit_id_of("upload").is_none(), "{:?}", t.of(1));
+    // The player using the computer can upload: the button appears by itself.
+    sys.state.borrow_mut().upload_support = 1;
+    run(&mut app, &m, &mut t, vec![]);
+    let up = hit(&app, 1, "upload");
+    sys.state.borrow_mut().upload_script = vec![UploadState::Picking, UploadState::Receiving(5_000, 10_000)];
+    run(&mut app, &m, &mut t, click(1, up));
+    assert!(sys.state.borrow().log.iter().any(|l| l == "upload /home"), "{:?}", sys.state.borrow().log);
+    assert!(t.has(1, "file picker is open in your game"), "{:?}", t.of(1));
+    run(&mut app, &m, &mut t, vec![]);
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(t.has(1, "Uploading: 4.9 KB of 9.8 KB (50%)"), "{:?}", t.of(1));
+    // While it runs the button cancels instead.
+    assert!(t.has(1, "Cancel upload"));
+    // Done: the folder is read again and the new file is listed.
+    std::fs::write(root.join("home/photo.png"), [0u8; 10]).unwrap();
+    sys.state.borrow_mut().upload_script = vec![UploadState::Done("/home/photo.png".into())];
+    run(&mut app, &m, &mut t, vec![]);
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(t.has(1, "Uploaded photo.png") && t.has(1, "photo.png"), "{:?}", t.of(1));
+    // A failure (the player closed the picker) says why; nothing is added.
+    let up = hit(&app, 1, "upload");
+    sys.state.borrow_mut().upload_script = vec![UploadState::Failed("cancelled".into())];
+    run(&mut app, &m, &mut t, click(1, up));
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(t.has(1, "Upload failed: cancelled"), "{:?}", t.of(1));
+    // The add-on goes away (another player without it uses the computer): the button goes too.
+    sys.state.borrow_mut().upload_support = 2;
+    run(&mut app, &m, &mut t, vec![]);
+    run(&mut app, &m, &mut t, vec![]);
+    assert!(app.core.window(1).unwrap().hit_id_of("upload").is_none());
     let _ = std::fs::remove_dir_all(root);
 }
 
