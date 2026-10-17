@@ -196,6 +196,23 @@ public final class UiManager implements CompositorHost {
     }
 
     /** The console/GUI switch chord. A phone has no console screen: it stays on the GUI. */
+    /** The desktop's Console item: show the console (the GUI keeps running). */
+    @Override
+    public void showConsole() {
+        if (phone == null) setVisible(false);
+    }
+
+    @Override
+    public void clipboardChanged(String mime, byte[] data) {
+        if (mime != null && mime.startsWith("text/")) computer.clipboardToPlayer(new String(data, StandardCharsets.UTF_8));
+    }
+
+    /** The player's real clipboard, right before their paste key. */
+    public void clipboardFromPlayer(String text) {
+        Compositor c = compositor;
+        if (c != null) c.setClipboardText(text);
+    }
+
     public synchronized void toggle() {
         if (compositor != null && phone == null) setVisible(!guiVisible);
     }

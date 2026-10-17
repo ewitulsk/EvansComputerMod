@@ -1,0 +1,61 @@
+NAME
+    phone - the ePhone's shell: home screen, status bar, app switching
+
+SYNOPSIS
+    phone [--restart]
+
+DESCRIPTION
+    phone (app id dev.ecm.phone) is the shell of every ePhone. The
+    phone's GUI starts it when the phone boots; you don't type it. It
+    shows one app at a time, between a status bar at the top and a
+    navigation bar at the bottom. For how to use an ePhone in the game
+    (holding it, hotkeys, SIM, battery, dock) see phone-guide.
+
+    Home screen: the wallpaper and a grid of the installed apps (4
+    columns, 3 on a Tier 1 panel), each with its icon or a coloured tile
+    with its initial, and the shell's own Controls entry. Tap an app to
+    open it.
+
+    Status bar: the clock, a dot for unread notifications, a pill for
+    each background mode in use (AUDIO, RADIO, DL, NAV), the carrier and
+    cellular bars, Wi-Fi bars, and the battery percentage. Tap it (or
+    pull it down) for the notification sheet: tap a notification to open
+    its app, or Clear all.
+
+    Navigation bar: Back, Home and Recent apps. Recent apps shows the
+    open apps; tap one to show it, X to close it.
+
+    Controls lists the hotkey slots each open app has claimed (the app
+    on screen first) and the keys below.
+
+    When an app asks for a permission, a dialog offers Allow, Only this
+    time and Don't allow.
+
+    An app that leaves the screen is suspended: it saves its state and
+    stops until it is shown again (see phone-guide for the exceptions).
+
+OPTIONS
+    --restart
+        Given when the shell is restarted after a crash: the apps still
+        open are kept and the last session is not reopened again.
+
+KEYS
+    These work while the phone is open (right-click with it in hand).
+
+    Alt+H
+        Home screen.
+
+    Alt+Backspace
+        Back: closes the sheet or dialog shown, otherwise goes home.
+
+    Alt+Tab
+        Show the next open app.
+
+    Alt+N
+        The notification sheet.
+
+    Plain Backspace and Home go to the app (text fields need them). Esc
+    closes the phone screen.
+
+SEE ALSO
+    phone-guide, desktop, gui, terminal-app, settings, store

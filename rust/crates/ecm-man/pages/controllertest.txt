@@ -1,0 +1,31 @@
+NAME
+    controllertest - show a Wireless Xbox Controller's buttons live
+
+SYNOPSIS
+    controllertest [PLAYER]
+
+DESCRIPTION
+    Draws a controller on the Terminal's display and lights up every
+    button, stick and trigger as you use it. Use it to check that a
+    controller is paired and which keys drive it.
+
+    PLAYER (1-4) picks the controller; by default the first connected
+    one. With none connected it says how to pair one: right-click the
+    Terminal with the controller, then right-click with it or use the
+    Controller toggle at the top of the Terminal's window. Which
+    keyboard keys drive the controller is set on the controller item
+    (sneak + right-click it).
+
+KEYS
+    Back + Start (held together)
+        Quit.
+
+    Ctrl+T
+        Quit.
+
+EXAMPLES
+      controllertest
+      controllertest 2
+
+SEE ALSO
+    gba, mousetest, peripheral, scripting

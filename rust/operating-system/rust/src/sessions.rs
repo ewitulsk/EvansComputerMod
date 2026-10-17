@@ -19,7 +19,8 @@ use ecm_bridge::cli::{self, CliSession};
 
 use crate::console::Term;
 use crate::jobs::{JobEvent, Jobs};
-use crate::lineedit::{Key, LineEditor};
+use crate::lineedit::{self, Editor, Event, InputRules, NoCompletion, Piece, ShellCompleter, TermOut};
+use ecm_vte::ModeScanner;
 use crate::net::Net;
 use crate::shell::{Outcome, Shell, SwitchCmd};
 use crate::switch_svc::SwitchService;
@@ -36,6 +37,8 @@ pub struct RemoteTerm {
     width: u16,
     height: u16,
     last: u8,
+    /// The modes the session's programs switched (alternate screen, Ctrl+C, paste).
+    modes: ModeScanner,
 }
 
 impl RemoteTerm {
@@ -45,6 +48,7 @@ impl RemoteTerm {
             width: 80,
             height: 24,
             last: 0,
+            modes: ModeScanner::default(),
         }
     }
     fn full(&self) -> bool {
@@ -54,6 +58,7 @@ impl RemoteTerm {
 
 impl Term for RemoteTerm {
     fn write(&mut self, data: &[u8]) {
+        self.modes.feed(data);
         for &b in data {
             if self.out.len() >= OUT_CAP {
                 return;
@@ -78,7 +83,7 @@ pub struct Session {
     pub owner: i32,
     pub user: String,
     term: RemoteTerm,
-    editor: LineEditor,
+    editor: Editor,
     shell: Shell,
     jobs: Jobs,
     cli: Option<CliSession>,
@@ -127,7 +132,7 @@ impl Sessions {
                 .take(32)
                 .collect(),
             term: RemoteTerm::new(),
-            editor: LineEditor::new(),
+            editor: Editor::new(),
             shell: Shell::new_remote(),
             jobs: Jobs::new(),
             cli: None,
@@ -142,6 +147,7 @@ impl Sessions {
         s.term
             .println("Type 'help' for commands, 'exit' to log out.");
         s.term.println("");
+        lineedit::load_history(&mut s.editor);
         prompt(&mut s);
         self.map.insert(id, s);
         Some(id)
@@ -158,7 +164,7 @@ impl Sessions {
             owner,
             user: user.chars().filter(|c| c.is_ascii_graphic()).take(32).collect(),
             term: RemoteTerm::new(),
-            editor: LineEditor::new(),
+            editor: Editor::new(),
             shell: Shell::new_remote(),
             jobs: Jobs::new(),
             cli: None,
@@ -178,8 +184,14 @@ impl Sessions {
     pub fn resize(&mut self, id: i32, w: u16, h: u16) -> bool {
         match self.map.get_mut(&id) {
             Some(s) => {
-                s.term.width = w.clamp(10, 1000);
+                let width = w.clamp(10, 1000);
+                let changed = width != s.term.width;
+                s.term.width = width;
                 s.term.height = h.clamp(4, 1000);
+                // The client's terminal re-wrapped the text: draw the line again in place.
+                if changed && !s.jobs.has_foreground() && !s.one_shot {
+                    s.editor.refresh(&mut TermOut(&mut s.term));
+                }
                 true
             }
             None => false,
@@ -221,43 +233,35 @@ impl Sessions {
         let Some(s) = self.map.get_mut(&id) else {
             return false;
         };
-        let mut i = 0;
-        while i < data.len() && !s.exited {
-            if s.jobs.has_foreground() {
-                // Ctrl+C or Ctrl+T stops the program; everything else is its stdin.
-                let end = data[i..]
-                    .iter()
-                    .position(|&b| b == 0x03 || b == 0x14)
-                    .map(|p| i + p)
-                    .unwrap_or(data.len());
-                if end > i {
-                    s.jobs.send_input(&data[i..end]);
+        let rules = if s.jobs.has_foreground() {
+            InputRules::for_program(s.term.modes.modes, false)
+        } else {
+            InputRules::for_prompt(false)
+        };
+        for piece in lineedit::split_input(data, rules) {
+            if s.exited {
+                break;
+            }
+            match piece {
+                Piece::Suspend => {
+                    if let Some((id, cmd)) = s.jobs.suspend_foreground() {
+                        s.term.println("^Z");
+                        s.term.println(&format!("[{id}]+  Stopped    {cmd}"));
+                        s.shell.status = 148;
+                        prompt(s);
+                    }
                 }
-                if end < data.len() {
+                Piece::Interrupt | Piece::Terminate if s.jobs.has_foreground() => {
                     s.jobs.kill_foreground();
                     s.term.println("^C");
-                    i = end + 1;
-                } else {
-                    i = end;
                 }
-                continue;
-            }
-            let b = data[i];
-            i += 1;
-            // Ctrl+C at a prompt just abandons the line.
-            let key = if b == 0x03 {
-                Some(Key::Terminate)
-            } else {
-                s.editor.feed(b, &mut s.term)
-            };
-            match key {
-                Some(Key::Line(line)) => run_line(s, &line, svc, now),
-                Some(Key::Terminate) => {
+                Piece::Terminate | Piece::Interrupt => {
                     s.editor.clear();
                     s.term.println("^C");
                     prompt(s);
                 }
-                None => {}
+                Piece::Scroll(_) => {}
+                Piece::Data(d) => input_data(s, &d, svc, now),
             }
         }
         true
@@ -275,6 +279,8 @@ impl Sessions {
                 match ev {
                     JobEvent::Exited(pid) => exited.push(pid),
                     JobEvent::ForegroundDone(status) => {
+                        s.term.modes = ModeScanner::default();
+                        s.shell.status = status;
                         if status != 0 {
                             s.term
                                 .println(&format!("Process exited with code {}", status));
@@ -288,6 +294,36 @@ impl Sessions {
             }
         }
         exited
+    }
+}
+
+/// Keys for the line editor, or the rest of them for a program that started.
+fn input_data(s: &mut Session, data: &[u8], svc: &mut Services, now: i64) {
+    let mut i = 0;
+    while i < data.len() && !s.exited {
+        if s.jobs.has_foreground() {
+            s.jobs.send_input(&data[i..]);
+            return;
+        }
+        let b = data[i];
+        i += 1;
+        let ev = if s.cli.is_none() && s.router_cli.is_none() {
+            let cwd = s.shell.cwd.clone();
+            s.editor.feed_byte(b, &mut TermOut(&mut s.term), &mut ShellCompleter { cwd: &cwd })
+        } else {
+            s.editor.feed_byte(b, &mut TermOut(&mut s.term), &mut NoCompletion)
+        };
+        match ev {
+            Some(Event::Line(line)) => {
+                lineedit::save_history(&mut s.editor);
+                run_line(s, &line, svc, now);
+            }
+            Some(Event::Interrupt) | Some(Event::Terminate) => {
+                s.editor.clear();
+                prompt(s);
+            }
+            Some(Event::Eof) | None => {}
+        }
     }
 }
 
@@ -310,7 +346,7 @@ fn prompt(s: &mut Session) {
             None => s.shell.prompt(),
         }
     };
-    s.term.print(&p);
+    s.editor.start(&p, &mut TermOut(&mut s.term));
 }
 
 fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
@@ -348,12 +384,22 @@ fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
             s.term.println(&format!("[{}] {}", id, first));
         }
         Outcome::Resume(spec) => {
-            if s.jobs.foreground(&spec) {
+            if let Some(cmd) = s.jobs.foreground(&spec) {
+                s.term.println(&cmd);
                 return;
             }
             s.term.println("fg: no such job");
+            s.shell.status = 1;
         }
+        Outcome::ResumeBackground(spec) => match s.jobs.resume_background(&spec) {
+            Ok(msg) => s.term.println(&msg),
+            Err(e) => {
+                s.term.println(e);
+                s.shell.status = 1;
+            }
+        },
         Outcome::ListJobs => s.jobs.list(&mut s.term),
+        Outcome::History(args) => lineedit::history_cmd(&mut s.editor, &args, &mut s.term),
         Outcome::Switch(cmd) => match cmd {
             SwitchCmd::EnterCli => s.cli = svc.switch.enter_remote(svc.net, &mut s.term, now),
             SwitchCmd::StartDetached => svc.switch.start_detached(svc.net, &mut s.term, now),
@@ -383,7 +429,7 @@ mod tests {
             owner: 1,
             user: "visual".into(),
             term: RemoteTerm::new(),
-            editor: LineEditor::new(),
+            editor: Editor::new(),
             shell: Shell::new_remote(),
             jobs: Jobs::new(),
             cli: None,

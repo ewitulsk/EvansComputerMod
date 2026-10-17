@@ -1,0 +1,41 @@
+NAME
+    registryd - a TLD registry: keeps the zone of a top-level domain
+
+SYNOPSIS
+    registryd [-c FILE]
+    registryd show
+
+DESCRIPTION
+    The registry owns a TLD's zone (for example ecm.). Registrars
+    connect on TCP port 700 and send EPP-lite commands, one per line,
+    after LOGIN with an id and secret this registry knows: CHECK,
+    CREATE, INFO, DELETE, LIST and UPDATE (records, or the domain's
+    nameservers). Every change rewrites the zone file with a new serial
+    and has the local named reload it, which NOTIFYs the secondaries.
+
+    It runs until you stop it with Ctrl+T; start it with registryd &
+    on the computer whose named is primary for the TLD.
+
+COMMANDS
+    show
+        List the registered domains: registrant, registrar, and their
+        records or nameservers.
+
+FILES
+    /etc/registryd.conf
+        One setting per line, # comments:
+
+      zone ecm /etc/named/ecm.zone   the TLD and its zone (required)
+      port 700
+      registrar <id> <secret>        one per accredited registrar
+      db /etc/registry.db
+
+    The zone file
+        Written by registryd; do not edit it by hand.
+
+EXAMPLES
+      registryd &
+      registryd show
+
+SEE ALSO
+    registrard, named, domain, networking

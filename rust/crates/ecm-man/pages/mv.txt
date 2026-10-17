@@ -1,0 +1,21 @@
+NAME
+    mv - move or rename a file
+
+SYNOPSIS
+    mv source destination
+
+DESCRIPTION
+    Renames source to destination, which can also be in another
+    directory. destination is the full new name, not a directory to move
+    into. If renaming is not possible, mv copies the file and then
+    deletes the original.
+
+    If source does not exist mv prints
+    "mv: source: No such file or directory" and exits with code 1.
+
+EXAMPLES
+      mv draft.txt final.txt
+      mv final.txt /home/docs/final.txt
+
+SEE ALSO
+    cp, rm, ls, filesystem

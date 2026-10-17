@@ -1,0 +1,53 @@
+NAME
+    rx_ssb - listen to single sideband (USB or LSB) through a Speaker
+
+SYNOPSIS
+    rx_ssb <freq> [usb|lsb] [--squelch DB] [--gain DB] [--sdr NAME]
+    [--rate SPS] [--speaker SIDE] [--volume 0-100] [--seconds S]
+    [--wav FILE [--no-speaker]] [--audio-rate HZ]
+
+DESCRIPTION
+    Tunes the SDR next to the computer to freq and demodulates single
+    sideband: the upper sideband (usb, the default) or the lower one
+    (lsb). The audio, levelled by an automatic gain control, plays on a
+    Speaker touching the computer.
+
+    It prints one line saying what it receives, then every 2 seconds the
+    signal level in dBFS, and runs until Ctrl+T (or --seconds).
+
+OPTIONS
+    usb, lsb
+        The sideband. Default usb.
+
+    --squelch DB
+        Mute the audio while the signal is below DB (dBFS).
+
+    --gain DB
+        Fixed receiver gain in dB. Default: automatic gain (AGC).
+
+    --sdr NAME
+        Which SDR: empty (the first), 0 / sdr0 / sdr_0, a side of the
+        computer or a /dev/sdr path.
+
+    --rate SPS
+        Sample rate. Default 48000.
+
+    --speaker SIDE, --volume 0-100
+        Which Speaker to use and its volume.
+
+    --seconds S
+        Stop after S seconds of samples.
+
+    --wav FILE
+        Also write the audio to a WAV file. With --no-speaker, only to
+        the file.
+
+    --audio-rate HZ
+        Audio sample rate, 8000-48000. Default 24000.
+
+EXAMPLES
+      rx_ssb 14.2M
+      rx_ssb 7.15M lsb --volume 70
+
+SEE ALSO
+    rx_fm, rx_am, waterfall, radio

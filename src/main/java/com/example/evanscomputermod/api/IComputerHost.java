@@ -144,6 +144,9 @@ public interface IComputerHost {
     /** The kernel switched network interface {@code index}'s link (block hosts show it on their faces). */
     default void onLinkStateChanged(int index, boolean up) {}
 
+    /** The console's bell rang (BEL): beep where the computer is. Server thread. */
+    default void bell() {}
+
     /** Wireless controllers connected to this computer, or null if the host takes none. */
     @Nullable
     default com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {

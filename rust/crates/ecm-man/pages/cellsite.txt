@@ -1,0 +1,25 @@
+NAME
+    cellsite - the Cell Site app: this computer's cell site in a window
+
+SYNOPSIS
+    cellsite
+
+DESCRIPTION
+    Opens the Cell Site app (dev.ecm.cellsite) for the cell site that
+    celld-site runs on this computer. It appears in Apps once
+    /etc/celld-site.toml exists. It needs the GUI (start it with gui);
+    in the console use celld-site status instead.
+
+    Overview: the radio (profile, channel, power, cell, address, frames,
+    beacons), the core link (address, state, last error) and traffic.
+    Phones: each phone's IMSI, state, address, signal, CQI and bytes,
+    and the neighbour cells heard. Settings: site id, carrier, core,
+    cell id, profile, channel, power and credential; Save stores the
+    changes and Restart applies them.
+
+    It talks to celld-site's admin socket (127.0.0.1:7710, or the
+    admin_port in /etc/celld-site.toml), reconnecting when the site
+    restarts.
+
+SEE ALSO
+    celld-site, carrier, cellular, gui

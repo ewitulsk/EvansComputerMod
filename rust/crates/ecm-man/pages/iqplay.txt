@@ -1,0 +1,40 @@
+NAME
+    iqplay - transmit a recorded IQ file
+
+SYNOPSIS
+    iqplay <file> [freq] [--rate SPS] [--power DBM] [--loop]
+    [--sdr NAME]
+
+DESCRIPTION
+    Transmits the IQ samples in file (as recorded by iqrec, or written
+    by a transmitter's --iq option) through a Standard or Advanced SDR.
+    The sample format, rate and frequency come from file.sigmf-meta
+    when it exists; freq and --rate override them, and are required
+    when there is no metadata.
+
+    Prints the file, sample count, rate and frequency, then
+    "iqplay: done".
+
+OPTIONS
+    freq
+        Transmit on this frequency instead of the recorded one.
+
+    --rate SPS
+        The file's sample rate (if it has no .sigmf-meta).
+
+    --power DBM
+        Transmit power. Default the SDR's maximum (37 dBm).
+
+    --loop
+        Repeat the file until Ctrl+T.
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+EXAMPLES
+      iqplay /aprs.cf32
+      iqplay /aprs.cf32 144.80M --power 10
+      iqplay /beacon.cs16 --loop &
+
+SEE ALSO
+    iqrec, tx_tone, afsk1200, radio

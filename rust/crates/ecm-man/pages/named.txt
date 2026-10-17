@@ -1,0 +1,109 @@
+NAME
+    named - the DNS server: your own zones and a resolver
+
+SYNOPSIS
+    named [-c FILE] [-q]
+    named reload | status | cache | flush [NAME] | stop
+    named retransfer ZONE
+    named check [FILE]
+
+DESCRIPTION
+    named is the DNS server, like BIND. Run it with named & or a
+    named & line in /services.cfg. It reads /etc/named.conf and answers
+    on UDP and TCP port 53:
+
+    Authoritative for its zones: records, CNAMEs inside the zone,
+    referrals at delegations, NXDOMAIN and NODATA. Primary zones are
+    read from zone files; when a zone's serial changes, named sends
+    NOTIFY to the zone's nameservers. Secondary zones are copied from
+    their primary by zone transfer (AXFR) at start, on NOTIFY and every
+    SOA refresh.
+
+    Recursive (with recursion yes) for clients in allow: it walks the
+    tree from the root hints, follows referrals and CNAMEs, and caches
+    answers by their TTL. A delegation where nobody answers usefully
+    is SERVFAIL.
+
+    The other forms talk to the running daemon on 127.0.0.1 port 953.
+
+OPTIONS
+    -c FILE
+        Read FILE instead of /etc/named.conf.
+
+    -q
+        Quiet: log only loads, transfers, NOTIFY and SERVFAIL, not
+        every query.
+
+COMMANDS
+    reload
+        Re-read named.conf and the zone files (NOTIFY for changed
+        serials).
+
+    status
+        Zones and serials, recursion, counters.
+
+    cache
+        What the resolver has cached, with TTLs counting down.
+
+    flush [NAME]
+        Forget cached answers (all, or for NAME).
+
+    retransfer ZONE
+        A secondary checks its primary now.
+
+    check [FILE]
+        Check named.conf and every primary zone file without starting.
+
+    stop
+        Stop the daemon.
+
+FILES
+    /etc/named.conf
+        The configuration, one statement per line:
+
+      recursion yes
+      allow 100.64.0.0/10 10.0.0.0/8
+      root-hints /etc/named/root.hints
+      fallback 1.1.1.1
+      zone v3.ring primary /etc/named/v3.ring.zone
+      zone ecm primary /etc/named/ecm.zone notify 100.71.0.55
+      zone ring secondary 100.68.0.55
+      zone . secondary 100.66.0.57 file /etc/named/sec/root.zone
+      allow-transfer 100.64.0.0/10
+      listen 100.67.0.53
+
+        allow is who may use recursion (default: 127/8 and the private
+        ranges). fallback is where names the in-game root does not know
+        go (real names like example.com). allow-transfer is who may
+        AXFR (default anyone). listen answers on one address only.
+        Secondary zones are kept in /etc/named/sec/ZONE.zone unless
+        file is given.
+
+    Zone files
+        RFC 1035 master format: $ORIGIN, $TTL, @, relative names, ;
+        comments, parentheses, TTL units (1h, 2d). Types A, NS, CNAME,
+        SOA, PTR, MX, TXT. A zone needs one SOA and an NS at its top.
+
+      $ORIGIN lab.test.
+      $TTL 300
+      @    IN SOA ns1 admin ( 1 60 30 600 30 )
+           IN NS  ns1
+      ns1     A   10.53.0.3
+      www  60 A   10.53.0.3
+      web     CNAME www
+      mail    MX  10 www
+      info    TXT "hello world"
+
+EXAMPLES
+      named check
+      named &
+      named status
+      named flush web.v4.ring
+      dig @127.0.0.1 www.lab.test
+
+NOTES
+    Edit a primary zone, raise its serial, then run named reload so the
+    secondaries fetch it.
+
+SEE ALSO
+    dig, nslookup, domain, registryd, ianad, networking

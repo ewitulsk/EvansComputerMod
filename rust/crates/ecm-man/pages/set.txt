@@ -1,0 +1,31 @@
+NAME
+    set - list the shell's variables (unset removes one)
+
+SYNOPSIS
+    NAME=value
+
+    set
+
+    unset NAME...
+
+DESCRIPTION
+    The shell keeps variables of its own. A line that is only NAME=value
+    sets one (put the value in quotes if it has spaces: NAME="a b"). In
+    any command line, $NAME or ${NAME} is replaced by its value, and $?
+    by the exit status of the last command (0 for success, 127 for an
+    unknown command, 130 after Ctrl+C, 148 after Ctrl+Z). Nothing is
+    replaced inside single quotes. set lists every variable; unset
+    removes them.
+
+    Variables belong to one shell (the Terminal block, a Terminal window
+    or an SSH login) and are not passed to programs.
+
+EXAMPLES
+      HOST=10.0.0.2
+      ping $HOST
+      echo "last status: $?"
+      set
+      unset HOST
+
+SEE ALSO
+    shell, echo

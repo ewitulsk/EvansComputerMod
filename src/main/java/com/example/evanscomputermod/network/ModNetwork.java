@@ -66,6 +66,16 @@ public class ModNetwork {
                 (packet, ctx) -> ctx.enqueueWork(() ->
                         com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
 
+        // The GUI clipboard and the player's real one (both ways).
+        registrar.playToServer(
+                ClipboardPackets.Push.TYPE,
+                ClipboardPackets.Push.STREAM_CODEC,
+                ClipboardPackets.Push::handle);
+        registrar.playToClient(
+                ClipboardPackets.Set.TYPE,
+                ClipboardPackets.Set.STREAM_CODEC,
+                ClipboardPackets.Set::handle);
+
         // Register delta sync packets
         registrar.playToClient(
                 TerminalDeltaPacket.TYPE,

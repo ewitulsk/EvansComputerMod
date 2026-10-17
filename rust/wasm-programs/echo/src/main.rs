@@ -29,6 +29,8 @@ fn main() {
                     Some('r') => output.push('\r'),
                     Some('\\') => output.push('\\'),
                     Some('0') => output.push('\0'),
+                    Some('a') => output.push('\x07'),
+                    Some('e') => output.push('\x1b'),
                     Some(other) => { output.push('\\'); output.push(other); }
                     None => output.push('\\'),
                 }

@@ -1,0 +1,27 @@
+NAME
+    echo - print text
+
+SYNOPSIS
+    echo [-n] [-e] [text ...]
+
+DESCRIPTION
+    Prints its arguments separated by single spaces, followed by a new
+    line. Together with > and >> it is the quickest way to write a line
+    into a file.
+
+OPTIONS
+    -n
+        Do not print the new line at the end.
+
+    -e
+        Turn backslash sequences into characters: \n new line, \t tab,
+        \r carriage return, \\ a backslash, \0 a zero byte. -ne and -en
+        combine both options.
+
+EXAMPLES
+      echo Hello world
+      echo "nameserver 10.0.0.1" > /etc/resolv.conf
+      echo -e "line one\nline two" >> notes.txt
+
+SEE ALSO
+    cat, shell

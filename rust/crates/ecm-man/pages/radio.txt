@@ -1,0 +1,84 @@
+NAME
+    radio - radio on a computer: the SDR, antennas and radio programs
+
+DESCRIPTION
+    A software-defined radio (SDR) block touching a computer turns radio
+    waves into numbers (IQ samples) and back. The computer does all the
+    rest in software: receivers, a spectrum waterfall, packet radio,
+    broadcasting music, recording and replaying signals. Frequencies
+    are real ones and travel the world like real radio: shortwave goes
+    far, VHF and up need a clear line of sight, walls and hills block.
+
+THE SDR
+    Place an SDR against any face of the computer; peripherals lists it
+    as type sdr, named after the side it touches. Several SDRs on one
+    computer are fine. Programs pick one with --sdr NAME: empty (the
+    first), an index (0, sdr0, sdr_0), a side (left, top, ...) or a
+    /dev/sdr path. The device files are /dev/sdr and /dev/sdrctl (the
+    first SDR), /dev/sdrN and /dev/sdr.<side>.
+
+      tier      tunes            max rate   transmit
+      Basic     0.5-1700 MHz     48 kS/s    no
+      Standard  10 kHz-6 GHz     250 kS/s   up to 5 W
+      Advanced  1 kHz-6 GHz      1 MS/s     up to 5 W, framed mode
+
+    The sample rate is also how wide a slice of spectrum the SDR sees.
+    Only the Advanced SDR has framed mode, used for cellular (see
+    framed and cellular).
+
+FREQUENCIES
+    Programs take 146.52M, 146.52MHz, 146520k, 146.52e6 or 7.1 MHz
+    (k, M, G; case does not matter). Some useful ones:
+
+      0.53-1.7 MHz   AM broadcast (Handheld Radio AM band)
+      3-30 MHz       shortwave, ham bands (40 m = 7.0-7.3 MHz)
+      88-108 MHz     broadcast FM (wide FM)
+      144.39 MHz     APRS packet radio
+      146.52 MHz     VHF FM calling channel
+
+ANTENNAS
+    With nothing connected, an SDR uses a small built-in whip. For range
+    build a real antenna: Insulators on posts, Antenna Wire between
+    them, and a Feed Point in the middle gap (a dipole for f MHz has
+    arms of about 72 / f blocks each). Run Coax Cable from the feed
+    point's side to the SDR; amplifiers, a tuner and a lightning
+    arrestor go in the line. Check it with the Antenna Analyzer, or
+    with the antenna program on a computer touching the feed point.
+    Cell sites use an LTE Sector or mmWave Array Antenna on coax.
+
+WHICH PROGRAM
+      rx_fm, rx_am, rx_ssb   listen through a Speaker
+      waterfall              see the signals around a frequency
+      scan                   find the active frequencies in a band
+      tx_tone                transmit a test carrier or tone
+      radio_station          broadcast WAV files and playlists
+      afsk1200               send/receive packet radio messages
+      radiod                 IP networking over packet (radio0)
+      iqrec, iqplay          record and replay raw signals
+      antenna                measure a built antenna
+      framed                 the Advanced SDR's framed (cell) mode
+
+    Receivers work with any SDR; transmitters need a Standard or
+    Advanced one. Stop a program with Ctrl+T, or start it with & and
+    stop it with kill. --help prints a program's usage.
+
+PROGRAMMING
+    Python and Lua have a radio module for your own receivers and
+    modems: open an SDR, tune it and chain blocks (FM, AM and SSB
+    demodulators and modulators, filters, AGC, packet modems such as
+    AFSK1200, FSK, BPSK and chirp) from a source to a sink (Speaker,
+    WAV or IQ file, or the SDR to transmit), e.g.
+    radio.Flowgraph(sdr >> radio.fm_demod(5e3) >> radio.speaker())
+    in Python (Lua writes .. for >>). radio.framed() drives framed
+    mode. See python and lua.
+
+EXAMPLES
+      rx_fm 146.52M
+      waterfall 7.1M --text
+      radio_station /music 11.6M --mode am --loop &
+      antenna swr 6.8M 7.6M
+
+SEE ALSO
+    rx_fm, rx_am, rx_ssb, waterfall, scan, tx_tone, radio_station,
+    afsk1200, radiod, iqrec, iqplay, antenna, framed, cellular,
+    peripherals, python, lua

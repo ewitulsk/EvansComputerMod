@@ -1,0 +1,73 @@
+NAME
+    dhcpd - hand out addresses to other computers (DHCP server)
+
+SYNOPSIS
+    dhcpd [-c config] [-l leasefile] [-t] [iface ...]
+
+DESCRIPTION
+    Serves DHCP on every interface that has a pool in the config file,
+    or only on the interfaces named. Computers that ask (dhclient,
+    iface ethN dhcp, phones, routers) get an address from the pool, the
+    prefix, and optionally a router, a DNS server and a search domain.
+    Each offer, lease, renewal and release is logged. Leases are saved
+    and restored when dhcpd starts again.
+
+    dhcpd runs until you stop it with Ctrl+T. Start it with dhcpd & to
+    keep the shell, or put dhcpd & in /services.cfg to start it at boot.
+
+    If /etc/dhcpd.conf does not exist (and -c is not given), dhcpd
+    writes a reasonable one first, prints it and serves it: a pool on
+    the interface that has an address, .100-.199 of its subnet, itself
+    as router, itself as DNS only if a DNS server runs on this
+    computer, one-hour leases. Its own address is never leased.
+
+    The serving interface needs an address in the pool's subnet. The
+    router CLI has its own DHCP server; do not run both on one segment.
+
+OPTIONS
+    -c config
+        Read this config file instead of /etc/dhcpd.conf.
+
+    -l leasefile
+        Keep leases in this file instead of /var/dhcpd.leases.
+
+    -t
+        Check the config and exit (with no config: print the one it
+        would write).
+
+CONFIG
+    One statement per line; # starts a comment.
+
+    pool <iface> <first> <last> [prefix <n> | netmask <mask>]
+    [router <ip>] [dns <ip>] [domain <name>] [lease <seconds>]
+        One pool per interface. Defaults: prefix 24, lease 3600
+        seconds (at least 4), no router or DNS option.
+
+    reserve <mac> <ip>
+        That MAC address always gets that address (inside a pool's
+        subnet, possibly outside the range).
+
+    server <iface> <ip>
+        The server address to use on an interface without an address
+        of its own (otherwise the interface address, then the pool's
+        router).
+
+FILES
+    /etc/dhcpd.conf
+        The configuration.
+
+    /var/dhcpd.leases
+        Current leases.
+
+EXAMPLES
+      # /etc/dhcpd.conf
+      pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1
+      pool eth1 10.20.0.100 10.20.0.199 dns 10.20.0.53 lease 600
+      reserve 02:00:00:00:00:42 192.168.50.5
+
+      dhcpd -t
+      dhcpd &
+      dhcpd eth1 &
+
+SEE ALSO
+    dhclient, router, ifconfig, networking

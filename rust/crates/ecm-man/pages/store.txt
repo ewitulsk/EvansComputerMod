@@ -1,0 +1,73 @@
+NAME
+    store - the App Store: find, install, update and remove apps
+
+SYNOPSIS
+    store [--app ID]
+    store --sample-repo DIR [--sign KEYFILE]
+
+DESCRIPTION
+    Opens the App Store window (app id dev.ecm.store, on every computer;
+    start it from the launcher or the ePhone's home screen). Needs the
+    GUI: in the console it says to use pkg instead. It does what pkg
+    does, with the same repositories (/etc/pkg/repos).
+
+    Discover lists every app in the repositories you added (the newest
+    version of each), with a search over name, id, summary and
+    publisher. Updates lists installed apps with a newer version, and
+    Update all. Installed lists what is in /apps.
+
+    An app's page shows its icon, name, publisher, version, size,
+    repository, summary, screenshots, and the permissions it asks for in
+    plain words (for an installed app, with your answer: Allowed, Denied
+    or Asks first). The badge says how far to trust it:
+
+      Verified publisher       signed with the repository's pinned key
+      Unverified publisher     signed, but the key isn't pinned
+      (signed, key not pinned)
+      Unverified publisher     not signed at all
+      Unsigned                 the repository has a pinned key but
+                               the package isn't signed: refused
+
+    Buttons: Install, Update or Open, and Remove (your app's data in
+    /var/apps/ID is kept; system apps can't be removed). Installs,
+    updates and removes queue up; a download shows a progress bar and
+    the message line says what happened ("Installed Notes 1.0.0
+    (unverified publisher)").
+
+    Repositories (Repos on a phone, Add repository on a wide window)
+    lists the repositories with Remove, and adds one by its address:
+    http:// is added when missing and the name is made from the host.
+    Keys can't be pinned here; use pkg repo add ... --key for that.
+    Opening the store and Refresh also search the network for
+    repositories; one found that you haven't added is shown "On the
+    network" and its apps can be installed; Add keeps it.
+
+    A repository that can't be reached shows its last saved list.
+
+OPTIONS
+    --app ID
+        Open on that app's page.
+
+    --sample-repo DIR
+        Write the sample repository (Notes, Counter, Net Check) into DIR
+        and exit; serve it with pkg serve DIR. Works in the console.
+
+    --sign KEYFILE
+        With --sample-repo: sign the packages with this key (made by
+        pkg keygen).
+
+FILES
+    /etc/pkg/repos
+        The repositories: NAME URL [KEY] per line.
+
+    /var/lib/pkg/REPO.index.json
+        Each repository's last fetched list.
+
+EXAMPLES
+      store
+      store --app dev.ecm.notes
+      store --sample-repo /srv/repo
+      pkg serve /srv/repo
+
+SEE ALSO
+    pkg, settings, gui, disco
