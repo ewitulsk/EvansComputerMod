@@ -347,6 +347,45 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         return i == null || decide(i, permission, false, pid);
     }
 
+    /**
+     * A system app: built into the phone ({@code .pkg-origin} = {@code builtin}) or one of
+     * {@link SystemApps} (installed from the server's programs, not from a repository).
+     */
+    public boolean isSystemApp(String appId) {
+        if (appId == null) return false;
+        if (SystemApps.ALL.stream().anyMatch(a -> a.id().equals(appId))) return true;
+        try {
+            Path o = storageRoot().resolve("apps").resolve(appId).resolve(".pkg-origin");
+            return Files.isRegularFile(o) && Files.readString(o).strip().equals("builtin");
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * An app (not a system app) places a call or sends a text through telephonyd: the player
+     * confirms each one ({@code confirm:<what>}; never remembered). Blocks the child thread.
+     */
+    @Override
+    public boolean confirm(int pid, String what) {
+        AppInstance i = instanceOf(pid);
+        if (i == null || isSystemApp(i.appId())) return true;
+        PermissionPrompter p = prompter;
+        if (p == null) return EcmConfig.appsAllowWithoutPrompter();
+        CompletableFuture<PermissionPrompter.Answer> f = p.prompt(new PermissionPrompter.Request(nextReq.getAndIncrement(), i.appId(), i.manifest().name(), "confirm:" + what, pid));
+        if (f == null) return EcmConfig.appsAllowWithoutPrompter();
+        try {
+            PermissionPrompter.Answer a = f.get(promptTimeoutMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (a == null || !a.allow()) {
+                deny(i, "confirm:" + what, "the player said no");
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** May this app use {@code permission} (prompting if {@code mayPrompt} and undecided)? */
     public boolean check(AppInstance i, String permission, boolean mayPrompt) {
         return decide(i, permission, mayPrompt, i.pid());

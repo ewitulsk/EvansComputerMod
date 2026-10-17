@@ -15,7 +15,7 @@ pub const MAX_PUBLISHER: usize = 64;
 pub const SIZES: [&str; 3] = ["compact", "medium", "wide"];
 pub const BACKGROUND_MODES: [&str; 5] = ["audio", "call", "radio", "transfer", "navigation"];
 /// Plain permission names (besides `peripherals:<type>` and `background:<mode>`).
-pub const PERMISSIONS: [&str; 11] = [
+pub const PERMISSIONS: [&str; 14] = [
     "network",
     "radio",
     "cellular",
@@ -27,6 +27,9 @@ pub const PERMISSIONS: [&str; 11] = [
     "files:all",
     "packages",
     "mixer",
+    "contacts",
+    "phone",
+    "sms",
 ];
 const KNOWN_KEYS: [&str; 12] = [
     "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background", "open_with",

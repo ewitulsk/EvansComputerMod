@@ -86,6 +86,8 @@ struct Client {
     fd: i32,
     lines: Lines,
     watch: bool,
+    /// Connected on the texts-only port (ctl::SMS_PORT).
+    sms_only: bool,
 }
 
 struct Audio {
@@ -113,6 +115,7 @@ pub fn main() {
     let g = |k: &str| c.get(k).cloned().unwrap_or_default();
     let mut log = Log::new("telephonyd", !quiet);
     let listener = ecm_cell_net::tcp_listen(ecm_cell_net::LOOPBACK, ctl::PORT).unwrap_or_else(|e| fail(format!("control socket: {e} (is telephonyd already running?)")));
+    let sms_listener = ecm_cell_net::tcp_listen(ecm_cell_net::LOOPBACK, ctl::SMS_PORT).unwrap_or_else(|e| fail(format!("texts socket: {e}")));
     let sip = sys::udp_bind(ecm_tel::ua::SIP_PORT).unwrap_or_else(|e| fail(e));
     // a text or a call for a sleeping phone wakes it (Background apps' wake sockets)
     socket::set_wake(sip, true);
@@ -171,7 +174,7 @@ pub fn main() {
                 }
             }
         }
-        let mut fds = vec![sip, listener];
+        let mut fds = vec![sip, listener, sms_listener];
         fds.extend(clients.iter().map(|c| c.fd));
         let ports: Vec<u16> = rtp.keys().copied().collect();
         fds.extend(ports.iter().map(|p| rtp[p]));
@@ -183,25 +186,27 @@ pub fn main() {
             }
         }
         for (i, p) in ports.iter().enumerate() {
-            if ready[2 + clients.len() + i] {
+            if ready[3 + clients.len() + i] {
                 for (from, d) in sys::udp_drain(rtp[p], &mut buf, 32) {
                     ua.on_rtp(*p, from, &d, now);
                 }
             }
         }
-        if ready[1] {
-            let mut a = socket::SockAddrIn::default();
-            let fd = socket::accept(listener, &mut a);
-            if fd >= 0 {
-                socket::set_wake(fd, true);
-                clients.push(Client { fd, lines: Lines::default(), watch: false });
+        for (k, l) in [(1usize, listener), (2, sms_listener)] {
+            if ready[k] {
+                let mut a = socket::SockAddrIn::default();
+                let fd = socket::accept(l, &mut a);
+                if fd >= 0 {
+                    socket::set_wake(fd, true);
+                    clients.push(Client { fd, lines: Lines::default(), watch: false, sms_only: k == 2 });
+                }
             }
         }
         // control requests
         let mut gone = Vec::new();
         let mut requests: Vec<(i32, String)> = Vec::new();
         for (i, cl) in clients.iter_mut().enumerate() {
-            if !ready[2 + i] {
+            if !ready[3 + i] {
                 continue;
             }
             match sys::read_now(cl.fd, &mut buf) {
@@ -209,6 +214,10 @@ pub fn main() {
                 Some(d) => match cl.lines.push(&d) {
                     Ok(ls) => {
                         for l in ls {
+                            if cl.sms_only && !ctl::sms_port_allows(&l) {
+                                sys::send_all(cl.fd, reply(&Err("the texts port takes only messages (calls need the phone port, 7720)".to_string())).as_bytes());
+                                continue;
+                            }
                             if l.trim() == "watch" {
                                 cl.watch = true;
                                 sys::send_all(cl.fd, reply(&Ok(String::new())).as_bytes());
@@ -316,7 +325,7 @@ pub fn main() {
         if !events.is_empty() {
             let mut dead = Vec::new();
             for cl in clients.iter().filter(|c| c.watch) {
-                for e in &events {
+                for e in events.iter().filter(|e| !cl.sms_only || ctl::sms_event(&e.name)) {
                     if !sys::send_all(cl.fd, format!("{}\n", e.line()).as_bytes()) {
                         dead.push(cl.fd);
                         break;

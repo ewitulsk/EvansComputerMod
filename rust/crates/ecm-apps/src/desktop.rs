@@ -237,6 +237,15 @@ pub fn background_words(mode: &str) -> String {
 /// The permission dialog's question: "Allow <app> to use <permission>?", or for a background
 /// mode's first-time prompt (`background:<mode>`) "Keep <app> running in the background for <calls|...>?".
 pub fn prompt_question(app_name: &str, permission: &str) -> String {
+    if let Some(what) = permission.strip_prefix("confirm:") {
+        let (kind, to) = what.split_once(':').unwrap_or((what, ""));
+        let to: Vec<String> = to.split(',').map(|n| ecm_tel::number::E164::parse(n).map(|e| e.display("1")).unwrap_or_else(|| n.to_string())).collect();
+        return match kind {
+            "call" => format!("Let {app_name} call {}?", to.join(", ")),
+            "sms" => format!("Let {app_name} send a text to {}?", to.join(", ")),
+            _ => format!("Let {app_name} send a picture message to {}?", to.join(", ")),
+        };
+    }
     match permission.strip_prefix("background:") {
         Some(mode) => format!("Keep {app_name} running in the background for {}?", background_words(mode)),
         None => format!("Allow {app_name} to use {permission}?"),
@@ -2175,6 +2184,10 @@ fn prompt_view(p: &Prompt, st: &Shared) -> Element {
         "microphone" => "the microphone",
         "location" => "your location",
         "notifications" => "notifications",
+        "contacts" => "your contacts",
+        "phone" => "phone calls",
+        "sms" => "text messages",
+        "confirm" => "your phone number (once, for this call or message)",
         "background" => "running in the background",
         "peripherals" => "peripherals",
         _ => "",

@@ -1201,6 +1201,7 @@ dependencies = [
  "ecm-apps-ui",
  "ecm-audio",
  "ecm-host-abi",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
  "ecm-vte",
@@ -2879,6 +2880,7 @@ version = "0.1.0"
 dependencies = [
  "ecm-audio",
  "ecm-host-abi",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
 ]

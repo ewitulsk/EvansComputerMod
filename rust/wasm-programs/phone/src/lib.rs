@@ -96,6 +96,10 @@ pub struct Status {
     pub cell: i32,
     /// The carrier celld is on ("" = none).
     pub carrier: String,
+    /// Registered for calls and texts over IMS (telephonyd): `VoLTE` beside the carrier.
+    pub volte: bool,
+    /// The phone's number ("" until the network said it).
+    pub number: String,
     pub foreground: String,
     /// (app id, mode)
     pub modes: Vec<(String, String)>,
@@ -128,6 +132,8 @@ impl Status {
                 "wifi" => s.wifi = rest.parse().unwrap_or(-1),
                 "cell" => s.cell = rest.parse().unwrap_or(-1),
                 "carrier" => s.carrier = if rest == "-" { String::new() } else { rest.to_string() },
+                "volte" => s.volte = rest == "1",
+                "number" => s.number = if rest == "-" { String::new() } else { rest.to_string() },
                 "foreground" => s.foreground = if rest == "-" { String::new() } else { rest.to_string() },
                 "mode" => {
                     let mut p = rest.splitn(2, ' ');
@@ -330,6 +336,10 @@ pub fn background_words(mode: &str) -> String {
 /// background mode's first-time prompt (`background:<mode>`) asks "Keep <App> running in the
 /// background for <calls|audio|...>?" with Allow / Don't allow, both remembered.
 pub fn prompt_text(app_name: &str, permission: &str) -> (String, Vec<(&'static str, &'static str, bool, bool)>) {
+    // An app places a call or sends a text (docs/TELEPHONY.md): asked every time, never remembered.
+    if let Some(what) = permission.strip_prefix("confirm:") {
+        return (confirm_question(app_name, what), vec![("allow", "Allow", true, false), ("deny", "Don't allow", false, false)]);
+    }
     match permission.strip_prefix("background:") {
         Some(mode) => (
             format!("Keep {app_name} running in the background for {}?", background_words(mode)),
@@ -339,6 +349,19 @@ pub fn prompt_text(app_name: &str, permission: &str) -> (String, Vec<(&'static s
             format!("Allow {app_name} to use {}?", permission_words(permission)),
             vec![("allow", "Allow", true, true), ("once", "Only this time", true, false), ("deny", "Don't allow", false, true)],
         ),
+    }
+}
+
+/// "Let Bot call (214) 555-0142?" / "Let Bot send a text to ...?" for `call:<n>`, `sms:<n>`, `mms:<n,n>`.
+pub fn confirm_question(app_name: &str, what: &str) -> String {
+    let (kind, to) = what.split_once(':').unwrap_or((what, ""));
+    let shown: Vec<String> = to.split(',').map(|n| ecm_tel::number::E164::parse(n).map(|e| e.display("1")).unwrap_or_else(|| n.to_string())).collect();
+    let to = shown.join(", ");
+    match kind {
+        "call" => format!("Let {app_name} call {to}?"),
+        "sms" => format!("Let {app_name} send a text to {to}?"),
+        "mms" => format!("Let {app_name} send a picture message to {to}?"),
+        _ => format!("Let {app_name} do this ({what})?"),
     }
 }
 
@@ -595,6 +618,9 @@ pub fn permission_words(p: &str) -> String {
         "controller" => "game controllers".into(),
         "location" => "your location".into(),
         "notifications" => "notifications".into(),
+        "contacts" => "your contacts".into(),
+        "phone" => "phone calls".into(),
+        "sms" => "text messages".into(),
         "files:documents" => "your documents".into(),
         "files:all" => "all your files".into(),
         "packages" => "installing apps".into(),
@@ -1368,13 +1394,21 @@ impl<E: Env> PhoneShell<E> {
                 let c = if i < st.cell { colors::BAR_TEXT } else { 0x4a5563ff };
                 p.rect(&format!("cell{i}"), (rx + i * 3, 12 - bh + 1, 2, bh), c, 0, None);
             }
-            // The carrier's name before the bars (celld's report), when there is room.
+            // The carrier's name before the bars (celld's report), when there is room,
+            // and VoLTE before it once telephonyd registered (docs/TELEPHONY.md).
             if !st.carrier.is_empty() {
                 let name = ellipsize(&st.carrier, 8, 64);
                 let tw = text_w(&name, 8);
                 if rx - tw - 3 > x + 4 {
                     rx -= tw + 3;
                     p.text("carrier", rx, (h - 8) / 2, &name, 8, colors::BAR_TEXT, None);
+                }
+                if st.volte {
+                    let vw = text_w("VoLTE", 8);
+                    if rx - vw - 4 > x + 4 {
+                        rx -= vw + 4;
+                        p.text("volte", rx, (h - 8) / 2, "VoLTE", 8, colors::ACCENT, None);
+                    }
                 }
             }
         }

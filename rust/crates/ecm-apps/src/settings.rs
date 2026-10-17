@@ -415,6 +415,8 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
             )
             .child(kv_w("State", m.message.clone(), kw).id("cell_state"))
             .child(kv_w("SIM", m.sim.clone(), kw).id("cell_sim"))
+            .child(kv_w("Number", if m.number.is_empty() { "-".to_string() } else { m.number.clone() }, kw).id("cell_number"))
+            .child(kv_w("Calls", m.ims.clone(), kw).id("cell_ims"))
             .child(kv_w("Cell", m.cell.clone(), kw))
             .child(kv_w("Signal", m.signal.clone(), kw))
             .child(kv_w("Address", m.address.clone(), kw))
