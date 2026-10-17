@@ -12,14 +12,16 @@ public record HandheldSettings(boolean on, HandheldBand band, double freqHz, int
     public static final HandheldSettings DEFAULT = new HandheldSettings(false, HandheldBand.VHF, HandheldBand.VHF.defaultHz, 70, 0);
 
     public static HandheldSettings read(ItemStack stack) {
+        boolean walkie = WalkieTalkieItem.isWalkie(stack);
         CompoundTag t = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag().getCompound("ecm_radio");
-        if (t.isEmpty()) return DEFAULT;
+        if (t.isEmpty()) return walkie ? WalkieTalkieItem.DEFAULT : DEFAULT;
         HandheldBand band;
         try {
             band = HandheldBand.valueOf(t.getString("band"));
         } catch (IllegalArgumentException e) {
-            band = HandheldBand.VHF;
+            band = walkie ? HandheldBand.UHF : HandheldBand.VHF;
         }
+        if (walkie && !WalkieTalkieItem.tunes(band)) band = HandheldBand.UHF;
         double f = t.contains("freq") ? band.clamp(t.getDouble("freq")) : band.defaultHz;
         return new HandheldSettings(t.getBoolean("on"), band, f,
                 t.contains("volume") ? Math.max(0, Math.min(100, t.getInt("volume"))) : 70,

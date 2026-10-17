@@ -14,8 +14,8 @@ A computer that offers services runs the responder, `disco serve &` (like avahi-
 listens on UDP port 5354 and joins the link-local multicast group **224.0.0.254** on every
 interface ([MULTICAST.md](MULTICAST.md); `ip maddr` shows it), and answers for:
 
-* what its servers **announce**: `chatd` and `pkg serve` write a line to `/run/disco/` when
-  they start (`chatd` under its room's name, `pkg serve` under `--name NAME`);
+* what its servers **announce**: `discordd` and `pkg serve` write a line to `/run/disco/` when
+  they start (`discordd` as `discord` and `chat` under its `--name`, `pkg serve` under `--name NAME`);
 * what `/etc/disco.conf` lists:
 
 ```text
@@ -45,7 +45,8 @@ house PC ──search──> home router (relay gateway) ──> village ISP rou
 phone (LTE) ──> carrier core (relay gateway) ──> its village's ISP router (records)
 ```
 
-Types used by the mod: `chat` (a `chatd`) and `pkg` (a `pkg serve` repository,
+Types used by the mod: `discord` (a Discord backend, `discordd`; the Discord app connects to
+every one it finds), `chat` (the same backends, for the console `chat` command) and `pkg` (a `pkg serve` repository,
 `http://<host>:<port>/`). Any other lower-case name works for your own services
 (`service web 80 My site`).
 
@@ -104,7 +105,7 @@ docs/TECH_VILLAGE_NETWORK.md "Finding services"):
 | ISP router | `disco serve &` | `record chat ...` and `record pkg ...`: the ring's chat server and repository |
 | Home router | `disco serve &` | `relay gateway` (to the ISP) |
 | Carrier core | `disco serve &` | `relay gateway` (phones' searches to its village's ISP) |
-| Chat server, package server | `disco serve &` | none: `chatd` and `pkg serve --name Tech-Village-Apps` announce themselves |
+| Discord backend, package server | `disco serve &` | none: `discordd` and `pkg serve --name Tech-Village-Apps` announce themselves |
 
 So a house PC, a computer you cable into a village or a Data Center rack, and a phone on LTE
 all find the ring's chat server and repository. Houses in worlds generated before this
@@ -127,8 +128,8 @@ is written when it is missing).
 |---|---|---|
 | Wire format, disco.conf, the responder and relay (hop limit, dedupe, '-' rewritten), a search through a home router to the ISP | `rust/crates/ecm-disco/src/tests.rs` | `-Rust ecm-disco` |
 | The store lists found repositories without adding them, installs from them, Add keeps one; configured URLs are skipped, names never collide, keys never pinned | `rust/crates/ecm-apps-ui/src/store/tests.rs` | `-Rust ecm-apps-ui` |
-| Chat searches as it opens, lists servers, a tap connects; one server fills the form; Search again; a saved server doesn't search | `rust/wasm-programs/chatapp/src/app/tests.rs` | `-Rust chatapp` |
+| Discord searches as it opens (and every minute) and connects to every backend it finds; their servers share the rail | `rust/wasm-programs/discord/src/app/tests.rs` | `-Rust discord` |
 | The ISP's records and the routers' relay file (where they go: the in-game checks below) | `VillageDiscoveryTest` | `-JUnit VillageDiscoveryTest -McVersion 26.1` |
-| `service_discovery`: nothing before `disco serve`, then `disco`, `pkg discover`, the App Store and Chat over a real cable | `AppScenarios.serviceDiscovery` | `-GameTests ecm_apps -GameTestOnly service_discovery` |
+| `service_discovery`: nothing before `disco serve`, then `disco`, `pkg discover`, the App Store and Discord over a real cable | `AppScenarios.serviceDiscovery` | `-GameTests ecm_apps -GameTestOnly service_discovery` |
 | A Data Center computer finds the package server with `disco pkg` | `ecm_cellular` `tech_village_repo` | `-GameTests ecm_cellular -GameTestOnly tech_village_repo` |
 | A house PC finds the ring's services through its home router; a phone's Chat finds the chat server over LTE through the core | `house_network`, `cell_tech_village` | `-ClientChecks -ClientSuite tech` |

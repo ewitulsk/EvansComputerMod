@@ -46,7 +46,7 @@ public record AppManifest(
     public static final List<String> BACKGROUND_MODES = List.of("audio", "radio", "transfer", "navigation");
     /** Plain permission names (besides {@code peripherals:<type>} and {@code background:<mode>}). */
     public static final List<String> PERMISSIONS = List.of(
-            "network", "radio", "cellular", "controller", "location", "notifications",
+            "network", "radio", "cellular", "controller", "microphone", "location", "notifications",
             "files:documents", "files:all", "packages");
     private static final Set<String> KNOWN_KEYS = Set.of(
             "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background",

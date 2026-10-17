@@ -251,7 +251,11 @@ def build(style, s):
               {'up': 'true' if y < MAST_TOP else 'false', 'down': 'true' if y > 1 else 'false', 'north': 'false',
                'south': 'false', 'east': 'false', 'west': 'false', 'waterlogged': 'false'})
     # ---- equipment: router + interface block (cables come from the network piece)
-    t.terminal(ROUTER, 'isp.router'); t.put(*IFACE, 'evanscomputermod:interface_block')
+    t.terminal(ROUTER, 'isp.router')
+    # Arms are baked in: jigsaw pieces place with known shapes, so the block never
+    # recomputes them (its east arm meets the router's west face).
+    t.put(*IFACE, 'evanscomputermod:interface_block', {d: 'true' if d == 'east' else 'false'
+                                                       for d in ('north', 'south', 'east', 'west', 'up', 'down')})
     # ---- interior furnishing and workstations
     t.put(12, 1, 6, 'minecraft:barrel', {'facing': 'up', 'open': 'false'})
     t.put(13, 1, 6, 'minecraft:lectern', {'facing': 'south', 'has_book': 'false', 'powered': 'false'})

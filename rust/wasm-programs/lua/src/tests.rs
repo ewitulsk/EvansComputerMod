@@ -918,6 +918,50 @@ COUNT0, COUNT1 = chest.size(), chest:get_item_detail(1)
     assert_eq!(get::<String>(&l, "BIG"), "right");
 }
 
+#[test]
+fn lua_microphone_records_and_reads_status() {
+    let d = tmpdir("mic");
+    // 160 bytes = 80 frames of 16-bit mono: 0.01 s at 8 kHz, peak 16384 (-6 dBFS).
+    let mut pcm = Vec::new();
+    for i in 0..80i16 {
+        let v: i16 = if i == 7 { 16384 } else { i * 10 };
+        pcm.extend_from_slice(&v.to_le_bytes());
+    }
+    std::fs::write(d.join("mic.top"), &pcm).unwrap();
+    std::fs::write(d.join("micctl.top"), "rate 8000\nbits 16\nchannels 1\ngain 50\nlevel_db -6\noverruns 0\n").unwrap();
+    std::fs::write(d.join("sound.conf"), "output left\ninput top\n").unwrap();
+    let l = lua();
+    set(&l, "DIR", p(&d));
+    run(
+        &l,
+        r#"
+-- /dev/* and /etc/* live in DIR for this test
+local real_open = io.open
+io.open = function(path, mode) return real_open((path:gsub("^/dev/", DIR .. "/"):gsub("^/etc/", DIR .. "/")), mode) end
+assert(audio.default_device("input") == "top" and audio.default_device("output") == "left")
+assert(audio.default_device("other") == nil)
+local mic = audio.open_mic()        -- the default from sound.conf
+assert(mic.device == "/dev/mic.top", mic.device)
+assert(mic.rate == 8000 and mic.bits == 16 and mic.channels == 1)
+local pcm = mic:record(0.01)
+assert(#pcm == 160, #pcm)
+assert(audio.peak_db(pcm) == -6, audio.peak_db(pcm))
+assert(audio.peak_db(string.rep("\0", 10)) == -99)
+assert(mic:level() == -6 and mic:status().overruns == 0)
+mic:close()
+audio.save_wav(DIR .. "/memo.wav", pcm, 8000)
+"#,
+    );
+    let wav = std::fs::read(d.join("memo.wav")).unwrap();
+    assert_eq!(&wav[0..4], b"RIFF");
+    assert_eq!(&wav[8..16], b"WAVEfmt ");
+    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 8000, "rate");
+    assert_eq!(u16::from_le_bytes(wav[34..36].try_into().unwrap()), 16, "bits");
+    assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 160, "data length");
+    assert_eq!(&wav[44..], &pcm[..]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 // ---------------------------------------------------------------- cards
 
 /// A `_peripheral` with one of each card device (a Card Reader/Writer, an NFC
@@ -1274,6 +1318,7 @@ const NOT_IN_LUA: &[(&str, &str)] = &[
     ("sensors.Hub", "made by sensors.find()"),
     ("controller.Controller", "made by controller.find()/all()"),
     ("audio.Speaker", "made by audio.open()"),
+    ("audio.Microphone", "made by audio.open_mic()"),
     // cards: the applet objects hang off reader:card(); a session off nfc:session().
     ("cards.Card", "made by Reader:card()"),
     ("cards.Stripe", "card.stripe of Reader:card()"),

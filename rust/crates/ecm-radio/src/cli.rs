@@ -375,13 +375,20 @@ pub struct StationArgs {
     pub iq_out: Option<String>,
     /// Seconds of silent carrier between songs.
     pub gap: f64,
+    /// Live source (a microphone): stop after this many seconds (None: until killed).
+    pub duration: Option<f64>,
+}
+
+/// True when `source` names a microphone (`mic`, `/dev/mic`, `/dev/mic.<side>`): a live source.
+pub fn is_mic(source: &str) -> bool {
+    source == "mic" || source == "/dev/mic" || source.starts_with("/dev/mic.")
 }
 
 pub const STATION_USAGE: &str =
-    "<file.wav|file.pcm|playlist.m3u|dir>... <freq> [--mode fm|am|wbfm] [--power DBM] [--loop] [--gap S] [--sdr NAME] [--rate SPS] [--raw-rate HZ] [--iq FILE]";
+    "<file.wav|file.pcm|playlist.m3u|dir|/dev/mic[.side]>... <freq> [--mode fm|am|wbfm] [--power DBM] [--loop] [--gap S] [--duration S] [--sdr NAME] [--rate SPS] [--raw-rate HZ] [--iq FILE]";
 
 pub fn parse_station(args: &[String]) -> Result<StationArgs, String> {
-    let o = split(args, &["mode", "power", "sdr", "rate", "raw-rate", "iq", "gap"], &["loop", "help"])?;
+    let o = split(args, &["mode", "power", "sdr", "rate", "raw-rate", "iq", "gap", "duration"], &["loop", "help"])?;
     if o.pos.len() < 2 {
         return Err(if o.pos.is_empty() { "missing audio file".into() } else { "missing frequency".into() });
     }
@@ -408,6 +415,7 @@ pub fn parse_station(args: &[String]) -> Result<StationArgs, String> {
         raw_rate: o.rate("raw-rate")?.unwrap_or(8_000),
         iq_out: o.str("iq"),
         gap,
+        duration: o.num("duration")?,
     })
 }
 
@@ -650,6 +658,10 @@ mod tests {
         let pl = parse_station(&a("a.wav music/ list.m3u 9.58M --mode am --gap 2")).unwrap();
         assert_eq!(pl.sources, vec!["a.wav", "music/", "list.m3u"]);
         assert_eq!((pl.freq, pl.gap), (9.58e6, 2.0));
+        let live = parse_station(&a("/dev/mic.top 146.52M --duration 3")).unwrap();
+        assert_eq!((live.sources[0].as_str(), live.duration), ("/dev/mic.top", Some(3.0)));
+        assert!(is_mic("/dev/mic") && is_mic("mic") && is_mic("/dev/mic.left"));
+        assert!(!is_mic("/dev/microphone.wav") && !is_mic("mic.wav"));
 
         let r = parse_iqrec(&a("433.92M cap.cs16 --seconds 2")).unwrap();
         assert_eq!(r.format, ecm_dsp::iq::SampleFormat::Cs16);

@@ -1,0 +1,30 @@
+[package]
+name = "discord"
+version = "0.1.0"
+edition = "2021"
+description = "Discord (dev.ecm.discord): servers with text and voice channels on every Discord backend (discordd) the computer can reach, found by themselves on the network. The logic is the discord_app library (tested on the host); discord is the program, packaged as an .ecmpkg."
+
+[lib]
+name = "discord_app"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "discord"
+path = "src/main.rs"
+test = false
+
+[[example]]
+name = "record_discord_sessions"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-chat = { workspace = true }
+ecm-discord = { workspace = true }
+ecm-audio = { workspace = true }
+ecm-host-abi = { workspace = true }
+ecm-disco = { workspace = true }
+
+[dev-dependencies]
+pkg = { path = "../pkg" }

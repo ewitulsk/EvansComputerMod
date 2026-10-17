@@ -22,6 +22,19 @@ pub const MAX_HISTORY: usize = 50;
 pub const MAX_VISITS: usize = 100;
 pub const HOME: &str = "about:home";
 
+/// The computer's own default home page: `home <address>` in `/etc/browser.conf` (a Tech
+/// Village house PC's points at its village's website). Lines starting with `#` are comments.
+pub const CONF: &str = "/etc/browser.conf";
+
+/// The `home` of a `/etc/browser.conf`.
+pub fn home_from_conf(text: &str) -> Option<String> {
+    text.lines().map(str::trim).filter(|l| !l.starts_with('#')).find_map(|l| {
+        let (k, v) = l.split_once(char::is_whitespace)?;
+        let v = v.trim();
+        (k == "home" && Url::from_input(v).is_some()).then(|| v.to_string())
+    })
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Nav {
     /// Load an address; `push` adds it to the history.

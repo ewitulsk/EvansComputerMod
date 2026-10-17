@@ -1,0 +1,14 @@
+[package]
+name = "discordd"
+version = "0.1.0"
+edition = "2021"
+description = "discordd: a Discord backend (servers, text and voice channels) for the Discord app and the chat command."
+
+[[bin]]
+name = "discordd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-discord = { workspace = true }
+ecm-disco = { workspace = true }

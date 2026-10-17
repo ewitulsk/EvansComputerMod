@@ -15,11 +15,12 @@ pub const MAX_PUBLISHER: usize = 64;
 pub const SIZES: [&str; 3] = ["compact", "medium", "wide"];
 pub const BACKGROUND_MODES: [&str; 4] = ["audio", "radio", "transfer", "navigation"];
 /// Plain permission names (besides `peripherals:<type>` and `background:<mode>`).
-pub const PERMISSIONS: [&str; 9] = [
+pub const PERMISSIONS: [&str; 10] = [
     "network",
     "radio",
     "cellular",
     "controller",
+    "microphone",
     "location",
     "notifications",
     "files:documents",
