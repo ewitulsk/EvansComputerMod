@@ -3,9 +3,15 @@ name = "httpd"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "httpd"
+path = "src/lib.rs"
+doctest = false
+
 [[bin]]
 name = "httpd"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 ecm-host-abi = { workspace = true }

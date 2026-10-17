@@ -62,3 +62,48 @@ pub fn folder(url: &str, entries: &[(String, bool)]) -> String {
     }
     format!("<html><head><title>Index of {u}</title></head><body><h2>Index of {u}</h2><ul>{items}</ul></body></html>", u = esc(url))
 }
+
+/// `about:bookmarks`.
+pub fn bookmarks(list: &[(String, String)]) -> String {
+    let mut items = String::new();
+    for (t, u) in list.iter().rev() {
+        items.push_str(&format!("<li><a href=\"{}\">{}</a> <small>{}</small></li>", esc(u), esc(t), esc(u)));
+    }
+    if items.is_empty() {
+        items = "<p>No bookmarks yet. Open a page, then Menu &gt; Bookmark this page.</p>".into();
+    } else {
+        items = format!("<ul>{items}</ul>");
+    }
+    format!("<html><head><title>Bookmarks</title></head><body style='margin: 12px'><h2>Bookmarks</h2>{items}</body></html>")
+}
+
+/// `about:history`: recent visits, newest first.
+pub fn history(list: &[(String, String)]) -> String {
+    let mut items = String::new();
+    for (t, u) in list.iter().rev() {
+        items.push_str(&format!("<li><a href=\"{}\">{}</a> <small>{}</small></li>", esc(u), esc(t), esc(u)));
+    }
+    if items.is_empty() {
+        items = "<p>Nothing visited yet.</p>".into();
+    } else {
+        items = format!("<ul>{items}</ul>");
+    }
+    format!("<html><head><title>History</title></head><body style='margin: 12px'><h2>History</h2>{items}</body></html>")
+}
+
+/// A file saved to the Downloads folder.
+pub fn downloaded(url: &str, path: &str, size: usize, mime: &str) -> String {
+    let install = if path.ends_with(".ecmpkg") {
+        format!("<p>An app package. Install it from a Terminal: <code>pkg install {}</code></p>", esc(path))
+    } else {
+        String::new()
+    };
+    format!(
+        "<html><head><title>Downloaded</title></head><body style='margin: 16px'><h2>Downloaded</h2>\
+         <p><code>{u}</code> ({m}, {size} bytes) is saved as <code>{p}</code>.</p>{install}\
+         <p><a href=\"file://{p}\">Open it in the Browser</a> &middot; <a href=\"file:///home/Downloads/\">Downloads</a></p></body></html>",
+        u = esc(url),
+        m = esc(mime),
+        p = esc(path)
+    )
+}

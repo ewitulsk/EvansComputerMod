@@ -33,6 +33,8 @@ pub struct Rendered {
     pub styles: Vec<Option<Style>>,
     /// The style sheets use `:hover`/`:focus`: pointer moves need a restyle.
     pub dynamic_selectors: bool,
+    /// Every picture the page shows (`<img src>`, `background-image`), resolved.
+    pub images: Vec<String>,
 }
 
 impl Page {
@@ -91,16 +93,47 @@ impl Page {
         self.sheets = sheets;
     }
 
-    /// Style, lay out and paint for a viewport of `w x h` lu.
-    pub fn render(&self, w: f32, h: f32, ua: &UaColors, dynamic: &Dynamic, image_size: &dyn Fn(NodeId) -> Option<(f32, f32)>) -> Rendered {
+    /// Style, lay out and paint for a viewport of `w x h` lu. `images` gives a
+    /// loaded picture's size by its address; `caret` is the focused text
+    /// control and its caret (`dynamic.focus` styles it).
+    pub fn render(&self, w: f32, h: f32, ua: &UaColors, dynamic: &Dynamic, images: &dyn Fn(&str) -> Option<(f32, f32)>) -> Rendered {
+        self.render_with_caret(w, h, ua, dynamic, images, None)
+    }
+
+    pub fn render_with_caret(
+        &self,
+        w: f32,
+        h: f32,
+        ua: &UaColors,
+        dynamic: &Dynamic,
+        images: &dyn Fn(&str) -> Option<(f32, f32)>,
+        caret: Option<(NodeId, usize)>,
+    ) -> Rendered {
         let ua_sheet = style::ua_sheet(ua);
         let env = style::StyleEnv { ua_colors: ua, ua_sheet: &ua_sheet, sheets: &self.sheets, viewport: (w, h), dynamic };
         let styles = style::compute(&self.dom, &env);
-        let lenv = Env { dom: &self.dom, styles: &styles, viewport: (w, h), ua, image_size };
+        let lenv = Env { dom: &self.dom, styles: &styles, viewport: (w, h), ua, images, base: Some(&self.url), caret };
         let root = layout::layout_document(&lenv);
         let list = paint::paint(&root, &lenv);
         let dynamic_selectors = self.sheets.iter().any(|s| s.rules.iter().any(|r| r.selectors.iter().any(|sel| sel.uses_hover())));
-        Rendered { list, styles, dynamic_selectors }
+        let mut wanted: Vec<String> = Vec::new();
+        for n in self.dom.find_all("img") {
+            if styles.get(n).and_then(|s| s.as_ref()).is_some_and(|s| s.display == crate::style::Display::None) {
+                continue;
+            }
+            if let Some(u) = self.dom.attr(n, "src").and_then(|s| lenv.image_url(s)) {
+                wanted.push(u);
+            }
+        }
+        for st in styles.iter().flatten() {
+            if let Some(u) = st.background_image.as_deref().and_then(|s| lenv.image_url(s)) {
+                wanted.push(u);
+            }
+        }
+        wanted.dedup();
+        let mut seen = std::collections::HashSet::new();
+        wanted.retain(|u| seen.insert(u.clone()));
+        Rendered { list, styles, dynamic_selectors, images: wanted }
     }
 
     /// The link (`<a href>`) at or around `node`, resolved.

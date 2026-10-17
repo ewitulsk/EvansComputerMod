@@ -6,10 +6,12 @@
 //! parents). Inline content becomes line boxes of text and atomic (inline
 //! block, image, form control) fragments aligned on a common baseline.
 //! `position: relative` shifts a box and its contents after layout;
-//! `absolute`/`fixed` are laid out in flow in v1.
+//! `absolute` and `fixed` boxes leave the flow and are placed after it,
+//! against their nearest positioned ancestor (fixed: the viewport). Tables
+//! size their columns from the cells' minimum and preferred widths.
 
 use crate::dom::{Dom, NodeData, NodeId, DOCUMENT};
-use crate::style::{self, Align, Display, Justify, ListStyle, Overflow, Position, Style, TextAlign, UaColors};
+use crate::style::{self, Align, Display, Justify, ListStyle, Overflow, Position, Style, TextAlign, UaColors, VAlign};
 use ecm_ui_proto::fonts::{self, Face};
 use ecm_ui_proto::Font;
 
@@ -19,11 +21,33 @@ pub struct Env<'a> {
     pub styles: &'a [Option<Style>],
     pub viewport: (f32, f32),
     pub ua: &'a UaColors,
-    /// The natural size of an `<img>` (None until it is loaded).
-    pub image_size: &'a dyn Fn(NodeId) -> Option<(f32, f32)>,
+    /// The natural size of a picture by its address (None until it is loaded).
+    pub images: &'a dyn Fn(&str) -> Option<(f32, f32)>,
+    /// The page's address (pictures are resolved against it).
+    pub base: Option<&'a crate::url::Url>,
+    /// The focused text control and its caret (characters).
+    pub caret: Option<(NodeId, usize)>,
 }
 
 impl Env<'_> {
+    /// A picture's address resolved against the page.
+    pub fn image_url(&self, src: &str) -> Option<String> {
+        let src = src.trim();
+        if src.is_empty() {
+            return None;
+        }
+        match self.base {
+            Some(b) => b.join(src).map(|u| u.to_string()),
+            None => Some(src.to_string()),
+        }
+    }
+
+    /// The natural size of `<img>` `node`, once loaded.
+    pub fn img_size(&self, node: NodeId) -> Option<(f32, f32)> {
+        let url = self.image_url(self.dom.attr(node, "src")?)?;
+        (self.images)(&url)
+    }
+
     pub fn style(&self, id: NodeId) -> &Style {
         self.styles.get(id).and_then(|s| s.as_ref()).or_else(|| self.styles[DOCUMENT].as_ref()).expect("the document has a style")
     }
@@ -47,6 +71,8 @@ pub struct LayoutBox {
     /// A height a flex container gives this item (border box).
     pub forced_h: Option<f32>,
     pub marker: Option<Marker>,
+    /// Absolutely positioned and fixed boxes whose element sits in this one.
+    pub oof: Vec<LayoutBox>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +81,26 @@ pub enum Content {
     Blocks(Vec<LayoutBox>),
     Inline(InlineContent),
     Flex(Vec<LayoutBox>),
+    Table(TableContent),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TableContent {
+    pub captions: Vec<LayoutBox>,
+    pub rows: Vec<TableRow>,
+    /// Column widths after layout.
+    pub cols: Vec<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TableRow {
+    pub node: Option<NodeId>,
+    pub style: Style,
+    pub cells: Vec<LayoutBox>,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -202,6 +248,7 @@ impl LayoutBox {
             h: 0.0,
             forced_h: None,
             marker: None,
+            oof: Vec::new(),
         }
     }
 
@@ -260,6 +307,25 @@ impl LayoutBox {
                 }
                 ic.atomics.iter_mut().for_each(|b| b.translate(dx, dy));
             }
+            Content::Table(t) => {
+                t.captions.iter_mut().for_each(|b| b.translate(dx, dy));
+                for r in &mut t.rows {
+                    r.x += dx;
+                    r.y += dy;
+                    r.cells.iter_mut().for_each(|b| b.translate(dx, dy));
+                }
+            }
+        }
+        self.oof.iter_mut().for_each(|b| b.translate(dx, dy));
+    }
+
+    /// The boxes inside this one in flow (for walks over the tree).
+    pub fn children_mut(&mut self) -> Vec<&mut LayoutBox> {
+        match &mut self.content {
+            Content::Empty => Vec::new(),
+            Content::Blocks(c) | Content::Flex(c) => c.iter_mut().collect(),
+            Content::Inline(ic) => ic.atomics.iter_mut().collect(),
+            Content::Table(t) => t.captions.iter_mut().chain(t.rows.iter_mut().flat_map(|r| r.cells.iter_mut())).collect(),
         }
     }
 
@@ -268,6 +334,7 @@ impl LayoutBox {
         match &self.content {
             Content::Inline(ic) => ic.lines.first().map(|l| l.baseline),
             Content::Blocks(c) | Content::Flex(c) => c.iter().find_map(|b| b.first_baseline()),
+            Content::Table(t) => t.rows.first().and_then(|r| r.cells.iter().find_map(|c| c.first_baseline())),
             Content::Empty => None,
         }
     }
@@ -277,6 +344,8 @@ enum Child {
     Block(LayoutBox),
     Inline(InlineItem),
     Atomic(LayoutBox),
+    /// `position: absolute | fixed`: out of the flow.
+    OutOfFlow(LayoutBox),
 }
 
 const REPLACED: &[&str] = &["img", "input", "select", "textarea"];
@@ -287,8 +356,10 @@ pub fn build(env: &Env) -> LayoutBox {
     st.display = Display::Block;
     let mut kids = Vec::new();
     collect(env, DOCUMENT, &mut kids, false);
-    let content = assemble(env, kids, &st, false);
-    LayoutBox::new(Some(DOCUMENT), st, content)
+    let (content, oof) = assemble(env, kids, &st, false);
+    let mut b = LayoutBox::new(Some(DOCUMENT), st, content);
+    b.oof = oof;
+    b
 }
 
 fn blockified(d: Display) -> Display {
@@ -312,6 +383,20 @@ fn collect(env: &Env, node: NodeId, out: &mut Vec<Child>, blockify: bool) {
                 }
                 if blockify {
                     d = blockified(d);
+                }
+                // Table parts outside a table are blocks.
+                if matches!(d, Display::TableRowGroup | Display::TableRow | Display::TableCell | Display::TableCaption) {
+                    d = Display::Block;
+                }
+                if matches!(s.position, Position::Absolute | Position::Fixed) {
+                    let inner = match blockified(d) {
+                        Display::Flex => Display::Flex,
+                        Display::Table => Display::Table,
+                        _ => Display::Block,
+                    };
+                    let b = if REPLACED.contains(&e.tag.as_str()) { build_replaced(env, c) } else { build_box(env, c, inner) };
+                    out.push(Child::OutOfFlow(b));
+                    continue;
                 }
                 if e.tag == "br" {
                     out.push(Child::Inline(InlineItem::Break));
@@ -340,11 +425,69 @@ fn collect(env: &Env, node: NodeId, out: &mut Vec<Child>, blockify: bool) {
 fn build_box(env: &Env, el: NodeId, display: Display) -> LayoutBox {
     let mut st = env.style(el).clone();
     st.display = display;
+    if display == Display::Table {
+        let (t, oof) = build_table(env, el);
+        let mut b = LayoutBox::new(Some(el), st, Content::Table(t));
+        b.oof = oof;
+        return b;
+    }
     let flex = matches!(display, Display::Flex | Display::InlineFlex);
     let mut kids = Vec::new();
     collect(env, el, &mut kids, flex);
-    let content = assemble(env, kids, &st, flex);
-    LayoutBox::new(Some(el), st, content)
+    let (content, oof) = assemble(env, kids, &st, flex);
+    let mut b = LayoutBox::new(Some(el), st, content);
+    b.oof = oof;
+    b
+}
+
+/// A table's captions and rows (rows from row groups too, in document order);
+/// cells stray in a table get a row of their own.
+fn build_table(env: &Env, table: NodeId) -> (TableContent, Vec<LayoutBox>) {
+    let dom = env.dom;
+    let mut t = TableContent::default();
+    let mut oof = Vec::new();
+    let mut stray: Option<TableRow> = None;
+    let row_of = |env: &Env, tr: NodeId| -> TableRow {
+        let cells = env
+            .dom
+            .element_children(tr)
+            .filter(|c| env.style(*c).display != Display::None)
+            .map(|c| if REPLACED.contains(&env.dom.tag(c).unwrap_or("")) { build_replaced(env, c) } else { build_box(env, c, Display::Block) })
+            .collect();
+        TableRow { node: Some(tr), style: env.style(tr).clone(), cells, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }
+    };
+    let mut stack: Vec<NodeId> = dom.element_children(table).collect();
+    stack.reverse();
+    while let Some(c) = stack.pop() {
+        let s = env.style(c);
+        match s.display {
+            Display::None => {}
+            Display::TableCaption => t.captions.push(build_box(env, c, Display::Block)),
+            Display::TableRowGroup => {
+                let mut kids: Vec<NodeId> = dom.element_children(c).collect();
+                kids.reverse();
+                stack.extend(kids);
+            }
+            Display::TableRow => {
+                if let Some(r) = stray.take() {
+                    t.rows.push(r);
+                }
+                t.rows.push(row_of(env, c));
+            }
+            _ if matches!(s.position, Position::Absolute | Position::Fixed) => oof.push(build_box(env, c, Display::Block)),
+            _ => {
+                let cell = build_box(env, c, Display::Block);
+                stray
+                    .get_or_insert_with(|| TableRow { node: None, style: env.style(table).inherit_from(env.ua), cells: Vec::new(), x: 0.0, y: 0.0, w: 0.0, h: 0.0 })
+                    .cells
+                    .push(cell);
+            }
+        }
+    }
+    if let Some(r) = stray.take() {
+        t.rows.push(r);
+    }
+    (t, oof)
 }
 
 fn build_replaced(env: &Env, el: NodeId) -> LayoutBox {
@@ -399,8 +542,24 @@ fn is_blank_run(env: &Env, run: &[InlineItem]) -> bool {
     })
 }
 
-/// Children into a box's content: block children, or inline content, or flex items.
-fn assemble(env: &Env, kids: Vec<Child>, parent: &Style, flex: bool) -> Content {
+/// Children into a box's content: block children, or inline content, or flex
+/// items; and the out-of-flow boxes among them.
+fn assemble(env: &Env, kids: Vec<Child>, parent: &Style, flex: bool) -> (Content, Vec<LayoutBox>) {
+    let mut oof = Vec::new();
+    let kids: Vec<Child> = kids
+        .into_iter()
+        .filter_map(|k| match k {
+            Child::OutOfFlow(b) => {
+                oof.push(b);
+                None
+            }
+            k => Some(k),
+        })
+        .collect();
+    (assemble_flow(env, kids, parent, flex), oof)
+}
+
+fn assemble_flow(env: &Env, kids: Vec<Child>, parent: &Style, flex: bool) -> Content {
     let has_block = flex || kids.iter().any(|k| matches!(k, Child::Block(_)));
     if !has_block {
         let mut ic = InlineContent::default();
@@ -411,7 +570,7 @@ fn assemble(env: &Env, kids: Vec<Child>, parent: &Style, flex: bool) -> Content 
                     ic.items.push(InlineItem::Atomic(ic.atomics.len()));
                     ic.atomics.push(b);
                 }
-                Child::Block(_) => unreachable!(),
+                Child::Block(_) | Child::OutOfFlow(_) => unreachable!(),
             }
         }
         if ic.atomics.is_empty() && is_blank_run(env, &ic.items) {
@@ -466,6 +625,7 @@ fn assemble(env: &Env, kids: Vec<Child>, parent: &Style, flex: bool) -> Content 
                 finish(&mut run, &open, &mut out);
                 out.push(b);
             }
+            Child::OutOfFlow(_) => {}
         }
     }
     for o in open.iter().rev() {
@@ -506,7 +666,7 @@ fn replaced_size(env: &Env, b: &LayoutBox) -> (f32, f32) {
     let lh = s.line_height_px();
     match &b.replaced {
         Some(Replaced::Image { alt }) => {
-            let natural = b.node.and_then(|n| (env.image_size)(n));
+            let natural = b.node.and_then(|n| env.img_size(n));
             match natural {
                 Some((w, h)) => (w, h),
                 None if alt.is_empty() => (16.0, 16.0),
@@ -602,6 +762,8 @@ pub fn layout_block(b: &mut LayoutBox, env: &Env, cb_w: f32, cb_h: Option<f32>, 
             Some(w) => clamp_w(&s, w, cb_w, bp_h),
             None => {
                 let avail = (cb_w - m[1] - m[3] - bp_h).max(0.0);
+                // An auto-width table is as wide as its columns want, at most the containing block.
+                let mode = if s.display == Display::Table { WidthMode::Fit } else { mode };
                 let w = match mode {
                     WidthMode::Fit => {
                         let (mn, mx) = intrinsic(b, env);
@@ -637,6 +799,7 @@ pub fn layout_block(b: &mut LayoutBox, env: &Env, cb_w: f32, cb_h: Option<f32>, 
         Content::Blocks(kids) => layout_blocks(kids, env, cw, inner_cb_h, cx, cy),
         Content::Inline(ic) => layout_inline(ic, env, &s, cw, cx, cy),
         Content::Flex(items) => layout_flex(items, env, &s, cw, inner_cb_h, cx, cy),
+        Content::Table(t) => layout_table(t, env, &s, cw, cx, cy),
     };
     let ch = match spec_h {
         Some(h) if b.forced_h.is_some() => h,
@@ -767,6 +930,12 @@ pub fn intrinsic(b: &LayoutBox, env: &Env) -> (f32, f32) {
         Content::Empty => (0.0, 0.0),
         Content::Blocks(kids) => kids.iter().map(|k| outer_intrinsic(k, env)).fold((0.0, 0.0), |a, x| (a.0.max(x.0), a.1.max(x.1))),
         Content::Inline(ic) => inline_intrinsic(ic, env, &b.style),
+        Content::Table(t) => {
+            let (mins, maxs) = table_columns(t, env);
+            let sp = b.style.border_spacing * (mins.len() as f32 + 1.0);
+            let caps = t.captions.iter().map(|c| outer_intrinsic(c, env)).fold((0.0f32, 0.0f32), |a, x| (a.0.max(x.0), a.1.max(x.1)));
+            ((mins.iter().sum::<f32>() + sp).max(caps.0), (maxs.iter().sum::<f32>() + sp).max(caps.1))
+        }
         Content::Flex(items) => {
             let s = &b.style;
             let sizes: Vec<(f32, f32)> = items.iter().map(|k| outer_intrinsic(k, env)).collect();
@@ -1064,7 +1233,12 @@ fn place_lines(ic: &mut InlineContent, env: &Env, container: &Style, lines: Vec<
                     above = above.max(a);
                     below = below.max(b);
                 }
-                Piece::Atomic { idx } => above = above.max(ic.atomics[*idx].outer_h()),
+                Piece::Atomic { idx } => {
+                    let a = &ic.atomics[*idx];
+                    let asc = atomic_ascent(a);
+                    above = above.max(asc);
+                    below = below.max(a.outer_h() - asc);
+                }
                 Piece::Edge { el, .. } => {
                     let (a, b, _, _) = text_metrics(env.style(*el));
                     above = above.max(a);
@@ -1102,7 +1276,7 @@ fn place_lines(ic: &mut InlineContent, env: &Env, container: &Style, lines: Vec<
                 }
                 Piece::Atomic { idx } => {
                     let a = &mut ic.atomics[*idx];
-                    let (dx, dy) = (px - a.x + a.margin[3], baseline - a.outer_h() + a.margin[0] - a.y);
+                    let (dx, dy) = (px - a.x + a.margin[3], baseline - atomic_ascent(a) + a.margin[0] - a.y);
                     a.translate(dx, dy);
                     let el = a.node.unwrap_or(DOCUMENT);
                     frags.push(Frag { x: a.x, y: a.y, w: a.w, h: a.h, el, kind: FragKind::Atomic(*idx) });
@@ -1136,6 +1310,23 @@ fn place_lines(ic: &mut InlineContent, env: &Env, container: &Style, lines: Vec<
     ic.lines = out_lines;
     ic.decos = decos;
     y - cy
+}
+
+/// An inline block's baseline, from the top of its margin box: its first line's
+/// text (a form control: its text), else its bottom margin edge (pictures,
+/// checkboxes, empty boxes).
+fn atomic_ascent(a: &LayoutBox) -> f32 {
+    let top = a.y - a.margin[0];
+    match &a.replaced {
+        Some(Replaced::Control { kind, .. }) if !matches!(kind, ControlKind::Checkbox { .. } | ControlKind::Radio { .. }) => {
+            let (_, f) = face(&a.style);
+            let (_, cy, _, ch) = a.content_rect();
+            let ty = if *kind == ControlKind::TextArea { cy } else { cy + ((ch - f.size as f32) / 2.0).max(0.0).floor() };
+            ty + f.ascent() as f32 - top
+        }
+        Some(_) => a.outer_h(),
+        None => a.first_baseline().map(|b| b - top).unwrap_or(a.outer_h()),
+    }
 }
 
 fn deco(env: &Env, el: NodeId, x0: f32, x1: f32, baseline: f32, first: bool, last: bool) -> Deco {
@@ -1408,10 +1599,173 @@ fn item_align(container: &Style, item: &Style) -> Align {
     item.align_self.unwrap_or(container.align_items)
 }
 
+// ------------------------------------------------------------------ tables
+
+/// Each column's minimum and preferred width (border boxes of its cells).
+fn table_columns(t: &TableContent, env: &Env) -> (Vec<f32>, Vec<f32>) {
+    let n = t.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+    let mut mins = vec![0.0f32; n];
+    let mut maxs = vec![0.0f32; n];
+    for r in &t.rows {
+        for (i, c) in r.cells.iter().enumerate() {
+            let (mn, mx) = outer_intrinsic(c, env);
+            mins[i] = mins[i].max(mn.ceil());
+            maxs[i] = maxs[i].max(mx.ceil());
+        }
+    }
+    (mins, maxs)
+}
+
+fn layout_table(t: &mut TableContent, env: &Env, s: &Style, cw: f32, cx: f32, cy: f32) -> f32 {
+    let mut y = cy;
+    for c in t.captions.iter_mut() {
+        layout_block(c, env, cw, None, cx, y, WidthMode::Fill);
+        y += c.outer_h();
+    }
+    let (mins, maxs) = table_columns(t, env);
+    let n = mins.len();
+    let sp = s.border_spacing;
+    let avail = (cw - sp * (n as f32 + 1.0)).max(0.0);
+    let (smin, smax) = (mins.iter().sum::<f32>(), maxs.iter().sum::<f32>());
+    let cols: Vec<f32> = (0..n)
+        .map(|i| {
+            if smax <= avail {
+                // Room for every column's preferred width: share what is left by it.
+                let extra = avail - smax;
+                maxs[i] + if smax > 0.0 { extra * maxs[i] / smax } else { extra / n as f32 }
+            } else if smin >= avail {
+                mins[i]
+            } else {
+                mins[i] + (maxs[i] - mins[i]) * (avail - smin) / (smax - smin).max(0.001)
+            }
+        })
+        .collect();
+    y += sp;
+    let width = cols.iter().sum::<f32>() + sp * (n as f32 + 1.0);
+    for row in t.rows.iter_mut() {
+        let mut x = cx + sp;
+        let mut h: f32 = 0.0;
+        for (i, cell) in row.cells.iter_mut().enumerate() {
+            cell.forced_h = None;
+            layout_block(cell, env, cols[i], None, x, y, WidthMode::Exact(cols[i] - cell.style.margin[1].resolve(cw) - cell.style.margin[3].resolve(cw)));
+            h = h.max(cell.outer_h());
+            x += cols[i] + sp;
+        }
+        // Every cell as tall as the row; its content placed by vertical-align.
+        let mut x = cx + sp;
+        for (i, cell) in row.cells.iter_mut().enumerate() {
+            let natural = cell.outer_h();
+            if (h - natural).abs() > 0.01 {
+                let inner_h = natural - cell.margin[0] - cell.margin[2];
+                cell.forced_h = Some(h - cell.margin[0] - cell.margin[2]);
+                layout_block(cell, env, cols[i], None, x, y, WidthMode::Exact(cols[i] - cell.margin[1] - cell.margin[3]));
+                let shift = match cell.style.vertical_align {
+                    VAlign::Top => 0.0,
+                    VAlign::Middle => ((h - natural) / 2.0).floor(),
+                    VAlign::Bottom => h - natural,
+                };
+                if shift > 0.0 {
+                    let (bx, by, bw, bh) = (cell.x, cell.y, cell.w, cell.h);
+                    for k in cell.children_mut() {
+                        k.translate(0.0, shift);
+                    }
+                    if let Content::Inline(ic) = &mut cell.content {
+                        for l in &mut ic.lines {
+                            l.y += shift;
+                            l.baseline += shift;
+                            for f in &mut l.frags {
+                                if matches!(f.kind, FragKind::Text { .. }) {
+                                    f.y += shift;
+                                }
+                            }
+                        }
+                        for d in &mut ic.decos {
+                            d.y += shift;
+                        }
+                    }
+                    let _ = (bx, by, bw, bh, inner_h);
+                }
+            }
+            x += cols[i] + sp;
+        }
+        row.x = cx;
+        row.y = y;
+        row.w = width;
+        row.h = h;
+        y += h + sp;
+    }
+    t.cols = cols;
+    if t.rows.is_empty() {
+        y -= sp;
+    }
+    y - cy
+}
+
+// ------------------------------------------------------------------ positioned boxes
+
+/// A rectangle: x, y, w, h.
+pub type Rect = (f32, f32, f32, f32);
+
+/// Lay out `b`'s absolutely positioned boxes (and those below it). `cb` is
+/// the containing block for absolute boxes: the padding box of the nearest
+/// positioned ancestor, the viewport at the top.
+fn place_positioned(b: &mut LayoutBox, env: &Env, cb: Rect, viewport: Rect) {
+    let my_cb = if b.style.position != Position::Static && b.node != Some(DOCUMENT) { b.padding_rect() } else { cb };
+    for k in b.children_mut() {
+        place_positioned(k, env, my_cb, viewport);
+    }
+    // Static position: where the element's parent box starts its content.
+    let (sx, sy, _, _) = b.content_rect();
+    let mut oof = std::mem::take(&mut b.oof);
+    for o in oof.iter_mut() {
+        let ocb = if o.style.position == Position::Fixed { viewport } else { my_cb };
+        layout_abs(o, env, ocb, (sx, sy));
+        place_positioned(o, env, o.padding_rect(), viewport);
+    }
+    b.oof = oof;
+}
+
+fn layout_abs(b: &mut LayoutBox, env: &Env, cb: Rect, stat: (f32, f32)) {
+    let (cx, cy, cw, ch) = cb;
+    let s = b.style.clone();
+    let [t, r, bt, l] = s.inset;
+    let (m, _, _) = edges(&s, cw);
+    let width_auto = s.width.auto && b.replaced.is_none();
+    let mode = if width_auto && !l.auto && !r.auto {
+        WidthMode::Exact((cw - l.resolve(cw) - r.resolve(cw) - m[1] - m[3]).max(0.0))
+    } else {
+        WidthMode::Fit
+    };
+    b.forced_h = None;
+    layout_block(b, env, cw, Some(ch), 0.0, 0.0, mode);
+    if s.height.auto && !t.auto && !bt.auto && b.replaced.is_none() {
+        b.forced_h = Some((ch - t.resolve(ch) - bt.resolve(ch) - m[0] - m[2]).max(0.0));
+        layout_block(b, env, cw, Some(ch), 0.0, 0.0, mode);
+    }
+    let x = if !l.auto {
+        cx + l.resolve(cw)
+    } else if !r.auto {
+        cx + cw - r.resolve(cw) - b.outer_w()
+    } else {
+        stat.0
+    };
+    let y = if !t.auto {
+        cy + t.resolve(ch)
+    } else if !bt.auto {
+        cy + ch - bt.resolve(ch) - b.outer_h()
+    } else {
+        stat.1
+    };
+    let (ox, oy) = (b.x - b.margin[3], b.y - b.margin[0]);
+    b.translate(x - ox, y - oy);
+}
+
 /// Lay out the whole document for a viewport `w` lu wide. Returns the root box.
 pub fn layout_document(env: &Env) -> LayoutBox {
     let mut root = build(env);
     let (w, h) = env.viewport;
     layout_block(&mut root, env, w, Some(h), 0.0, 0.0, WidthMode::Fill);
+    let vp = (0.0, 0.0, w, h);
+    place_positioned(&mut root, env, vp, vp);
     root
 }

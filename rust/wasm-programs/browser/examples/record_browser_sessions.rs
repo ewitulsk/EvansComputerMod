@@ -13,6 +13,8 @@
 //!   the bottom bar.
 //! * `browser_medium` (640x400): the same site: the flex bar and the cards side by side.
 //! * `browser_wide` (1024x640): a Tech Village website, unstyled, in the theme's colours.
+//! * `browser_forms` (640x400, phase 2): a fixed bar, a table, a positioned badge, a picture
+//!   and a form with a focused, typed-into field.
 
 use browser_app::app::BrowserApp;
 use browser_app::fake::Net;
@@ -66,10 +68,22 @@ impl Session {
         self.out.extend_from_slice(&(name.len() as u16).to_le_bytes());
         self.out.extend_from_slice(name.as_bytes());
     }
+    fn upload(&mut self, conn: u32, res: u32, kind: u32, b: &[u8]) {
+        self.out.push(4);
+        self.u32(conn);
+        self.u32(res);
+        self.u32(kind);
+        self.bytes(b);
+    }
+    /// What the app sent since the last call: messages, then image uploads.
     fn flush_app(&mut self, conn: u32, mock: &MockConnection) {
         let sent = mock.sent();
         mock.clear_sent();
         self.send(conn, &sent);
+        let ups: Vec<(u32, i32, Vec<u8>)> = std::mem::take(&mut mock.state.borrow_mut().uploads);
+        for (res, kind, data) in ups {
+            self.upload(conn, res, kind as u32, &data);
+        }
     }
 }
 
@@ -123,8 +137,34 @@ fn village() -> String {
     )
 }
 
+const SHOP: &str = r#"<html><head><title>Parts shop</title><style>
+body { margin: 0 }
+.top { position: fixed; top: 0; left: 0; right: 0; height: 22px; background: #2f5f9e; color: #fff; padding: 4px 12px }
+main { padding: 34px 12px 12px }
+.item { position: relative; display: inline-block; border: 1px solid #888; padding: 6px; border-radius: 4px }
+.badge { position: absolute; top: -6px; right: -6px; background: #e5534b; color: #fff; padding: 0 4px; border-radius: 6px; font-size: 8px }
+table { border-collapse: collapse; margin: 8px 0 } td, th { border: 1px solid #555; padding: 2px 8px } th { background: #333 }
+</style></head><body><div class=top>Parts shop</div><main>
+<div class=item><img src=cube.png width=32 height=32> Comparator <span class=badge>new</span></div>
+<table><tr><th>Part</th><th>Stock</th><th>Price</th></tr><tr><td>Hopper</td><td>64</td><td>5</td></tr><tr><td>Comparator, quartz</td><td>12</td><td>9</td></tr></table>
+<form><label>Name <input id=n name=n placeholder="Your name"></label> <label><input type=checkbox checked> deliver</label>
+<select><option>Village 4</select> <button>Order</button></form></main></body></html>"#;
+
+fn cube() -> Vec<u8> {
+    let mut px = Vec::new();
+    for y in 0..16u32 {
+        for x in 0..16u32 {
+            let edge = x == 0 || y == 0 || x == 15 || y == 15;
+            px.extend_from_slice(if edge { &[40, 40, 40, 255] } else if (x / 4 + y / 4) % 2 == 0 { &[200, 60, 60, 255] } else { &[230, 200, 90, 255] });
+        }
+    }
+    browser_app::fake::png_answer(&ecm_web::png::encode(16, 16, &px))
+}
+
 fn record(name: &str, w: i32, h: i32, address: &str) -> Vec<u8> {
     let net = Net::default()
+        .page("10.0.0.6:80 /", "200 OK", "text/html", SHOP)
+        .raw("10.0.0.6:80 /cube.png", &cube())
         .page("100.68.0.10:80 /", "200 OK", "text/html", &village())
         .page("10.0.0.5:80 /", "200 OK", "text/html", samples::INDEX_HTML)
         .page("10.0.0.5:80 /style.css", "200 OK", "text/css", samples::STYLE_CSS);
@@ -137,8 +177,24 @@ fn record(name: &str, w: i32, h: i32, address: &str) -> Vec<u8> {
     s.flush_app(2, &m);
     place_full(&mut s, w, h);
     m.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w, h, states: proto::window_states::FULLSCREEN | proto::window_states::ACTIVATED })]);
-    for _ in 0..4 {
+    for _ in 0..6 {
         b.step(0);
+    }
+    if name == "browser_forms" {
+        // Click the name field and type into it.
+        let (fx, fy) = {
+            let mm = b.model.borrow();
+            let p = mm.page.as_ref().unwrap();
+            let r = mm.cache.as_ref().unwrap().rendered.list.node_rect(p.dom.by_id("n").unwrap()).unwrap();
+            ((r.x + 4.0) as i32, (r.y + r.h / 2.0) as i32)
+        };
+        let pr = b.app.core.window(1).unwrap().rect_of("page").unwrap();
+        let hit = b.app.core.window(1).unwrap().hit_id_of("page").unwrap();
+        m.push(&ui_samples::click(hit, pr.x + fx, pr.y + fy));
+        m.push(&[Message::Text(proto::Text { surface: 1, text: "Alex".into() })]);
+        for _ in 0..4 {
+            b.step(0);
+        }
     }
     s.flush_app(2, &m);
     s.advance(20);
@@ -153,6 +209,7 @@ fn main() {
         ("browser_compact", record("browser_compact", 240, 400, "10.0.0.5")),
         ("browser_medium", record("browser_medium", 640, 400, "10.0.0.5")),
         ("browser_wide", record("browser_wide", 1024, 640, "100.68.0.10")),
+        ("browser_forms", record("browser_forms", 640, 400, "10.0.0.6")),
     ];
     for (name, bytes) in sessions {
         let path = format!("{dir}/{name}.session");

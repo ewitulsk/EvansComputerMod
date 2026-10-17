@@ -473,7 +473,7 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 | `resolvectl` | `resolvectl status` | Show DNS configuration |
 | `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
 | `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
-| `httpd` | `httpd <port> [dir]` | Start HTTP file server (serves `dir`, default the computer's root) |
+| `httpd` | `httpd <port> [dir] [--cgi <prefix>]` | HTTP server: files from `dir` (default the computer's root), virtual hosts (`dir/<host name>/`), CGI scripts under the prefix (`.py`, `.lua`; see [docs/gui/BROWSER.md](docs/gui/BROWSER.md#httpd)) |
 | `browser` | `browser [address]` | The Browser app (GUI; see [docs/gui/BROWSER.md](docs/gui/BROWSER.md)) |
 | `curl` | `curl [options] <url>` | HTTP client |
 | `gba` | `gba <rom.gba> [screen]` | Game Boy Advance emulator (see [`gba`](#game-boy-advance-emulator-gba)) |
@@ -1220,6 +1220,7 @@ Lua has the same ECM modules as Python, with the same functions (a repository ru
 | `sensors`, `controller`, `audio` | lidars on a Wired Sensor Module, Xbox controllers, the Speaker's `/dev/audio` |
 | `radio` | SDR flowgraphs: sources, blocks, sinks, `Flowgraph`, framed PHY mode |
 | `ui` | GUI apps: `ui.App`, the widgets, `ui.load` for `.ui.json` layouts |
+| `web` | web servers (`web.serve`) and CGI scripts (`web.cgi`) for the Browser: request and response objects, redirects, cookies ([docs/gui/BROWSER.md](docs/gui/BROWSER.md#server-module-web)) |
 
 Differences that come from the language: pipelines are written with `..` where Python uses `>>`; optional arguments go in Python's order or in one table of names (`radio.tone(1000, {rate = 8000, seconds = 1})`); methods are called with `:` (`sdr:tune(146.52e6)`); a peripheral's or the radio's error is a Lua error (catch it with `pcall`); complex samples in lists are `{re, im}` pairs; row and column numbers of a lidar scan start at 0 as in Python. `require` also finds your own files: `require("lib.util")` loads `lib/util.lua` (or `lib/util/init.lua`) next to the running script or from the computer's root.
 
@@ -1312,6 +1313,27 @@ From another computer:
 ```
 / > curl http://10.0.0.1:8080/index.txt
 Hello from Minecraft!
+```
+
+### Web servers and CGI scripts (`web`)
+
+The `web` module (the same in Python and Lua) answers requests with a handler; see
+[docs/gui/BROWSER.md](docs/gui/BROWSER.md#server-module-web). A guestbook as a CGI script under `httpd 80 /srv/www --cgi /cgi`:
+
+```python
+import web
+def handle(req):
+    if req.method == "POST":
+        if not req.form.get("name"):
+            return web.Response("<p>Name required</p>", 400)
+        open("/srv/www/book.txt", "a").write(req.form["name"] + "\n")
+        return web.redirect(req.path)
+    try:
+        names = open("/srv/www/book.txt").read().splitlines()
+    except OSError:
+        names = []
+    return "<ul>" + "".join("<li>" + web.escape(n) + "</li>" for n in names) + "</ul><form method=post><input name=name><button>Sign</button></form>"
+web.cgi(handle)
 ```
 
 ### Python Web Server with Custom Routes

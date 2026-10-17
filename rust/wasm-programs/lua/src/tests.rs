@@ -698,7 +698,7 @@ fn lua_offers_every_python_module_and_name() {
     set(&l, "POINTS", "");
     run(&l, FAKE_PERIPHERALS);
     for (name, file) in [("peripheral", "peripheral.py"), ("sensors", "sensors.py"), ("controller", "controller.py"),
-        ("audio", "audio.py"), ("radio", "radio.py"), ("ui", "ui.py")]
+        ("audio", "audio.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py")]
     {
         let module: Table = l.load(format!("return require('{name}')")).eval().unwrap();
         for n in python_names(&read(file)) {
@@ -822,4 +822,53 @@ fn the_lua_counter_app_counts_clicks() {
         _ => false,
     });
     assert!(shown, "no TreeOps set the label to Count: 2");
+}
+
+// ---------------------------------------------------------------- web
+
+/// The same handler as python/src/web_module/tests.rs, in Lua.
+const WEB_HANDLER: &str = r#"
+local web = require("web")
+_G.web = web
+function h(req)
+  if req.path == "/boom" then error("broken") end
+  if req.path == "/none" then return nil end
+  if req.method == "POST" then
+    if (req.form.name or "") == "" then return web.Response("<p>Name required</p>", 400) end
+    local r = web.redirect("/")
+    r:set_cookie("who", req.form.name)
+    return r
+  end
+  return "<p>hi " .. web.escape(req.query.n or "") .. " " .. (req.cookies.who or "-") .. "</p>"
+end
+"#;
+
+#[test]
+fn web_requests_through_a_handler() {
+    let l = lua();
+    run(&l, WEB_HANDLER);
+    let get = |code: &str| -> String { l.load(code).eval::<String>().unwrap_or_else(|e| panic!("{e}")) };
+    let ok = get(r#"return web.handle("GET /?n=a%26b+c HTTP/1.0\r\nCookie: who=Pat\r\n\r\n", h)"#);
+    assert!(ok.contains("<p>hi a&amp;b c Pat</p>") && ok.contains("Content-Length: 23"), "{ok}");
+    let post = get(r#"return web.handle("POST /sign HTTP/1.0\r\nContent-Length: 8\r\n\r\nname=Bo", h)"#);
+    assert!(post.contains("HTTP/1.0 303 See Other") && post.contains("Location: /") && post.contains("Set-Cookie: who=Bo; Path=/"), "{post}");
+    let bad = get(r#"return web.handle("POST /sign HTTP/1.0\r\n\r\nname=", h)"#);
+    assert!(bad.contains("HTTP/1.0 400 Bad Request") && bad.contains("Name required"), "{bad}");
+    assert!(get(r#"return web.handle("GET /boom HTTP/1.0\r\n\r\n", h)"#).starts_with("HTTP/1.0 500 Internal Server"));
+    assert!(get(r#"return web.handle("GET /none HTTP/1.0\r\n\r\n", h)"#).starts_with("HTTP/1.0 404 Not Found"));
+    assert!(get(r#"return web.handle("junk", h)"#).starts_with("HTTP/1.0 400"));
+}
+
+#[test]
+fn web_cgi_requests_and_output() {
+    let l = lua();
+    run(&l, WEB_HANDLER);
+    run(&l, r#"r = web.parse_cgi("REQUEST_METHOD=POST\nPATH_INFO=/cgi/g.lua\nQUERY_STRING=x=1\nCONTENT_LENGTH=11\nHTTP_COOKIE=a=b\n\nname=Al+Bo")"#);
+    let got: String = l
+        .load(r#"return table.concat({r.method, r.path, r.query.x, r.form.name, r.cookies.a, web.cgi_output(web._answer(h, r))}, "|")"#)
+        .eval()
+        .unwrap();
+    assert_eq!(got, "POST|/cgi/g.lua|1|Al Bo|b|Status: 303 See Other\nContent-Type: text/html\nLocation: /\nSet-Cookie: who=Al Bo; Path=/\n\n");
+    let q: String = l.load(r#"local q = web.parse_query("a=1&b=two+words&c=%C3%A9&a=2") return q.a .. "," .. q.b .. "," .. q.c"#).eval().unwrap();
+    assert_eq!(q, "2,two words,\u{e9}");
 }

@@ -104,6 +104,33 @@ impl Transport for HostTransport {
         out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         Some(out)
     }
+
+    fn save_file(&mut self, path: &str, data: &[u8]) -> Result<(), FetchError> {
+        if let Some(dir) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(path, data).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => FetchError::NotAllowed,
+            _ => FetchError::Io(format!("can't save {path}: {e}")),
+        })
+    }
+}
+
+/// The home page until one is set: a Tech Village computer's own village
+/// site (its address is 100.(64+n).x.y), else the start page.
+fn default_home() -> String {
+    for i in 0..ecm_host_abi::net_config::iface_count() {
+        let Some(info) = ecm_host_abi::net_config::iface_info(i) else { continue };
+        let Some(at) = info.find("\"ip\"") else { continue };
+        let rest = &info[at + 4..];
+        let ip: String = rest.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+        let o: Vec<u32> = ip.split('.').filter_map(|p| p.parse().ok()).collect();
+        // The village cable (100.(64+n).1.0/24) and data center LAN (.0.0/24); not phone pools.
+        if o.len() == 4 && o[0] == 100 && (65..=74).contains(&o[1]) && o[2] <= 1 {
+            return format!("http://100.{}.0.10/", o[1]);
+        }
+    }
+    browser_app::model::HOME.to_string()
 }
 
 fn main() {
@@ -124,7 +151,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut app = match BrowserApp::new(conn, HostTransport, args.first().map(String::as_str)) {
+    let data = std::env::var("ECM_APP_DATA").ok().filter(|d| !d.is_empty());
+    let mut app = match BrowserApp::with_settings(conn, HostTransport, args.first().map(String::as_str), data, &default_home()) {
         Ok(a) => a,
         Err(e) => {
             println!("browser: {e}");

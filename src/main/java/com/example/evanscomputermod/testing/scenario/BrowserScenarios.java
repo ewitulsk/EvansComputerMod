@@ -40,6 +40,10 @@ import java.util.function.Function;
  *       them); {@code gui}, the Browser from the launcher, the village site's address typed,
  *       a click on "Tech Village 2" loads the next village's site over the fiber ring. Controls:
  *       an address nobody answers shows an error page; {@code /nope.html} shows the server's 404.</li>
+ *   <li>{@code browser_form} (phase 2): a server runs a Python CGI guestbook under {@code httpd 80 /srv/www --cgi
+ *       /cgi} and a Lua guestbook on {@code web.serve(8080, ...)}; the Browser on a second computer signs both (typing
+ *       into the form, a POST, the server's 303) and the entries show; the name comes back from the {@code who}
+ *       cookie, on the other port too. Control: an empty form is refused by the server (400) and shown again.</li>
  *   <li>{@code browser_phone}: an ePhone on a player-built cell network (core, cell site, a web
  *       server on the core's LAN, as in {@code cell_chat}). Control first: no modem, no signal:
  *       the Browser shows an error page and stays up. With an LTE Modem and a SIM it attaches,
@@ -126,6 +130,14 @@ public final class BrowserScenarios {
         String screen(ScenarioRun r) {
             TerminalBlockEntity t = be.apply(r);
             return t == null ? "" : ScenarioRun.screen(t.getDisplay());
+        }
+
+        /** Null once nothing is loading (the status line says "Loading ..." while it fetches) and the page shows {@code text}. */
+        String loaded(ScenarioRun r, String text) {
+            Compositor.WindowInfo w = window(r);
+            if (w == null) return "no Browser window on " + name;
+            if (comp(r).textsOf(w.id()).stream().anyMatch(t -> t.startsWith("Loading "))) return "still loading";
+            return shows(r, text);
         }
 
         /** The composited colour (0xRRGGBB) at a device pixel. */
@@ -587,7 +599,192 @@ public final class BrowserScenarios {
         b.await(r -> phoneShows(r, "The ring was built."), "the link loads page2.html", 20_000);
         b.expect("server", "GET /page2\\.html", "httpd served page2.html");
         b.mutate(r -> snapshot(r, "browser_phone_link"), "snapshot: the followed link");
+        b.note("Menu in the bottom bar: its menu opens above the bar, all on screen");
+        b.await(r -> {
+            int[] at = phoneAt(r, "Menu");
+            if (at == null) return "no Menu button";
+            PhoneGuiScenarios.tap(r, at);
+            return null;
+        }, "tap Menu", 5_000);
+        b.await(r -> {
+            var c = PhoneGuiScenarios.comp(r);
+            for (String item : new String[]{"Bookmark this page", "History", "Set as home page"})
+                if (c.locatePopupText(item, false) == null) return "'" + item + "' isn't on the screen";
+            return null;
+        }, "every entry of the menu is on the phone's screen", 5_000);
+        b.mutate(r -> snapshot(r, "browser_phone_menu"), "snapshot: the menu");
+        b.await(r -> {
+            int[] at = PhoneGuiScenarios.comp(r).locatePopupText("History", false);
+            if (at == null) return "no History";
+            PhoneGuiScenarios.tap(r, at);
+            return null;
+        }, "tap History", 5_000);
+        b.await(r -> {
+            Compositor.WindowInfo w = phoneWindow(r);
+            return w != null && w.title().startsWith("History") ? null : "window title " + (w == null ? "-" : w.title());
+        }, "the History page opens (about:history)", 10_000);
+        b.await(r -> phoneShows(r, "Older news"), "it lists the pages seen", 2_000);
         b.timeLimit(60_000);
+        return b.build();
+    }
+
+    // ================================================================ browser_form
+
+    static final String FORM_SERVER = "10.0.61.1", FORM_PC = "10.0.61.2";
+
+    static final String FORM_INDEX = """
+            <html><head><title>Village guestbooks</title></head><body>
+            <h1>Guestbooks</h1>
+            <p><a href="/cgi/guestbook.py">Python guestbook</a> (a CGI script under httpd)</p>
+            <p><a href="http://10.0.61.1:8080/">Lua guestbook</a> (web.serve on port 8080)</p>
+            </body></html>
+            """;
+
+    /** A Python CGI script: web.cgi with a handler (docs/gui/BROWSER.md). */
+    static final String GUESTBOOK_PY = """
+            import web
+            BOOK = "/srv/www/guestbook.txt"
+
+            def page(req, error=""):
+                try:
+                    entries = open(BOOK).read().splitlines()
+                except OSError:
+                    entries = []
+                rows = ""
+                for e in entries:
+                    if "\\t" in e:
+                        n, m = e.split("\\t", 1)
+                        rows += "<tr><td>" + web.escape(n) + "</td><td>" + web.escape(m) + "</td></tr>"
+                who = req.cookies.get("who", "")
+                hello = "<p>Welcome back, " + web.escape(who) + "</p>" if who else ""
+                err = "<p style='color: #c03030'>" + web.escape(error) + "</p>" if error else ""
+                return ("<html><head><title>Python guestbook</title></head><body><h1>Python guestbook</h1>" + hello + err
+                        + "<table><tr><th>Name</th><th>Message</th></tr>" + rows + "</table>"
+                        + "<form method=post><input name=name value='" + web.escape(who) + "' placeholder='Your name'> "
+                        + "<input name=msg placeholder='Your message'> <button>Sign</button></form></body></html>")
+
+            def handle(req):
+                if req.method == "POST":
+                    name = req.form.get("name", "").strip()
+                    msg = req.form.get("msg", "").strip()
+                    if not name or not msg:
+                        return web.Response(page(req, "Name and message are required."), 400)
+                    f = open(BOOK, "a")
+                    f.write(name + "\\t" + msg + "\\n")
+                    f.close()
+                    r = web.redirect(req.path)
+                    r.set_cookie("who", name)
+                    return r
+                return page(req)
+
+            web.cgi(handle)
+            """;
+
+    /** The same guestbook in Lua, as a server of its own (web.serve). */
+    static final String GUESTBOOK_LUA = """
+            local web = require("web")
+            local BOOK = "/srv/lua_book.txt"
+
+            local function page(req, err)
+              local rows = ""
+              local f = io.open(BOOK, "r")
+              if f then
+                for line in f:lines() do
+                  local n, m = line:match("^(.-)\\t(.*)$")
+                  if n then rows = rows .. "<tr><td>" .. web.escape(n) .. "</td><td>" .. web.escape(m) .. "</td></tr>" end
+                end
+                f:close()
+              end
+              local who = req.cookies.who or ""
+              local hello = who ~= "" and ("<p>Welcome back, " .. web.escape(who) .. "</p>") or ""
+              local e = err and ("<p style='color: #c03030'>" .. web.escape(err) .. "</p>") or ""
+              return "<html><head><title>Lua guestbook</title></head><body><h1>Lua guestbook</h1>" .. hello .. e
+                .. "<table><tr><th>Name</th><th>Message</th></tr>" .. rows .. "</table>"
+                .. "<form method=post><input name=name value='" .. web.escape(who) .. "' placeholder='Your name'> "
+                .. "<input name=msg placeholder='Your message'> <button>Sign</button></form></body></html>"
+            end
+
+            local function handle(req)
+              if req.method == "POST" then
+                local name = (req.form.name or ""):match("^%s*(.-)%s*$")
+                local msg = (req.form.msg or ""):match("^%s*(.-)%s*$")
+                if name == "" or msg == "" then return web.Response(page(req, "Name and message are required."), 400) end
+                local f = io.open(BOOK, "a")
+                f:write(name .. "\\t" .. msg .. "\\n")
+                f:close()
+                local r = web.redirect("/")
+                r:set_cookie("who", name)
+                return r
+              end
+              return page(req)
+            end
+
+            web.serve(8080, handle)
+            """;
+
+    static Scenario form() {
+        Pc pc = Pc.node("pc");
+        var b = Scenario.builder("browser_form",
+                        "a Python CGI guestbook under httpd and a Lua guestbook on web.serve: the Browser submits their forms, the new"
+                                + " entries show, the name comes back from a cookie; an empty form is refused by the server and shown again")
+                .asPlayer()
+                .timeLimit(60_000);
+        b.host("server", new BlockPos(0, 1, 0), FORM_SERVER + "/24");
+        b.host("pc", new BlockPos(4, 1, 0), FORM_PC + "/24");
+        b.link("lan", "server", Direction.DOWN, "pc", Direction.DOWN, Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
+        b.note("Setup (done for you): two computers, a cable between their bottom faces.");
+        b.configureHosts();
+        b.note("server: the site, a Python CGI script, a Lua server (typed from Python)");
+        b.send("server", "mkdir -p /srv/www/cgi");
+        b.expect("server", PROMPT, "shell");
+        PlayerKit.typeFiles(b, Map.of("server", Map.of(
+                "/srv/www/index.html", FORM_INDEX,
+                "/srv/www/cgi/guestbook.py", GUESTBOOK_PY,
+                "/srv/guestbook.lua", GUESTBOOK_LUA)));
+        b.send("server", "httpd 80 /srv/www --cgi /cgi &");
+        b.expect("server", "HTTP server listening on port 80, serving /srv/www, CGI under /cgi", "httpd serves the site and runs /cgi scripts");
+        b.send("server", "lua /srv/guestbook.lua &");
+        b.expect("server", "web: serving on port 8080", "the Lua guestbook serves on 8080 (web.serve)", "(?i)error|not found");
+        b.note("pc: the desktop, the Browser, the site");
+        startGui(b, pc);
+        openBrowser(b, pc);
+        address(b, pc, FORM_SERVER);
+        b.await(r -> pc.shows(r, "Python guestbook"), "the site's front page", 15_000);
+        b.mutate(r -> pc.clickText(r, "Python guestbook"), "click Python guestbook");
+        b.await(r -> pc.shows(r, "Your message"), "the CGI script answers with its form", 20_000);
+        b.expect("server", "/cgi/guestbook\\.py -> 200", "httpd ran guestbook.py with python");
+        b.note("Control: Sign with nothing filled in; the server refuses it and shows the form again");
+        b.mutate(r -> pc.clickText(r, "Sign"), "click Sign (empty)");
+        b.await(r -> pc.shows(r, "Name and message are required."), "the script's 400 page: the form again, with the reason", 20_000);
+        b.expect("server", "/cgi/guestbook\\.py -> 400", "the script answered 400");
+        b.note("Fill in the form and sign");
+        b.mutate(r -> pc.clickText(r, "Your name"), "click the name field");
+        b.mutate(r -> pc.type(r, "Pat"), "type Pat");
+        b.mutate(r -> pc.clickText(r, "Your message"), "click the message field");
+        b.mutate(r -> pc.type(r, "hello from the browser"), "type hello from the browser");
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_form_filled"), "snapshot: the filled form");
+        b.mutate(r -> pc.clickText(r, "Sign"), "click Sign");
+        b.expect("server", "/cgi/guestbook\\.py -> 303", "the script saved the entry and redirected (303)");
+        b.await(r -> pc.loaded(r, "Welcome back, Pat"), "the Browser followed it: the name came back in the who cookie", 20_000);
+        b.await(r -> pc.shows(r, "hello from the browser"), "the new entry is in the table", 2_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_form_python"), "snapshot: the Python guestbook");
+        b.note("The Lua guestbook (another port, the same host: the cookie goes there too)");
+        b.mutate(r -> pc.key(r, 0x50, 0x4, null), "Alt+Left: back to the front page");
+        b.await(r -> pc.shows(r, "Lua guestbook"), "the front page again", 20_000);
+        b.mutate(r -> pc.clickText(r, "Lua guestbook"), "click Lua guestbook");
+        b.await(r -> {
+            Compositor.WindowInfo w = pc.window(r);
+            return w != null && w.title().startsWith("Lua guestbook") ? null : "window title " + (w == null ? "-" : w.title());
+        }, "web.serve answers with the Lua guestbook", 20_000);
+        b.await(r -> pc.shows(r, "Welcome back, Pat"), "it greets Pat: the host's cookie went to port 8080 too", 2_000);
+        b.mutate(r -> pc.clickText(r, "Sign"), "control: click Sign with the message empty");
+        b.await(r -> pc.loaded(r, "Name and message are required."), "the Lua server refuses it too", 20_000);
+        b.mutate(r -> pc.clickText(r, "Your message"), "click the message field");
+        b.mutate(r -> pc.type(r, "and hello in Lua"), "type and hello in Lua");
+        b.mutate(r -> pc.key(r, HID_ENTER, 0, "\n"), "Enter (submits the form)");
+        b.expect("server", "^POST / 303", "web.serve saved it and redirected");
+        b.await(r -> pc.loaded(r, "and hello in Lua"), "the Lua guestbook shows the entry", 20_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_form_lua"), "snapshot: the Lua guestbook");
         return b.build();
     }
 
@@ -596,7 +793,7 @@ public final class BrowserScenarios {
     }
 
     static {
-        for (Scenario s : List.of(localSite(), village(), phone())) ALL.put(s.name, s);
+        for (Scenario s : List.of(localSite(), village(), phone(), form())) ALL.put(s.name, s);
     }
 }
 //?}

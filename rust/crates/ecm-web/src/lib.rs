@@ -22,10 +22,12 @@
 pub mod css;
 pub mod dom;
 pub mod fetch;
+pub mod forms;
 pub mod html;
 pub mod layout;
 pub mod page;
 pub mod paint;
+pub mod png;
 pub mod style;
 pub mod url;
 

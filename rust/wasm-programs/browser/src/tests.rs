@@ -288,3 +288,220 @@ fn hotkeys_and_reload() {
     click(&mut b, &mock, "reload");
     assert_eq!(b.fetcher.transport.log.len(), n + 1);
 }
+
+// ------------------------------------------------------------------ phase 2: forms, pictures, menu, downloads
+
+/// Click the middle of element `#id` on the page.
+fn click_id(b: &mut BrowserApp<Net>, mock: &MockConnection, id: &str) {
+    let (x, y) = {
+        let m = b.model.borrow();
+        let p = m.page.as_ref().unwrap();
+        let n = p.dom.by_id(id).unwrap_or_else(|| panic!("no #{id}"));
+        let r = m.cache.as_ref().unwrap().rendered.list.node_rect(n).unwrap_or_else(|| panic!("#{id} not drawn"));
+        ((r.x + r.w / 2.0) as i32, (r.y + r.h / 2.0 - m.scroll) as i32)
+    };
+    let r = b.app.core.window(b.window).unwrap().rect_of("page").unwrap();
+    let h = hit(b, "page");
+    mock.push(&samples::click(h, r.x + x, r.y + y));
+    steps(b);
+}
+
+fn type_text(b: &mut BrowserApp<Net>, mock: &MockConnection, t: &str) {
+    mock.push(&[Message::Text(proto::Text { surface: 1, text: t.into() })]);
+    steps(b);
+}
+
+fn key(b: &mut BrowserApp<Net>, mock: &MockConnection, k: u16) {
+    mock.push(&[Message::Key(proto::Key { surface: 1, key: k, mods: 0, down: true, repeat: false })]);
+    steps(b);
+}
+
+const GUESTBOOK: &str = "<html><head><title>Guestbook</title></head><body><h1>Guestbook</h1>\
+    <form method=post action=/sign><input id=name name=name placeholder=Name><textarea id=msg name=msg></textarea>\
+    <label><input id=pub type=checkbox name=public value=yes> public</label>\
+    <select id=mood name=mood><option>happy<option>busy</select><button id=send>Sign</button></form>\
+    <form action=/search><input id=q name=q></form></body></html>";
+
+fn guest_net() -> Net {
+    Net::default()
+        .page("10.0.0.1:80 /", "200 OK", "text/html", GUESTBOOK)
+        .raw("10.0.0.1:80 /sign", b"HTTP/1.0 303 See Other\r\nLocation: /thanks\r\nSet-Cookie: who=Pat\r\n\r\n")
+        .page("10.0.0.1:80 /thanks", "200 OK", "text/html", "<title>Thanks</title><p>Signed</p>")
+        .page("10.0.0.1:80 /search?q=fiber+tap", "200 OK", "text/html", "<title>Results</title><p>1 result</p>")
+}
+
+#[test]
+fn typing_into_a_form_and_posting_it() {
+    let (mut b, mock) = start(guest_net(), 640, 400, Some("10.0.0.1"));
+    click_id(&mut b, &mock, "name");
+    assert!(b.model.borrow().focus.is_some(), "the field has the focus");
+    type_text(&mut b, &mock, "Pax");
+    key(&mut b, &mock, 0x2A); // Backspace edits the field (it doesn't go back)
+    type_text(&mut b, &mock, "t");
+    assert_eq!(b.model.borrow().loads, 1);
+    click_id(&mut b, &mock, "msg");
+    type_text(&mut b, &mock, "hi");
+    key(&mut b, &mock, 0x28); // Enter in a textarea: a new line
+    type_text(&mut b, &mock, "there");
+    click_id(&mut b, &mock, "pub");
+    click_id(&mut b, &mock, "mood");
+    // The select's popup menu opens (a popup surface beside the window).
+    assert_eq!(b.app.core.windows.len(), 2, "a popup for the select");
+    {
+        let mut m = b.model.borrow_mut();
+        let sel = m.page.as_ref().unwrap().dom.by_id("mood").unwrap();
+        m.choose(sel, 1);
+    }
+    b.app.core.mark_all_dirty();
+    steps(&mut b);
+    click_id(&mut b, &mock, "send");
+    assert_eq!(title(&b), "Thanks - Browser");
+    let post = b.fetcher.transport.requests.iter().find(|r| r.starts_with("POST /sign")).expect("a POST");
+    assert!(post.ends_with("name=Pat&msg=hi%0D%0Athere&public=yes&mood=busy"), "{post}");
+    // The cookie the server set goes back with the next request to it.
+    let thanks = b.fetcher.transport.requests.iter().find(|r| r.starts_with("GET /thanks")).unwrap();
+    assert!(thanks.contains("Cookie: who=Pat"), "{thanks}");
+}
+
+#[test]
+fn enter_in_a_field_sends_a_get_form() {
+    let (mut b, mock) = start(guest_net(), 640, 400, Some("10.0.0.1"));
+    click_id(&mut b, &mock, "q");
+    type_text(&mut b, &mock, "fiber tap");
+    key(&mut b, &mock, 0x28);
+    assert_eq!(title(&b), "Results - Browser");
+    assert_eq!(b.app.core.window(1).unwrap().state("url").unwrap().text, "http://10.0.0.1/search?q=fiber+tap");
+}
+
+#[test]
+fn pictures_are_fetched_and_shown() {
+    let mut px = Vec::new();
+    for i in 0..(8 * 4) {
+        px.extend_from_slice(&[i as u8 * 7, 100, 200, 255]);
+    }
+    let png = ecm_web::png::encode(8, 4, &px);
+    let mut answer = format!("HTTP/1.0 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n\r\n", png.len()).into_bytes();
+    answer.extend_from_slice(&png);
+    let net = Net::default()
+        .page("10.0.0.1:80 /", "200 OK", "text/html", "<title>Pic</title><img src=a.png width=32 alt=pic><img src=gone.png alt=gone>")
+        .raw("10.0.0.1:80 /a.png", &answer);
+    let (mut b, mock) = start(net, 640, 400, Some("10.0.0.1"));
+    steps(&mut b);
+    let m = b.model.borrow();
+    let img = m.images.get("http://10.0.0.1/a.png").copied().flatten().expect("a.png loaded");
+    assert_eq!((img.w, img.h), (8, 4));
+    assert_eq!(m.images.get("http://10.0.0.1/gone.png"), Some(&None), "a missing picture is remembered as missing");
+    let sent = sent_texts(&mock);
+    assert!(sent.contains("ResourceCreate"), "uploaded as an image resource");
+    assert!(sent.contains(&format!("Resource({})", img.resource)), "an image node shows it");
+    // Shown at the size the page asks (width 32: height 16).
+    let list = &m.cache.as_ref().unwrap().rendered.list;
+    assert!(list.items.iter().any(|i| matches!(i, ecm_web::paint::Item::Image { w: 32, h: 16, .. })));
+    assert!(list.items.iter().any(|i| matches!(i, ecm_web::paint::Item::Text { text, .. } if text == "gone")));
+}
+
+#[test]
+fn menu_bookmarks_history_and_home_are_saved() {
+    let dir = std::env::temp_dir().join(format!("ecm-browser-settings-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let dir = dir.to_string_lossy().replace('\\', "/");
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false)]);
+    let mut b = BrowserApp::with_settings(Box::new(mock.clone()), ring(), Some("100.65.0.10"), Some(dir.clone()), "about:home").unwrap();
+    mock.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w: 640, h: 400, states: proto::window_states::ACTIVATED })]);
+    steps(&mut b);
+    crate::view::menu_action(&b.model, 0);
+    crate::view::menu_action(&b.model, 3);
+    steps(&mut b);
+    assert!(b.model.borrow().status_text().starts_with("Home page:"));
+    crate::view::menu_action(&b.model, 1);
+    steps(&mut b);
+    assert_eq!(title(&b), "Bookmarks - Browser");
+    assert!(page_text(&b).contains("Tech Village 1 - AS 65001"));
+    crate::view::menu_action(&b.model, 2);
+    steps(&mut b);
+    assert!(page_text(&b).contains("http://100.65.0.10/"));
+    let saved = std::fs::read_to_string(format!("{dir}/browser.json")).unwrap();
+    assert!(saved.contains("\"home\":\"http://100.65.0.10/\""), "{saved}");
+    // A new Browser starts at the saved home page, its bookmark kept.
+    let mock2 = MockConnection::new();
+    mock2.state.borrow_mut().idle_timeouts = true;
+    mock2.push(&[samples::welcome(false)]);
+    let mut b2 = BrowserApp::with_settings(Box::new(mock2.clone()), ring(), None, Some(dir), "about:home").unwrap();
+    mock2.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w: 640, h: 400, states: proto::window_states::ACTIVATED })]);
+    steps(&mut b2);
+    assert_eq!(title(&b2), "Tech Village 1 - AS 65001 - Browser");
+    assert_eq!(b2.model.borrow().settings.bookmarks.len(), 1);
+}
+
+#[test]
+fn other_files_are_downloads() {
+    let net = Net::default().raw(
+        "10.0.0.1:80 /apps/dev.ecm.x-1.0.0.ecmpkg",
+        b"HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\n\r\nPK\x03\x04",
+    );
+    let (b, _mock) = start(net, 640, 400, Some("10.0.0.1/apps/dev.ecm.x-1.0.0.ecmpkg"));
+    assert_eq!(b.fetcher.transport.saved, vec![("/home/Downloads/dev.ecm.x-1.0.0.ecmpkg".to_string(), b"PK\x03\x04".to_vec())]);
+    assert_eq!(title(&b), "Downloaded - Browser");
+    assert!(page_text(&b).contains("pkg install /home/Downloads/dev.ecm.x-1.0.0.ecmpkg"));
+}
+
+#[test]
+fn two_inline_fields_one_after_the_other() {
+    let html = "<html><head><title>Python guestbook</title></head><body><h1>Python guestbook</h1><p style='color: #c03030'>Name and message are required.</p><table><tr><th>Name</th><th>Message</th></tr></table><form method=post><input id=n name=name value='' placeholder='Your name'> <input id=m name=msg placeholder='Your message'> <button>Sign</button></form></body></html>";
+    let net = Net::default().page("10.0.0.1:80 /", "200 OK", "text/html", html);
+    let (mut b, mock) = start(net, 484, 270, Some("10.0.0.1"));
+    click_text(&mut b, &mock, "Your name");
+    type_text(&mut b, &mock, "Pat");
+    click_text(&mut b, &mock, "Your message");
+    let f = b.model.borrow().focus;
+    let m = b.model.borrow().page.as_ref().unwrap().dom.by_id("m");
+    assert_eq!(f.map(|x| x.0), m, "focus after clicking the second field");
+    type_text(&mut b, &mock, "hello");
+    let v = ecm_web::forms::value(&b.model.borrow().page.as_ref().unwrap().dom, m.unwrap());
+    assert_eq!(v, "hello");
+}
+
+#[test]
+fn a_click_right_after_typing_in_the_same_batch() {
+    // Events a player sends quickly arrive together: the click must hit-test the page as typing left it.
+    let net = guest_net();
+    let (mut b, mock) = start(net, 640, 400, Some("10.0.0.1"));
+    let (at_name, at_q) = {
+        let m = b.model.borrow();
+        let p = m.page.as_ref().unwrap();
+        let list = &m.cache.as_ref().unwrap().rendered.list;
+        let c = |id: &str| {
+            let r = list.node_rect(p.dom.by_id(id).unwrap()).unwrap();
+            ((r.x + 3.0) as i32, (r.y + r.h / 2.0) as i32)
+        };
+        (c("name"), c("q"))
+    };
+    let r = b.app.core.window(b.window).unwrap().rect_of("page").unwrap();
+    let h = hit(&b, "page");
+    let mut batch = samples::click(h, r.x + at_name.0, r.y + at_name.1);
+    batch.push(Message::Text(proto::Text { surface: 1, text: "Pat".into() }));
+    batch.extend(samples::click(h, r.x + at_q.0, r.y + at_q.1));
+    batch.push(Message::Text(proto::Text { surface: 1, text: "tap".into() }));
+    mock.push(&batch);
+    steps(&mut b);
+    let m = b.model.borrow();
+    let dom = &m.page.as_ref().unwrap().dom;
+    assert_eq!(ecm_web::forms::value(dom, dom.by_id("name").unwrap()), "Pat");
+    assert_eq!(ecm_web::forms::value(dom, dom.by_id("q").unwrap()), "tap");
+}
+
+#[test]
+fn the_phone_menu_opens_above_the_bottom_bar() {
+    let (mut b, mock) = start(ring(), 240, 400, Some("100.65.0.10"));
+    let menu = b.app.core.window(1).unwrap().rect_of("menu").unwrap();
+    let before = mock.sent_messages().len();
+    click(&mut b, &mock, "menu");
+    let create = mock.sent_messages()[before..]
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("the menu's popup");
+    assert!(create.y >= 0 && create.y + create.h <= menu.y, "above the Menu button {menu:?}: {create:?}");
+    assert!(create.x >= 0 && create.x + create.w <= 240, "inside the phone's width: {create:?}");
+}
