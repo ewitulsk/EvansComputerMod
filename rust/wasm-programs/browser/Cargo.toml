@@ -1,0 +1,24 @@
+[package]
+name = "browser"
+version = "0.1.0"
+edition = "2021"
+description = "The Browser (dev.ecm.browser): web pages over the in-game network and file://, on the desktop and the ePhone, drawn with ecm-ui from the ecm-web engine. The app is the browser_app library (tested on the host); browser is the program."
+
+[lib]
+name = "browser_app"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "browser"
+path = "src/main.rs"
+test = false
+
+[[example]]
+name = "record_browser_sessions"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-web = { workspace = true }
+ecm-host-abi = { workspace = true }

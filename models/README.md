@@ -91,3 +91,9 @@ embedded), exported with `py -3 scripts/export-radio-models.py ephone_body charg
 |---|---|---|
 | `ephone_body.bbmodel` | item_bewlr:ephone | Graphite phone body with a brushed aluminium frame, a glass front (earpiece, front camera, home bar; the renderer draws the display over x 5-11, y 2.5-12.5 of the north face), camera island, power button and volume rocker. Exported as `models/item/ephone_body.json`; `models/item/ephone.json` is `builtin/entity` with the project's display transforms (screen toward you in either hand) |
 | `charging_dock.bbmodel` | facing_active | Graphite base with a rubber top, a back rest with an etched ECM mark, a front lip and gold connector pins; a green lamp (`lit_lamp`) while charging. The docked phone is drawn by the dock's renderer, leaning on the rest |
+
+## App icons
+
+| Project | Design |
+|---|---|
+| `browser_icon.bbmodel` | Image project (32x32) painted through the Blockbench MCP: the Browser's globe (blue sea, green land, a light grid of meridians and parallels, dark rim), exported as `src/main/resources/evanscomputermod/apps/browser.png` |

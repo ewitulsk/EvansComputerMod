@@ -360,6 +360,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "ecm-web",
+]
+
+[[package]]
 name = "bstr"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1253,6 +1263,13 @@ version = "0.1.0"
 [[package]]
 name = "ecm-vte"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-web"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui-proto",
+]
 
 [[package]]
 name = "ecm-wifi"
