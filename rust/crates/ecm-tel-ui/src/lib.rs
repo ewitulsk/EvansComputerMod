@@ -16,6 +16,9 @@
 //! ([`net`], WASI); tests and the golden recorders give [`fake`]s.
 
 pub mod book;
+pub mod contacts;
+pub mod dialer;
+pub mod messages;
 pub mod fake;
 #[cfg(target_os = "wasi")]
 pub mod net;
@@ -38,6 +41,19 @@ pub trait Files {
     fn write(&mut self, path: &str, data: &[u8]) -> Result<(), String>;
     /// File names in a directory ("" entries skipped).
     fn list(&mut self, dir: &str) -> Vec<String>;
+}
+
+pub const DIALER_ID: &str = "dev.ecm.dialer";
+pub const MESSAGES_ID: &str = "dev.ecm.messages";
+pub const CONTACTS_ID: &str = "dev.ecm.contacts";
+
+/// Whether telephonyd answers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Daemon {
+    Unknown,
+    Running,
+    /// Not running or unreachable, and why.
+    Down(String),
 }
 
 /// How often the apps refresh from telephonyd, ms.
