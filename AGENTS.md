@@ -38,6 +38,32 @@ fails when Lua lacks a Python module or name; a name that Lua deliberately
 reaches another way (a class behind a constructor function, an exception that
 is a Lua error) goes in that test's `NOT_IN_LUA` list with the reason.
 
+Every PR carries its manual, help and docs. A PR that adds, changes or removes
+something a player or a scripter uses is unfinished until all of these are in
+the same PR:
+1. **Man pages** (`rust/crates/ecm-man/pages/<name>.txt`, written to the
+   format in `pages/FORMAT.md`: NAME `name - summary`, SYNOPSIS, DESCRIPTION,
+   OPTIONS/COMMANDS, FILES, EXAMPLES, SEE ALSO; plain ASCII, at most 76
+   columns). Every new command (a program in `rust/wasm-programs/<name>` or a
+   shell builtin) gets a page named after it. Every new feature a player meets
+   (a block, item, app, device, protocol, scripting module) gets a topic page
+   or a section in an existing one. A changed option, key, default, file or
+   behaviour updates every page that describes it; a removed command removes
+   its page and every SEE ALSO that names it. Write from the real source, not
+   from memory, in plain words for a player.
+2. **Help**: each page is listed under exactly one heading in
+   `ecm_man::CATEGORIES` (`rust/crates/ecm-man/src/lib.rs`), which builds
+   `help`, `help <heading>` and `help <name>`; add a heading when nothing fits.
+3. **Scripting**: new or changed Python/Lua module functions are listed in
+   `man scripting` (and the feature's topic page), for both interpreters.
+4. **Docs**: the feature's guide under `docs/` (new or updated), and its tests
+   and scenarios in `TESTING.md`.
+
+`cargo test -p ecm-man` checks the mechanical part (every program and builtin
+has a page, every page is listed under one heading, the format and width, and
+that every SEE ALSO names a page that exists) and runs in CI; it doesn't check
+that a page is still true, so reviewing that is part of the PR.
+
 A block that bundles a complete device (for example a cell tower that runs its
 whole protocol internally) is a design smell: split it into its hardware
 primitive plus a program before extending it. Standing, user-approved
