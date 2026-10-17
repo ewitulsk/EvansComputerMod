@@ -1,0 +1,89 @@
+NAME
+    telephony - phone numbers, calls, texts and picture messages
+
+DESCRIPTION
+    A SIM written by a carrier's core (cored) has a phone number. A
+    phone with that SIM in its modem attaches to the carrier's cells,
+    gets a second address for calls (the IMS bearer, ims0) and registers
+    with the carrier's IMS server (imsd). Then it can:
+
+      - call any number: VoLTE, with HD voice when both ends have it
+      - send texts (SMS) and pictures, voice notes, contact cards and
+        group texts (MMS)
+      - get voicemail when it doesn't answer, and listen in the Phone app
+      - reach numbers on other carriers that peer with its carrier
+
+    The status bar shows VoLTE once the phone is registered. Calls keep
+    going in a pocket or the hotbar; an incoming call wakes a sleeping
+    phone (the cell pages it) and rings.
+
+APPS
+    Phone (dev.ecm.dialer)
+        Favourites, Recents, Contacts, Keypad and Voicemail; the
+        incoming-call screen (Answer, Decline, Message) and the in-call
+        screen (mute, keypad, speaker, hold, add call, swap, merge, end).
+        See dialer.
+
+    Messages (dev.ecm.messages)
+        Conversations, threads with Sent / Delivered / Failed, groups,
+        pictures, voice notes and contact cards. See messages.
+
+    Contacts (dev.ecm.contacts)
+        The address book (/home/.contacts/contacts.vcf), My card, vCard
+        share and import. See contacts.
+
+NUMBERS
+    Numbers look like +1 214 555 0142 (E.164). Each carrier has blocks
+    of numbers (a Tech Village has its own area code); cored gives a new
+    SIM the next free one. Dial a local number without the +1 and the
+    area code, or a short code:
+
+      611        the carrier's support line (1: balance, 2: your number)
+      *86        voicemail
+      *67 <n>    withhold your number for this call
+      *72 <n>    forward all calls to n; *73 stops
+
+    Forwarding when busy, unanswered or unreachable, call waiting, Do
+    Not Disturb and blocked numbers are set by the carrier (cored
+    feature, cored block).
+
+    Numbers move between carriers with a port code (cored port-code).
+
+SCRIPTS
+    Python and Lua have a phone module with the same names:
+
+      import phone
+      print(phone.number())
+      phone.sms_send("+12145550143", "On my way")
+      c = phone.dial("611"); c.send_tones("1"); c.hangup()
+      phone.on_sms(lambda sender, text: print(sender, text))
+      phone.run()
+
+    number() status() sms_send(to, text) sms_status(id) sms_inbox()
+    threads() messages(thread) mark_read(thread)
+    mms_send(to_list, text, files)  dial(number, hide) calls()
+    speaker(on) call_log()  on_sms(fn) on_mms(fn) on_call(fn) poll(s)
+    run()  contacts() add_contact(name, number, label)
+    A Call: id number state() info() wait() answer() reject() hangup()
+    hold(on) mute(on) send_tones(digits) tones() play(wav)
+    record(seconds, path).
+
+    Errors raise phone.PhoneError (Lua: an error starting "phone: ").
+    Files a script hands to telephonyd (play, record, MMS parts) must be
+    under /home/ or /tmp/.
+
+PERMISSIONS
+    phone       calls and everything else (telephonyd's port 7720)
+    sms         texts only (port 7726)
+    contacts    the address book
+    The built-in apps have them. Another app asks once, and each call or
+    text it starts is confirmed by the player.
+
+FILES
+    /home/.contacts/contacts.vcf     the address book (vCard 3.0)
+    /home/Messages/                  pictures and other MMS parts
+    /var/telephony/                  messages and the call log
+
+SEE ALSO
+    dialer, messages, contacts, tel, sms, telephonyd, cellular, cored,
+    imsd, scripting

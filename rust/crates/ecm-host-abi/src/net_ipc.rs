@@ -115,6 +115,13 @@ pub fn tcp_recv(fd: i32, buf: &mut [u8], _timeout_ms: i32) -> i32 {
     socket::recv(fd, buf, 0)
 }
 
+/// Whether a TCP socket has data to read (or was closed), waiting up to `timeout_ms`
+/// (0: just look), so a script can watch a connection without blocking in `tcp_recv`.
+pub fn tcp_ready(fd: i32, timeout_ms: i32) -> bool {
+    let mut p = [socket::PollFd { fd, events: socket::POLLIN, revents: 0 }];
+    socket::poll(&mut p, timeout_ms.max(0)) > 0 && p[0].revents & (socket::POLLIN | socket::POLLHUP | socket::POLLERR) != 0
+}
+
 /// Close a TCP socket.
 pub fn tcp_close(fd: i32) {
     socket::close(fd);

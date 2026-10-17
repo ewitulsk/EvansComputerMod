@@ -503,6 +503,12 @@ mod net_module {
         }
     }
 
+    /// Whether a connection has data to read (or was closed): net.tcp_ready(conn, timeout_ms=0).
+    #[pyfunction]
+    fn tcp_ready(conn: i32, timeout_ms: rustpython_vm::function::OptionalArg<i32>) -> bool {
+        ecm_host_abi::net_ipc::tcp_ready(conn, timeout_ms.unwrap_or(0))
+    }
+
     /// Close a TCP connection.
     #[pyfunction]
     fn tcp_close(conn: i32) {

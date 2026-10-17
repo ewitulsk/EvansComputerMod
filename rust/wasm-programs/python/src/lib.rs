@@ -12,4 +12,6 @@ pub mod web_module;
 #[cfg(test)]
 mod cards_tests;
 #[cfg(test)]
+mod phone_tests;
+#[cfg(test)]
 mod cards_apps_tests;

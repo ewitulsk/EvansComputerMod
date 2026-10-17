@@ -61,6 +61,7 @@ NET
       tcp_connect(host, port)    a connection handle
       tcp_listen(port) tcp_accept(listener)
       tcp_send(conn, data) tcp_recv(conn, max) tcp_close(conn)
+      tcp_ready(conn, ms)        data waiting (or closed)? waits up to ms
       set_wake(conn, True)       data on it wakes the app while it is
                                  suspended (needs background:refresh)
       http_get(url) http_post(url, body)   status, body, headers
@@ -169,6 +170,21 @@ WEB
     None/nil for 404. Lua: local web = require("web"). See httpd and
     browser.
 
+PHONE
+      number() status()          own number; registration, carrier, bars
+      sms_send(to, text)         an id; sms_status(id): sent, delivered
+      sms_inbox() threads() messages(thread)
+      mms_send([to, ...], text, [file, ...])   pictures, groups
+      dial(number)               a Call: state() hangup() send_tones()
+                                 play(wav) record(seconds) wait()
+      on_sms(fn) on_mms(fn) on_call(fn)   then run() or poll(seconds)
+      contacts() add_contact(name, number) call_log()
+
+    Through telephonyd on the phone. Needs the phone, sms or contacts
+    permission; a non-system app's calls and texts are confirmed by the
+    player. Errors raise phone.PhoneError (Lua: "phone: ..."). See
+    telephony.
+
 AUTH
       signin(host, user, password)   sign in to an Auth server (authd)
       signup(host, user, password, display)   make an account
@@ -196,4 +212,5 @@ EXAMPLE
     hi", {on_click = hi}), app:window(...), app:run().
 
 SEE ALSO
-    python, lua, ui, peripheral, editor, visual, store, pkg, radio, auth
+    python, lua, ui, peripheral, editor, visual, store, pkg, radio, auth,
+    telephony
