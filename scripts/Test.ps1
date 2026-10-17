@@ -40,7 +40,8 @@ param(
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
     [ValidateSet('tech','radio','screen','gui','phone','upload')]
     [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock) or upload (a real client uploads a file to a Terminal; with -Upload)
-    [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
+    [long]$Seed = 73198425,         # -ClientChecks world seed (Tech Village styles depend on it)
+    [string[]]$TechParts = @()      # -ClientSuite tech: opt-in multi-minute parts: ride (cell_tech_village, ~5 min), reroute (fiber/cable cut and repair, ~1.5 min), all. Only when a change majorly touches what they test (TESTING.md "Long runs")
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +49,7 @@ $ErrorActionPreference = "Stop"
 # `powershell -File` passes "a,b" as one string; accept both forms.
 function Split-List($v) { @($v | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 $Rust = Split-List $Rust
+$TechParts = Split-List $TechParts
 $JUnit = Split-List $JUnit
 $GameTests = Split-List $GameTests
 $Scenarios = Split-List $Scenarios
@@ -260,7 +262,7 @@ if ($ClientChecks) {
     "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=$Seed`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
     "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"
     $shots=Join-Path $out 'screenshots';New-Item -ItemType Directory -Force $shots | Out-Null
-    $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots","-PvisualSuite=$ClientSuite",'--console=plain')
+    $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots","-PvisualSuite=$ClientSuite","-PvisualTechParts=$($TechParts -join ',')",'--console=plain')
     $serverLog=Join-Path $out 'visual-server.log';$clientLog=Join-Path $out 'visual-client.log'
     $serverArgs='/c ""'+$root+'\gradlew.bat" :1.21.1:runVisualServer '+(($common|ForEach-Object{'"'+$_+'"'}) -join ' ')+'"'
     $clientArgs=$serverArgs.Replace('runVisualServer','runVisualClient')
@@ -303,7 +305,10 @@ if ($ClientChecks) {
             $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','house_interior','fiber_mast','village_arrival')
             $announced=[regex]::Match($serverText,'ECM_VISUAL_TECH_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
-            $serverOnly=@('house_network','fiber_chord','fiber_cut_reroute','fiber_repair','scenario_commands')
+            $serverOnly=@('house_network','fiber_chord','scenario_commands')
+            $allParts=$TechParts -contains 'all'
+            if($allParts -or $TechParts -contains 'reroute'){$serverOnly+=@('fiber_cut_reroute','fiber_repair','cable_cut_reroute','cable_repair')}
+            if($allParts -or $TechParts -contains 'ride'){$serverOnly+=@('cell_tech_village')}
             $announcedServer=[regex]::Match($serverText,'ECM_VISUAL_TECH_SERVER (\S+)')
             if($announcedServer.Success){$serverOnly=@($serverOnly+($announcedServer.Groups[1].Value -split ',') | Select-Object -Unique)}
         }
@@ -315,6 +320,7 @@ if ($ClientChecks) {
         foreach($marker in $serverOnly){if($serverText -notmatch "ECM_VISUAL_SERVER_PASS $marker\b"){$missing+="server:$marker"}}
         $ok=($completed -eq $cases.Count) -and ($missing.Count -eq 0) -and ($serverText -notmatch 'ECM_VISUAL_SERVER_FAIL') -and ($clientText -notmatch 'ECM_VISUAL_CLIENT_FAIL') -and $clientProcess.HasExited -and $serverProcess.HasExited
         $detail="suite=$ClientSuite paired server/client assertions and nonblank screenshots; cases=$($cases -join ',')"
+        if($ClientSuite -eq 'tech'){$detail+="; long parts: $(if($TechParts.Count){$TechParts -join ','}else{'none (ride and reroute skipped; -TechParts)'})"}
         if($missing.Count){$detail+="; missing=$($missing -join ',')"}
         Add-Step "client-checks:$ClientSuite" 'runVisualServer + runVisualClient (hidden)' $clientLog $ok $cases.Count $completed $detail
         Scan-Log 'visual-server' $serverLog;Scan-Log 'visual-client' $clientLog
