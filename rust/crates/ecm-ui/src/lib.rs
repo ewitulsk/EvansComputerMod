@@ -37,7 +37,7 @@ pub mod text;
 pub mod theme;
 pub mod window;
 
-pub use app::{App, AppEvent, Core, Ctx};
+pub use app::{App, AppEvent, Core, Ctx, MediaSession, MediaState};
 pub use conn::{ConnError, Connection, MockConnection};
 pub use element::{Align, Element, EventKind, Handler, Kind};
 pub use json::Json;
