@@ -365,8 +365,8 @@ impl<T: Tel, F: Files> ContactsApp<T, F> {
     }
 
     pub fn run(&mut self) {
-        let start = std::time::Instant::now();
-        while self.step(-1, start.elapsed().as_millis() as u64) {}
+        // the clock CommitAt times and the display pipeline use (UI_PROTOCOL.md v2), not one of our own
+        while self.step(-1, ecm_ui::conn::monotonic_us() / 1000) {}
     }
 
     pub fn process(&mut self, now_ms: u64) {
