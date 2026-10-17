@@ -33,3 +33,9 @@ include 'evanscomputermod-wasmtime'
 // command, the Video Player app) and keeps FFmpeg's native libraries out of
 // the main mod.
 include 'evanscomputermod-ffmpeg'
+
+// Optional file upload sidecar, built the same way (-PmcVersion=1.21.1 or
+// 26.1). Needed on the server and in each player's game: players copy files
+// from their real computers into computers (the `upload` command, Files'
+// Upload button).
+include 'evanscomputermod-upload'

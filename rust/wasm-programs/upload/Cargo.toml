@@ -1,0 +1,11 @@
+[package]
+name = "upload"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "upload"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
