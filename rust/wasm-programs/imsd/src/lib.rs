@@ -30,6 +30,8 @@ pub const KEYS: &[(&str, &str)] = &[
     ("smsc", ""),
     ("mrf", ""),
     ("mmsc", ""),
+    ("mmsc_http", "8002"),
+    ("vvm_http", "8003"),
     ("relay_ports", "30000-31000"),
     ("no_answer", "30"),
     ("max_expires", "3600"),
@@ -46,6 +48,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("smsc", "smscd's address (default ims_ip:5062)"),
     ("mrf", "mrfd's address (default ims_ip:5064)"),
     ("mmsc", "mmscd's SIP address (default ims_ip:5063)"),
+    ("mmsc_http", "mmscd's http_port (phones fetch and send MMS there)"),
+    ("vvm_http", "mrfd's http_port (visual voicemail)"),
     ("relay_ports", "the media relay's UDP ports, from-to"),
     ("no_answer", "seconds a phone rings before voicemail"),
     ("max_expires", "the longest registration, seconds"),
@@ -139,8 +143,9 @@ pub fn config(c: &std::collections::BTreeMap<String, String>, n: &Numbering) -> 
     cfg.max_expires = g("max_expires").parse::<u32>().map_err(|_| "max_expires is seconds")?.clamp(60, 86400);
     // carrier settings for the phones: where the MMSC and visual voicemail answer
     let mmsc_ip = cfg.mmsc.map(|a| a.ip).or(n.mmsc).unwrap_or(cfg.ims_ip);
-    cfg.mmsc_url = format!("http://{}:8002/mms", Addr::new(mmsc_ip, 0).host());
-    cfg.vvm_url = format!("http://{}:8003/vm", Addr::new(cfg.mrf.ip, 0).host());
+    let port = |k: &str| g(k).parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| format!("{k} is a port"));
+    cfg.mmsc_url = format!("http://{}:{}/mms", Addr::new(mmsc_ip, 0).host(), port("mmsc_http")?);
+    cfg.vvm_url = format!("http://{}:{}/vm", Addr::new(cfg.mrf.ip, 0).host(), port("vvm_http")?);
     cfg.peers = parse_peers(&g("peers"))?;
     cfg.public_peering = g("public_peering") == "true";
     Ok(cfg)

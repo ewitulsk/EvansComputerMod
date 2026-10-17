@@ -138,6 +138,8 @@ pub fn main() {
     let clock = Instant::now();
     let ms = || clock.elapsed().as_millis() as u64;
     let mut last_celld = 0u64;
+    // (carrier, bars) from celld, for `status`
+    let mut cell: (String, u8) = (String::new(), 0);
     let mut last_frame = ms();
     let mut volte_reported: Option<(bool, String)> = None;
     let mut wakelock_at = 0u64;
@@ -157,6 +159,7 @@ pub fn main() {
             match celld::host::query("status", 300) {
                 Ok(t) => {
                     let s = celld::ctl::Status::parse(&t);
+                    cell = (if s.on_cell() { s.carrier.clone() } else { String::new() }, if s.on_cell() { s.bars } else { 0 });
                     let ip = s.ims_ip.split('/').next().and_then(Addr::parse_ip);
                     match (ip, Addr::parse_ip(&s.pcscf)) {
                         (Some(ip), Some(p)) if s.on_cell() => ua.bearer_up(Bearer { ip, pcscf: Addr::new(p, 5060), domain: s.ims_domain.clone(), msisdn: s.msisdn.clone() }, now),
@@ -168,6 +171,7 @@ pub fn main() {
                     }
                 }
                 Err(_) => {
+                    cell = (String::new(), 0);
                     if ua.bearer().is_some() {
                         ua.bearer_down(now);
                     }
@@ -232,7 +236,7 @@ pub fn main() {
             }
         }
         for (fd, l) in requests {
-            let r = handle(&l, &mut ua, &mut st, &mut audio, &mut sms_ids, voicemail_waiting, now, &mut log);
+            let r = handle(&l, &mut ua, &mut st, &mut audio, &mut sms_ids, voicemail_waiting, &cell, now, &mut log);
             if !sys::send_all(fd, reply(&r).as_bytes()) {
                 gone.push(fd);
             }
@@ -572,7 +576,7 @@ fn on_event(
 
 /// One control request.
 #[allow(clippy::too_many_arguments)]
-fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &mut BTreeMap<u32, u64>, vm: u32, now: u64, log: &mut Log) -> Result<String, String> {
+fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &mut BTreeMap<u32, u64>, vm: u32, cell: &(String, u8), now: u64, log: &mut Log) -> Result<String, String> {
     let w: Vec<&str> = line.split_whitespace().collect();
     let id = |s: &str| s.parse::<u32>().map_err(|_| format!("bad call id '{s}'"));
     let cc = ua.cfg.cc.clone();
@@ -588,10 +592,12 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
         ["status"] => {
             let calls = ua.calls();
             Ok(format!(
-                "registration {}\nmsisdn {}\ndomain {}\nvolte {}\nhd {}\nvoicemail {}\nunread {}\nmissed {}\ncalls {}\nmmsc {}\nspeaker {}\nnow {}\n",
+                "registration {}\nmsisdn {}\ndomain {}\ncarrier {}\nbars {}\nvolte {}\nhd {}\nvoicemail {}\nunread {}\nmissed {}\ncalls {}\nmmsc {}\nspeaker {}\nnow {}\n",
                 ua.registration().name(),
                 if ua.msisdn().is_empty() { "-" } else { ua.msisdn() },
                 ua.bearer().map(|b| b.domain.clone()).filter(|d| !d.is_empty()).unwrap_or_else(|| "-".into()),
+                if cell.0.is_empty() { "-" } else { &cell.0 },
+                cell.1,
                 (ua.registration() == RegState::Registered) as u8,
                 calls.iter().any(|c| c.hd) as u8,
                 vm,

@@ -100,6 +100,9 @@ fn run(wait: bool) {
         cfg.smsc = Addr::parse(&g("smsc"), 5062).unwrap_or_else(|| fail("bad smsc"));
     }
     let (lo, hi) = g("rtp_ports").split_once('-').and_then(|(a, b)| Some((a.trim().parse::<u16>().ok()?, b.trim().parse::<u16>().ok()?))).unwrap_or_else(|| fail("rtp_ports is from-to"));
+    if lo >= hi || hi - lo < 4 {
+        fail("rtp_ports: from-to with at least 4 ports");
+    }
     cfg.rtp_ports = (lo, hi);
     cfg.max_record_ms = g("max_message").parse::<u64>().unwrap_or(60).clamp(5, 300) * 1000;
     let mut admin = AdminServer::bind(port(&c, "admin_port")).unwrap_or_else(|e| fail(format!("admin socket: {e} (is mrfd already running?)")));

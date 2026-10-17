@@ -1,0 +1,8 @@
+id          = "dev.ecm.dialer"
+name        = "Phone"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Calls: keypad, recents, favourites, voicemail"
+publisher   = "ECM"
+permissions = ["phone", "contacts", "notifications"]
+icon        = "icon.png"
