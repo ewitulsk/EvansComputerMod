@@ -196,6 +196,45 @@ class SpeakerAudioTest {
         assertEquals(400, voiced, 2, "all of the late stream is played after what was sent");
     }
 
+    /**
+     * The display pipeline's live bit (SpeakerAudioPacket.FLAG_LIVE): a drain that a call
+     * (role voice or phone) put sound into is live; music alone, or a call that is silent, is
+     * not. Each drain's pts is the mixer's own schedule, on the display clock.
+     */
+    @Test
+    void aCallMakesTheDrainLiveAndMusicAloneDoesNot() throws Exception {
+        assertTrue(SpeakerAudio.isLiveRole("voice") && SpeakerAudio.isLiveRole("phone"));
+        assertFalse(SpeakerAudio.isLiveRole("media"));
+        SpeakerAudio a = new SpeakerAudio();
+        AudioStream music = a.openStream(1);
+        music.setFormat(8000, 16, 1);
+        music.setLatencyMs(1000);
+        music.write(constant(1600, 3000), 0, 3200, false); // 200 ms
+        long before = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        assertTrue(a.drain().length > 0);
+        assertFalse(a.lastDrainLive(), "music alone is not live");
+        long pts = a.lastDrainPtsUs();
+        assertTrue(pts >= before - 5_000 && pts <= before + 300_000, "pts on the display clock: " + (pts - before) + " us from now");
+        // A silent call: still not live.
+        AudioStream call = a.openStream(2);
+        call.setFormat(8000, 16, 1);
+        call.setRole(AudioStream.Role.VOICE);
+        call.setLatencyMs(1000);
+        call.write(constant(800, 0), 0, 1600, false);
+        Thread.sleep(60);
+        a.drain();
+        assertFalse(a.lastDrainLive(), "a silent call is not live");
+        // The call carries sound: live.
+        call.write(constant(1600, 6000), 0, 3200, false);
+        boolean live = false;
+        for (int i = 0; i < 10 && !live; i++) {
+            Thread.sleep(30);
+            a.drain();
+            live = a.lastDrainLive();
+        }
+        assertTrue(live, "a talking call makes the drain live");
+    }
+
     @Test
     void voiceThatCarriesSoundDucksMusicAndASilentCallDoesNot() throws Exception {
         SpeakerAudio a = new SpeakerAudio();
