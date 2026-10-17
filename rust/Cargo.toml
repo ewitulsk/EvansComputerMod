@@ -118,6 +118,11 @@ members = [
     "wasm-programs/disco",
     "wasm-programs/named",
     "wasm-programs/dig",
+    "wasm-programs/registryd",
+    "wasm-programs/registrard",
+    "wasm-programs/ianad",
+    "wasm-programs/domain",
+    "wasm-programs/whois",
 ]
 resolver = "2"
 

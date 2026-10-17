@@ -166,11 +166,23 @@ fn run(conf: NamedConf, conf_path: &str, quiet: bool) {
         std::process::exit(1);
     }
     let port = conf.port;
-    let main = udp(conf.listen, port);
-    if main < 0 {
+    // One socket per address (as BIND does): an answer leaves from the address it was
+    // asked on, which a client checks. A computer with several interfaces (a router) would
+    // otherwise answer from its outgoing interface's address and be ignored.
+    let own = sys::own_addresses();
+    let mut addrs: Vec<Option<Ip>> = match conf.listen {
+        Some(ip) => vec![Some(ip)],
+        None if own.is_empty() => vec![None],
+        None => own.iter().map(|ip| Some(*ip)).chain(std::iter::once(Some([127, 0, 0, 1]))).collect(),
+    };
+    addrs.dedup();
+    let mains: Vec<i32> = addrs.iter().map(|a| udp(*a, port)).filter(|fd| *fd >= 0).collect();
+    if mains.is_empty() {
         eprintln!("named: cannot listen on UDP port {port} (is another DNS server running?)");
         std::process::exit(1);
     }
+    // Which socket each client asked on, for its answer.
+    let mut asked_on: std::collections::HashMap<(Ip, u16), i32> = std::collections::HashMap::new();
     let res_fd = udp(None, 0);
     let tcp = socket::socket(AF_INET, SOCK_STREAM, 0);
     socket::setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, &1i32.to_le_bytes());
@@ -180,7 +192,6 @@ fn run(conf: NamedConf, conf_path: &str, quiet: bool) {
     }
     let mut seed = [0u8; 4];
     ecm_host_abi::random::fill(&mut seed);
-    let own = sys::own_addresses();
     let mut srv = Server::load(conf, &reader, own, u32::from_le_bytes(seed), now_ms());
     let where_ = srv.conf.listen.map(ip_str).unwrap_or_else(|| "all addresses".into());
     log(&format!(
@@ -197,7 +208,8 @@ fn run(conf: NamedConf, conf_path: &str, quiet: bool) {
         for o in srv.take_out() {
             match o {
                 Out::Udp { to, port, data } => {
-                    socket::sendto(main, &data, 0, &SockAddrIn::from_ip_port(to, port));
+                    let fd = asked_on.get(&(to, port)).copied().unwrap_or(mains[0]);
+                    socket::sendto(fd, &data, 0, &SockAddrIn::from_ip_port(to, port));
                 }
                 Out::Resolver { to, data } => {
                     socket::sendto(res_fd, &data, 0, &SockAddrIn::from_ip_port(to, 53));
@@ -221,11 +233,11 @@ fn run(conf: NamedConf, conf_path: &str, quiet: bool) {
         }
         let now = now_ms();
         let wait = srv.next_deadline().map_or(500, |d| (d - now).clamp(1, 500));
-        let mut fds = vec![
-            PollFd { fd: main, events: POLLIN, revents: 0 },
+        let mut fds: Vec<PollFd> = mains.iter().map(|&fd| PollFd { fd, events: POLLIN, revents: 0 }).collect();
+        fds.extend([
             PollFd { fd: res_fd, events: POLLIN, revents: 0 },
             PollFd { fd: ctl, events: POLLIN, revents: 0 },
-        ];
+        ]);
         if tcp_ok {
             fds.push(PollFd { fd: tcp, events: POLLIN, revents: 0 });
         }
@@ -237,13 +249,20 @@ fn run(conf: NamedConf, conf_path: &str, quiet: bool) {
         }
         let now = now_ms();
         let ready = |fd: i32| fds.iter().any(|f| f.fd == fd && f.revents & (POLLIN | POLLERR | POLLHUP) != 0);
-        if ready(main) {
+        for &main in &mains {
+            if !ready(main) {
+                continue;
+            }
             loop {
                 let mut from = SockAddrIn::default();
                 let n = socket::recvfrom(main, &mut buf, MSG_DONTWAIT, &mut from);
                 if n <= 0 {
                     break;
                 }
+                if asked_on.len() > 4096 {
+                    asked_on.clear();
+                }
+                asked_on.insert((from.ip(), from.port()), main);
                 srv.on_udp(from.ip(), from.port(), &buf[..n as usize], now);
             }
         }

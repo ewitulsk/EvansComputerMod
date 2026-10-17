@@ -1109,6 +1109,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "echo"
 version = "0.1.0"
 
@@ -1202,6 +1210,7 @@ name = "ecm-dns"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "sha2",
 ]
 
 [[package]]
@@ -1758,6 +1767,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "ianad"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
 ]
 
 [[package]]
@@ -2907,6 +2924,22 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "registrard"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "registryd"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "resolvectl"
@@ -4757,6 +4790,14 @@ dependencies = [
  "home",
  "once_cell",
  "rustix 0.38.44",
+]
+
+[[package]]
+name = "whois"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
 ]
 
 [[package]]

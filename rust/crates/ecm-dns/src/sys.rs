@@ -327,3 +327,194 @@ pub fn write_file(path: &str, text: &str) -> bool {
 pub fn read_file(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
+
+// ------------------------------------------------------------------ small HTTP + line servers
+
+/// A listening TCP socket on `port` (all addresses).
+pub fn listen(port: u16) -> Result<i32, String> {
+    let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
+    if fd < 0 {
+        return Err("cannot open a socket".into());
+    }
+    socket::setsockopt(fd, SOL_SOCKET, ecm_host_abi::socket::SO_REUSEADDR, &1i32.to_le_bytes());
+    if socket::bind(fd, &SockAddrIn::any(port)) != 0 || socket::listen(fd, 8) != 0 {
+        socket::close(fd);
+        return Err(format!("cannot listen on TCP port {port} (already in use?)"));
+    }
+    Ok(fd)
+}
+
+/// One HTTP request, read whole (headers and a Content-Length body).
+pub struct Request {
+    pub method: String,
+    pub path: String,
+    pub query: String,
+    pub body: String,
+}
+
+pub fn read_request(fd: i32, timeout_ms: i64) -> Option<Request> {
+    let start = Instant::now();
+    let mut data = Vec::new();
+    let mut buf = [0u8; 2048];
+    loop {
+        if start.elapsed().as_millis() as i64 > timeout_ms || data.len() > 65536 {
+            return None;
+        }
+        let n = socket::recv(fd, &mut buf, 0);
+        if n == -2 {
+            continue;
+        }
+        if n <= 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n as usize]);
+        if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&data[..end]).to_string();
+            let len = head
+                .lines()
+                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                .unwrap_or(0);
+            if data.len() >= end + 4 + len {
+                let first = head.lines().next().unwrap_or("");
+                let mut w = first.split_whitespace();
+                let method = w.next().unwrap_or("").to_string();
+                let target = w.next().unwrap_or("/").to_string();
+                let (path, query) = target.split_once('?').map_or((target.clone(), String::new()), |(p, q)| (p.to_string(), q.to_string()));
+                let body = String::from_utf8_lossy(&data[end + 4..end + 4 + len]).to_string();
+                return Some(Request { method, path, query, body });
+            }
+        }
+    }
+    None
+}
+
+pub fn reply(fd: i32, status: &str, content_type: &str, body: &str) {
+    let head = format!(
+        "HTTP/1.0 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    send_all(fd, head.as_bytes());
+    send_all(fd, body.as_bytes());
+    socket::shutdown(fd, socket::SHUT_WR);
+}
+
+/// `http://host[:port]/path` -> (host, port, path).
+pub fn split_url(url: &str) -> Result<(String, u16, String), String> {
+    let rest = url.strip_prefix("http://").ok_or_else(|| format!("'{url}' is not an http:// address"))?;
+    let (hostport, path) = rest.split_once('/').map_or((rest, String::from("/")), |(h, p)| (h, format!("/{p}")));
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse().map_err(|_| format!("bad port in '{url}'"))?),
+        None => (hostport.to_string(), 80),
+    };
+    Ok((host, port, path))
+}
+
+/// POST a form to a URL, return the body of the answer.
+pub fn http_post(url: &str, body: &str, timeout_ms: i64) -> Result<String, String> {
+    let (host, port, path) = split_url(url)?;
+    let ip = server_addr(&host)?;
+    let fd = tcp_connect(ip, port, timeout_ms).map_err(|_| format!("cannot reach {host} ({}) on port {port}", ip_str(ip)))?;
+    let req = format!(
+        "POST {path} HTTP/1.0\r\nHost: {host}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    if !send_all(fd, req.as_bytes()) {
+        socket::close(fd);
+        return Err(format!("connection to {host} lost"));
+    }
+    let text = read_all(fd, timeout_ms);
+    socket::close(fd);
+    let text = text.ok_or_else(|| format!("{host} did not answer"))?;
+    match text.split_once("\r\n\r\n") {
+        Some((_, b)) => Ok(b.to_string()),
+        None => Err(format!("{host} sent no HTTP answer")),
+    }
+}
+
+/// Everything until the peer closes (or the timeout).
+pub fn read_all(fd: i32, timeout_ms: i64) -> Option<String> {
+    let start = Instant::now();
+    let mut data = Vec::new();
+    let mut buf = [0u8; 2048];
+    loop {
+        if start.elapsed().as_millis() as i64 > timeout_ms {
+            break;
+        }
+        let n = socket::recv(fd, &mut buf, 0);
+        if n == -2 {
+            continue;
+        }
+        if n <= 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n as usize]);
+    }
+    (!data.is_empty()).then(|| String::from_utf8_lossy(&data).to_string())
+}
+
+/// A line-oriented TCP client (EPP-lite): connect, then [`LineClient::call`] per command.
+pub struct LineClient {
+    fd: i32,
+    pending: Vec<u8>,
+}
+
+impl LineClient {
+    pub fn connect(ip: Ip, port: u16, timeout_ms: i64) -> Result<LineClient, String> {
+        Ok(LineClient { fd: tcp_connect(ip, port, timeout_ms)?, pending: Vec::new() })
+    }
+
+    /// Send one line; read one reply line, or for a reply starting `OK` and ending without
+    /// "." on a multi-line answer, up to the "." line.
+    pub fn call(&mut self, line: &str, multi: bool) -> Result<String, String> {
+        if !send_all(self.fd, format!("{line}\r\n").as_bytes()) {
+            return Err("connection lost".into());
+        }
+        let first = self.read_line()?;
+        if !multi || !first.starts_with("OK") {
+            return Ok(first);
+        }
+        let mut out = first;
+        loop {
+            let l = self.read_line()?;
+            out.push('\n');
+            out.push_str(&l);
+            if l == "." {
+                return Ok(out);
+            }
+        }
+    }
+
+    /// One reply line (the greeting a server sends first, for example).
+    pub fn read_line(&mut self) -> Result<String, String> {
+        let start = Instant::now();
+        let mut buf = [0u8; 1024];
+        loop {
+            if let Some(i) = self.pending.iter().position(|&b| b == b'\n') {
+                let l: Vec<u8> = self.pending.drain(..=i).collect();
+                return Ok(String::from_utf8_lossy(&l).trim_end().to_string());
+            }
+            if start.elapsed().as_millis() > 5000 {
+                return Err("no answer".into());
+            }
+            let n = socket::recv(self.fd, &mut buf, 0);
+            if n == -2 {
+                continue;
+            }
+            if n <= 0 {
+                return Err("connection closed".into());
+            }
+            self.pending.extend_from_slice(&buf[..n as usize]);
+        }
+    }
+}
+
+impl Drop for LineClient {
+    fn drop(&mut self) {
+        socket::close(self.fd);
+    }
+}
+
+/// HTML-escape.
+pub fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
