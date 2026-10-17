@@ -60,15 +60,21 @@ public record TerminalInputPacket(
      * Handles the packet on the server side.
      */
     public static void handle(TerminalInputPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            try {
-                if (!(context.player() instanceof ServerPlayer player)) return;
-                deliver(player, packet);
-            } catch (Throwable e) {
-                // Final safety net: prevent any unhandled exceptions from crashing the server
-                // This is the last line of defense against WASM execution failures
-                EvansComputerMod.LOGGER.error("Error handling terminal input packet", e);
-            }
-        });
+        // Network thread (DISPLAY_PIPELINE_SPEC.md Part A3): straight to the kernel's input queue.
+        try {
+            if (!(context.player() instanceof ServerPlayer player)) return;
+            ComputerTargets.input(player, packet.computerId(), packet.displayId(),
+                    computer -> computer.handleKeyInput(packet.input()), () -> {
+                        try {
+                            deliver(player, packet);
+                        } catch (Throwable e) {
+                            EvansComputerMod.LOGGER.error("Error handling terminal input packet", e);
+                        }
+                    });
+        } catch (Throwable e) {
+            // Final safety net: prevent any unhandled exceptions from crashing the server
+            // This is the last line of defense against WASM execution failures
+            EvansComputerMod.LOGGER.error("Error handling terminal input packet", e);
+        }
     }
 }

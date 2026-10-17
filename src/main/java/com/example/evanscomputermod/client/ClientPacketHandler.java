@@ -25,14 +25,19 @@ public final class ClientPacketHandler {
      * Every packet is acked, which also paces the server.
      */
     public static void handleTerminalDelta(TerminalDeltaPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
+        // Network thread: inflate, parse and decode on the decode thread, ack on receipt
+        // (DISPLAY_PIPELINE_SPEC.md Part A5); the render thread only applies.
+        long recvUs = com.example.evanscomputermod.network.ClockSync.clientNowUs();
+        DisplayClientHooks.decode(() -> {
             if (Minecraft.getInstance().level == null) return;
             TerminalDeltaPacket.ParsedDelta delta = packet.parse();
-            ClientDisplayCache.apply(packet.computerId(), packet.displayId(), delta);
-            // else: a delta for a display this client never had a keyframe for (it
-            // came into view after the server's state was set up); a keyframe is on the way.
+            if (delta.isJpeg()) delta.decodeJpeg();
             ClientPacketDistributor.sendToServer(
-                    new TerminalReadyPacket(packet.computerId(), packet.displayId(), delta.generation()));
+                    new TerminalReadyPacket(packet.computerId(), packet.displayId(), delta.generation(), recvUs));
+            // A delta for a display this client never had a keyframe for is dropped by the cache
+            // (it came into view after the server's state was set up); a keyframe is on the way.
+            DisplayClientHooks.toMain(() -> com.example.evanscomputermod.network.ClientPlayout.receive(
+                    packet.computerId(), packet.displayId(), delta, recvUs));
         });
     }
 

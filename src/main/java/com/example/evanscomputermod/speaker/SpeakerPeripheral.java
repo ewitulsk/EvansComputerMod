@@ -87,4 +87,26 @@ public final class SpeakerPeripheral extends AnnotatedPeripheral {
         float p = pitch == null ? 1f : (float) Math.max(0.5, Math.min(2, pitch));
         if (!speaker.playSound(id, v, p)) throw new PeripheralException("unknown sound '" + id + "'");
     }
+
+    /** The computer this speaker is attached to (the last one, if several), or null. */
+    private volatile java.util.UUID computer;
+
+    @Override
+    public void attach(IComputerAccess computer) {
+        this.computer = computer.getComputerId();
+    }
+
+    @Override
+    public void detach(IComputerAccess computer) {
+        if (computer.getComputerId().equals(this.computer)) this.computer = null;
+    }
+
+    /**
+     * The computer this speaker plays for: its playout delay applies to the
+     * speaker's audio while it streams timed frames (DISPLAY_PIPELINE_SPEC.md
+     * Part E2). Null when attached to nothing.
+     */
+    public java.util.UUID computer() {
+        return computer;
+    }
 }

@@ -273,6 +273,41 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         with_app(h, |c| c.send(m))
     })?)?;
 
+    // A canvas resource of w x h pixels in format ("rgba8888", "rgb565",
+    // "indexed8"); returns its id.
+    m.set("canvas", lua.create_function(|_, (h, w, hh, format): (i64, i32, i32, String)| {
+        let f = pixel_format(&format).ok_or_else(|| err(format!("unknown canvas format {format:?} (rgba8888, rgb565, indexed8)")))?;
+        if !(1..=4096).contains(&w) || !(1..=4096).contains(&hh) {
+            return Err(err("canvas sizes are 1-4096"));
+        }
+        with_app(h, |c| c.canvas(w, hh, f))
+    })?)?;
+    // New pixels for a canvas (the whole buffer); damage = {{x, y, w, h}, ...} or nil (all).
+    // Shown at the next commit (or commit_at). false once closed.
+    m.set("put_canvas", lua.create_function(|_, (h, id, pixels, damage): (i64, u32, Value, Option<Table>)| {
+        let px = bytes(&pixels, "pixels")?;
+        let mut rects = Vec::new();
+        if let Some(d) = damage {
+            for r in d.sequence_values::<Table>() {
+                let r = r?;
+                let v: Vec<i32> = r.sequence_values::<f64>().map(|x| x.map(|x| x as i32)).collect::<mlua::Result<_>>()?;
+                if v.len() != 4 {
+                    return Err(err("damage rects are {x, y, w, h}"));
+                }
+                rects.push([v[0], v[1], v[2], v[3]]);
+            }
+        }
+        with_app(h, |c| c.put_canvas(id, &px, &rects).is_ok())
+    })?)?;
+    // Commit the canvas pixels put since the last commit for pts_us (CommitAt).
+    m.set("commit_at", lua.create_function(|_, (h, pts_us): (i64, f64)| with_app(h, |c| c.commit_at(pts_us.max(0.0) as u64).is_ok()))?)?;
+    // Drop the queued timed frames (QueueFlush).
+    m.set("queue_flush", lua.create_function(|_, h: i64| with_app(h, |c| c.queue_flush().is_ok()))?)?;
+    // A canvas's content hint: 0 auto, 1 exact, 2 motion (SurfaceSetContent).
+    m.set("set_content", lua.create_function(|_, (h, id, hint): (i64, u32, u8)| with_app(h, |c| c.set_content(id, hint)))?)?;
+    // The monotonic clock in microseconds (what CommitAt times are on).
+    m.set("now_us", lua.create_function(|_, ()| Ok(ecm_ui::conn::monotonic_us() as f64))?)?;
+
     // Canonical JSON text of a Lua value (what Rust apps write too), and back.
     m.set("json_dumps", lua.create_function(|_, v: Value| Ok(to_json(&v, 0)?.to_string()))?)?;
     m.set("json_loads", lua.create_function(|lua, text: mlua::LuaString| {
@@ -314,6 +349,16 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     })?)?;
 
     Ok(m)
+}
+
+/// A canvas format name as the protocol's pixel format.
+fn pixel_format(name: &str) -> Option<proto::PixelFormat> {
+    match name {
+        "rgba8888" | "rgba" => Some(proto::PixelFormat::Rgba8888),
+        "rgb565" => Some(proto::PixelFormat::Rgb565),
+        "indexed8" => Some(proto::PixelFormat::Indexed8),
+        _ => None,
+    }
 }
 
 /// Register a mock connection a Rust test keeps a handle to; returns the

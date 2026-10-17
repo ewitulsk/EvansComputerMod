@@ -58,14 +58,40 @@ public final class DeltaApplier {
     }
 
     public static void applyDelta(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
+        if (delta.packetType() == TerminalDeltaPacket.PACKET_TYPE_FLUSH) return; // only the playout buffer cares
+        if (delta.isJpeg()) {
+            applyJpeg(display, delta);
+            return;
+        }
         // Update display mode + pixel format so client switches between
-        // text/graphics rendering and indexed/rgba tile decoding.
-        if (display.getDisplayMode() != delta.displayMode() || display.getPixelFormat() != delta.pixelFormat()) {
+        // text/graphics rendering and indexed/rgba tile decoding. A packet
+        // without a graphics plane (text only) leaves the format alone.
+        int format = delta.pixelFormat() >= 0 ? delta.pixelFormat() : display.getPixelFormat();
+        if (display.getDisplayMode() != delta.displayMode() || display.getPixelFormat() != format) {
             display.addGfxDamageAll();
         }
         display.setDisplayMode(delta.displayMode());
-        display.setPixelFormat(delta.pixelFormat());
+        display.setPixelFormat(format);
+        if (delta.hasText()) applyText(display, delta);
+        applyGfx(display, delta);
+    }
 
+    /** A whole JPEG frame (decoded on the client's decode thread) replaces the graphics plane. */
+    private static void applyJpeg(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
+        byte[] plane = delta.plane();
+        if (plane == null && !delta.decodeJpeg()) return;
+        plane = delta.plane();
+        byte[] px = display.getPixelData();
+        if (px == null || display.getGfxWidth() != delta.gfxWidth() || display.getGfxHeight() != delta.gfxHeight()
+                || display.getPixelFormat() != delta.pixelFormat() || px.length != plane.length) {
+            return; // a frame of another shape (a keyframe with the new shape is on its way)
+        }
+        System.arraycopy(plane, 0, px, 0, plane.length);
+        display.addGfxDamageAll();
+        display.setGfxDirtyCounters(display.getPixelDirtyCounter() + 1, display.getPaletteDirtyCounter());
+    }
+
+    private static void applyText(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
         byte[] cells = display.getCellData();
         int width = display.getWidth();
         int rowBytes = width * TerminalDisplay.CELL_SIZE;
@@ -101,7 +127,9 @@ public final class DeltaApplier {
         display.setCursorX(delta.cursorX());
         display.setCursorY(delta.cursorY());
         display.setCursorVisible(delta.cursorVisible());
+    }
 
+    private static void applyGfx(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
         // Apply palette changes
         if (delta.paletteChanged() && delta.palette() != null) {
             int[] displayPalette = display.getPalette();

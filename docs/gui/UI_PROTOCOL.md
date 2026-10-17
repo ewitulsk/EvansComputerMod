@@ -644,3 +644,39 @@ The app platform ([APPS.md](APPS.md)) wired to the compositor and the desktop; t
 - **`OpenFile`:** `Compositor.deliverOpenFile(pid, path)`: sent to the pid's connections that said Hello, else queued and sent right after `Welcome` (dropped if the program exits first).
 - **From the ePhone lane (merged):** `WillSuspend` (`UiManager.deliverWillSuspend`, on Terminals through `installAppHooks`), `SaveState` -> app manager, `restore_follows` / `Restore`, `BackgroundDone` (§11 "As built (P5b)"); `HotkeyClaim` is the phone's (§7). Order after `Welcome`: `Restore`, queued `NotificationAction`s, queued `OpenFile`s.
 - **Tests:** `UiServicesTest` (`notifyNeedsTheNotificationsPermission`, `launchAndOpenGoToTheHostAndOpenFileReachesTheApp`), `AppDesktopKernelTest` (real kernel and desktop), GameTests `ecm_apps` `app_store` and `files_open_with`; goldens `settings_apps`, `settings_apps_compact`, `settings_apps_wide`, and the regenerated `settings_*` / `desktop_apps`.
+
+## 20 · Version 2: timed commits and client feedback
+
+Version 2 of the wire contract (`abi/ui-protocol.toml`, [DISPLAY_PIPELINE_SPEC.md](DISPLAY_PIPELINE_SPEC.md) Parts C3 and F). The compositor accepts `Hello{version: 1}` and `2`; `Welcome` answers with the client's version, and a version 1 app never sees a v2 message, so apps built before keep working (ecm-ui, Python and Lua now say 2).
+
+### Timed commits
+
+| Message | Dir | Meaning |
+| --- | --- | --- |
+| `CommitAt{surface, pts_us}` | a>c | Like `Commit`, but the pixel changes in it (the connection's canvases with new rows, the surface itself if it is a pixel surface) are shown at `pts_us` on the app's monotonic clock (WASI `clock_time_get(MONOTONIC)`). Tree changes or a resize in it are `bad_state`: layout stays immediate, so text and buttons never wait behind video. Frames queue in time order. |
+| `QueueFlush{surface}` | a>c | Drop the surface's and the connection's canvases' queued frames (seek, pause, stop). |
+| `SurfaceSetContent{surface, resource, hint}` | a>c | How a pixel surface (`resource` 0) or a canvas may travel: 0 auto, 1 exact, 2 motion (lossy allowed). |
+| `QueueLimits{max_queue_frames, max_queue_ms}` | c>a | After `Welcome` (and `Restore`, queued actions and files): 12 frames and 500 ms by default. |
+
+- While a surface or the connection's canvases have a timed stream (a frame queued or shown in the last second), `RequestFrame` is answered with `Frame` when the queue has room, not on the refresh tick, so a producer runs exactly as far ahead as the queue allows.
+- The compositor shows each frame at its time, so its frame (and tile viewers, screenshots) is what is on screen now. Clients that draw the scene get the frames ahead as `TIMED` messages ([DISPLAY_PIPELINE.md](DISPLAY_PIPELINE.md) section 1b).
+- ecm-ui: `Core::put_canvas_at`, `commit_at`, `queue_flush`, `set_content`, `queue_limits`, `Ctx::now_us`. Python and Lua: `app.canvas(w, h, format)`, `Canvas.put`, `Canvas.commit_at(pts_us)`, `Canvas.queue_flush()`, `Canvas.content`, `ui.now_us()` (`man ui`).
+
+### Client feedback props
+
+Props a client that draws the scene may act on at once; the server's own drawing ignores them, and the app's next commit always replaces what the client predicted.
+
+| Prop | Nodes | The client |
+| --- | --- | --- |
+| `HoverFill`, `HoverBorderColor`, `HoverColor` | rect, rect, text | uses them while the hit id under the pointer equals the node's own `HitId` |
+| `PressedFill`, `PressedBorderColor`, `PressedColor` | rect, rect, text | while the left button went down on that hit id and is held |
+| `Scroll` (1 x, 2 y, 3 both), `ContentW`, `ContentH`, `ScrollX`, `ScrollY` | group | scrolls the group on the wheel at once (16 lu a step, ecm-ui's `scroll_step`), clamped to the content, and reports the offset; the app gets `Scrolled{surface, node, x, y}` (c>a), lays the content out there and commits `ScrollX/ScrollY` |
+| `DragWindow` (a window id) | group, rect | a left drag that starts on the node moves its window and that window (a shell's title bar and the app window it frames) with the pointer; the shell's `Place` on release takes over |
+| `Caret` (character index) | text | typed text and Backspace show in the focused window's field at once |
+| `CaretOf` (a text node id) | rect | that field's caret: moved with the predicted text |
+
+ecm-ui sets them on buttons, list rows, menu items, tabs, scrollbar thumbs and checkboxes (hover and pressed), scroll views (a viewport group `:vp`), single-line text fields (caret) and the desktop's title bars (drag). Text areas get no scroll or caret props.
+
+### Tests
+
+`UiTimedSceneTest` (JUnit), `UiServicesTest` (the message order after `Welcome`), `ecm-ui` `tests/feedback.rs`, the Python and Lua canvas tests, and the GameTests of `ecm_display`.

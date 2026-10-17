@@ -30,6 +30,13 @@ import java.util.zip.Inflater;
  * KEYFRAME: u32 version · var to · var serverNowMs · Header · Trees · Pixels
  * RESOURCE: u32 version · u64 key · u16 w · u16 h · premultiplied ARGB (w·h, u32 each)
  * END:      (no body) the display left GUI client rendering; tile deltas follow
+ * TIMED:    u32 version · var tseq · u8 target · var scope · var id · u16 w · u16 h · var seq · var base · u64 ptsUs
+ *           · u64 sendUs · u8 encoding(0 exact, 1 jpeg) · exact: var tiles+1 (0 = all) · var tileIndex…
+ *           · premultiplied ARGB of each tile | jpeg: the JPEG of the whole buffer (opaque)
+ *           (version 2: a canvas or pixel surface frame shown at ptsUs, DISPLAY_PIPELINE_SPEC.md Part C5;
+ *           frame seq of that target, diffed against frame base; not part of the step stream)
+ * TFLUSH:   u32 version · var tseq · u8 target · var scope · var id · var after: drop that target's queued frames
+ *           after frame {@code after}
  * Trees:    var n · {var surface · var n · TreeOp…}…
  * Pixels:   var n · {u8 target(0 surface, 1 canvas) · var scope · var id · u16 w · u16 h · var tiles+1 (0 = all)
  *                    · var tileIndex… · premultiplied ARGB of each 16x16 tile, rows clipped}…
@@ -49,9 +56,11 @@ import java.util.zip.Inflater;
  */
 public final class UiSceneCodec {
     /** Version of the scene stream; a client reports it in its hello and the server sends patches only on a match. */
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
-    public static final int STEP = 1, KEYFRAME = 2, END = 3, RESOURCE = 4;
+    public static final int STEP = 1, KEYFRAME = 2, END = 3, RESOURCE = 4, TIMED = 5, TFLUSH = 6;
+    /** {@link Timed#encoding}: exact tiles or a whole JPEG frame. */
+    public static final int ENC_EXACT = 0, ENC_JPEG = 1;
     /** {@link PixelBlock#target}: a pixel surface (by scene id) or a canvas resource (by scope and id). */
     public static final int TARGET_SURFACE = 0, TARGET_CANVAS = 1;
     public static final int TILE = 16;
@@ -87,8 +96,119 @@ public final class UiSceneCodec {
 
     public record Resource(long key, int w, int h, int[] argb) {}
 
+    /**
+     * A timed frame of a canvas or pixel surface (version 2): frame {@code seq}
+     * of target {@code (target, scope, id)}, built on frame {@code base} (0 =
+     * whole), shown at {@code ptsUs} (server display clock). Exact frames carry
+     * tiles like a {@link PixelBlock} ({@code pixels}); JPEG frames carry the
+     * bytes ({@code jpeg}) and, once decoded off the render thread,
+     * {@code decoded[0]}. A {@link #TFLUSH} reuses it with {@code seq} = after.
+     */
+    public record Timed(long tseq, int target, int scope, int id, int w, int h, long seq, long base, long ptsUs, long sendUs,
+                        int encoding, int[] tiles, int[] pixels, byte[] jpeg, int[][] decoded) {
+        /** The whole frame (no base needed). */
+        public boolean whole() {
+            return base == 0 || encoding == ENC_JPEG || tiles == null;
+        }
+
+        /** Decode a JPEG frame (client decode thread). */
+        public boolean decode() {
+            if (encoding != ENC_JPEG) return true;
+            if (decoded[0] != null) return true;
+            int[] out = new int[w * h];
+            if (!com.example.evanscomputermod.computer.pipeline.LossyCodec.forThisThread().decodeArgb(jpeg, w, h, out)) return false;
+            decoded[0] = out;
+            return true;
+        }
+    }
+
     /** One message off the wire. */
-    public record Message(int kind, int epoch, Patch patch, Resource resource) {}
+    public record Message(int kind, int epoch, Patch patch, Resource resource, Timed timed) {
+        public Message(int kind, int epoch, Patch patch, Resource resource) {
+            this(kind, epoch, patch, resource, null);
+        }
+    }
+
+    /** The body of a {@link #TIMED} message. */
+    public static byte[] encodeTimed(long tseq, int target, int scope, int id, int w, int h, long seq, long base, long ptsUs,
+                                     long sendUs, int[] tiles, int[] pixels, byte[] jpeg) {
+        UiWriter out = new UiWriter(64 + (jpeg != null ? jpeg.length : pixels.length * 4));
+        out.u32(VERSION);
+        var(out, tseq);
+        out.u8(target);
+        var(out, scope & 0xFFFFFFFFL);
+        var(out, id & 0xFFFFFFFFL);
+        out.u16(w);
+        out.u16(h);
+        var(out, seq);
+        var(out, base);
+        out.u64(ptsUs);
+        out.u64(sendUs);
+        if (jpeg != null) {
+            out.u8(ENC_JPEG);
+            for (byte b : jpeg) out.u8(b);
+        } else {
+            out.u8(ENC_EXACT);
+            var(out, tiles == null ? 0 : tiles.length + 1L);
+            if (tiles != null) for (int t : tiles) var(out, t);
+            for (int c : pixels) out.u32(c);
+        }
+        return out.toByteArray();
+    }
+
+    /** The body of a {@link #TFLUSH} message. */
+    public static byte[] encodeTimedFlush(long tseq, int target, int scope, int id, long after) {
+        UiWriter out = new UiWriter(24);
+        out.u32(VERSION);
+        var(out, tseq);
+        out.u8(target);
+        var(out, scope & 0xFFFFFFFFL);
+        var(out, id & 0xFFFFFFFFL);
+        var(out, after);
+        return out.toByteArray();
+    }
+
+    private static Timed readTimed(UiReader r, boolean flush) throws UiProtoException {
+        long tseq = var(r);
+        int target = r.u8();
+        if (target != TARGET_SURFACE && target != TARGET_CANVAS) throw UiProtoException.malformed("timed target " + target);
+        int scope = varInt(r, 0xFFFFFFFFL, "scope"), id = varInt(r, 0xFFFFFFFFL, "id");
+        if (flush) {
+            long after = var(r);
+            r.finish();
+            return new Timed(tseq, target, scope, id, 0, 0, after, 0, 0, 0, ENC_EXACT, null, null, null, null);
+        }
+        int w = r.u16(), h = r.u16();
+        if (w < 1 || h < 1) throw UiProtoException.malformed("timed frame size");
+        long seq = var(r), base = var(r);
+        long pts = r.u64(), send = r.u64();
+        int enc = r.u8();
+        if (enc == ENC_JPEG) {
+            byte[] j = new byte[r.remaining()];
+            for (int i = 0; i < j.length; i++) j[i] = (byte) r.u8();
+            return new Timed(tseq, target, scope, id, w, h, seq, base, pts, send, enc, null, null, j, new int[1][]);
+        }
+        if (enc != ENC_EXACT) throw UiProtoException.malformed("timed encoding " + enc);
+        int tx = (w + TILE - 1) / TILE, ty = (h + TILE - 1) / TILE;
+        long nTiles = var(r);
+        int[] tiles = null;
+        long count = (long) w * h;
+        if (nTiles != 0) {
+            if (nTiles - 1 > (long) tx * ty) throw UiProtoException.malformed("too many tiles");
+            tiles = new int[(int) (nTiles - 1)];
+            count = 0;
+            for (int k = 0; k < tiles.length; k++) {
+                int t = varInt(r, tx * ty - 1L, "tile");
+                tiles[k] = t;
+                count += (long) tileW(t, tx, w) * tileH(t, tx, h);
+            }
+        }
+        if (count * 4 != r.remaining()) throw UiProtoException.malformed("timed frame size mismatch");
+        int[] px = new int[(int) count];
+        for (int k = 0; k < px.length; k++) px[k] = r.u32();
+        r.finish();
+        return new Timed(tseq, target, scope, id, w, h, seq, base, pts, send, enc, tiles, px, null, null);
+    }
 
     // ------------------------------------------------------------------ encode
 
@@ -284,6 +404,7 @@ public final class UiSceneCodec {
         }
         return switch (kind) {
             case STEP, KEYFRAME -> new Message(kind, epoch, readPatch(r, kind == KEYFRAME), null);
+            case TIMED, TFLUSH -> new Message(kind, epoch, null, null, readTimed(r, kind == TFLUSH));
             case RESOURCE -> {
                 long key = r.u64();
                 int w = r.u16(), h = r.u16();

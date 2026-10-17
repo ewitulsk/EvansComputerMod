@@ -38,6 +38,13 @@ Handlers receive an Event with .kind, .value and .widget.
 
 ui.load("app.ui.json", handlers={"add_note": add}) opens a window from a
 Visual Programmer layout file.
+
+Pixels: app.canvas(w, h, format="rgba8888") makes a Canvas widget with its
+own pixels. canvas.put(pixels, damage=None) shows new pixels at the next loop
+turn; canvas.commit_at(pts_us) shows the ones put since the last commit at a
+time on ui.now_us()'s clock instead (smooth video: queue frames a little
+ahead), canvas.queue_flush() drops the queued ones (seek, pause) and
+canvas.content = "motion" lets them travel lossy ("auto", "exact").
 """
 
 import _ui
@@ -474,17 +481,64 @@ class Image(Widget):
         return {"resource": self.resource}
 
 
+_CONTENT = {"auto": 0, "exact": 1, "motion": 2}
+
+
 class Canvas(Widget):
+    """Shows a canvas resource. Made with app.canvas(w, h), it has its own
+    pixels: put(), commit_at(), queue_flush() and the content hint."""
     _kind = "canvas"
     _props = ("resource", "scale")
     _events = ("click",)
 
     def __init__(self, resource=0, width=0, height=0, scale=1, **kw):
         self.resource, self.scale = int(resource), int(scale)
+        object.__setattr__(self, "_app", None)
+        object.__setattr__(self, "_content", "auto")
         Widget.__init__(self, width=width, height=height, **kw)
 
     def _fields(self):
         return {"resource": self.resource, "scale": self.scale}
+
+    def _owner(self):
+        if self._app is None:
+            raise RuntimeError("this Canvas has no pixels of its own (make it with app.canvas(w, h))")
+        return self._app
+
+    def put(self, pixels, damage=None):
+        """New pixels: bytes in the canvas format, the whole canvas. damage =
+        the changed rects [(x, y, w, h), ...] (None: all). They show at the
+        next loop turn, or at commit_at's time."""
+        app = self._owner()
+        _ui.put_canvas(app._h, self.resource, pixels, None if damage is None else [list(r) for r in damage])
+
+    def commit_at(self, pts_us):
+        """Show the pixels put since the last commit at pts_us on ui.now_us()'s
+        clock (not at the next loop turn). Frames queue in time order, a
+        little ahead (about half a second at most)."""
+        _ui.commit_at(self._owner()._h, int(pts_us))
+
+    def queue_flush(self):
+        """Drop the frames queued with commit_at that aren't shown yet (seek, pause)."""
+        _ui.queue_flush(self._owner()._h)
+
+    @property
+    def content(self):
+        """How the frames may travel to players: "auto", "exact" (never
+        lossy) or "motion" (video: lossy allowed)."""
+        return self._content
+
+    @content.setter
+    def content(self, value):
+        if value not in _CONTENT:
+            raise ValueError("content is 'auto', 'exact' or 'motion'")
+        object.__setattr__(self, "_content", value)
+        _ui.set_content(self._owner()._h, self.resource, _CONTENT[value])
+
+
+def now_us():
+    """The monotonic clock in microseconds: the clock commit_at times are on."""
+    return _ui.now_us()
 
 
 def _hex_texels(values):
@@ -761,6 +815,14 @@ class App:
 
     def set_root(self, win, root):
         self._windows[win] = root
+
+    def canvas(self, w, h, format="rgba8888"):
+        """A Canvas widget w x h lu with its own w x h pixels in format
+        ("rgba8888", "rgb565" or "indexed8"); fill it with put()."""
+        res = _ui.canvas(self._h, int(w), int(h), format)
+        c = Canvas(resource=res, width=int(w), height=int(h), scale=1)
+        object.__setattr__(c, "_app", self)
+        return c
 
     def layout(self, win=None):
         """The layout of a window opened with ui.load (None for other windows)."""

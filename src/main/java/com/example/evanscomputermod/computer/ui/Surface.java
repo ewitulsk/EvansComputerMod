@@ -54,6 +54,15 @@ final class Surface {
     final Box.Region damage = new Box.Region();
     boolean damageAll;
     boolean frameRequested;
+    /** A pixel surface's frames committed with CommitAt and not shown yet (protocol v2), or null. */
+    TimedQueue timed;
+    /** SurfaceSetContent hint for a pixel surface: 0 auto, 1 exact, 2 motion. */
+    int hint;
+
+    TimedQueue timed() {
+        if (timed == null) timed = new TimedQueue();
+        return timed;
+    }
     /** Popups: dismissed by a click outside. */
     boolean popupDone;
     /** The window of a window-role surface. */

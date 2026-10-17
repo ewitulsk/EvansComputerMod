@@ -48,6 +48,11 @@ OPTIONS
         No sound.
 
 NOTES
+    video play shows each frame on the terminal as it is decoded, paced
+    by its own clock. player and the Video Player app (videoplayer)
+    queue frames ahead for their time instead, which stays smoother
+    when the server lags; see gfx.
+
     File names are taken from the root of the computer's storage, not
     from the current directory: write /home/clip.mp4 even when you are
     in /home.
@@ -60,4 +65,4 @@ EXAMPLES
       video play /home/clip.mp4 --start 90 --size 160x90
 
 SEE ALSO
-    videoplayer, player, aplay, upload
+    videoplayer, player, gfx, aplay, upload

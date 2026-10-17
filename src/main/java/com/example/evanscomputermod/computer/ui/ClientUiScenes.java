@@ -60,17 +60,44 @@ public final class ClientUiScenes {
      * Returns the ack to send, or null for none.
      */
     public static Ack onMessage(UUID computerId, int displayId, byte[] data, long nowMs) {
-        messages++;
-        bytes += data.length;
-        Key key = new Key(computerId, displayId);
         UiSceneCodec.Message m;
         try {
             m = UiSceneCodec.unpack(data);
         } catch (UiProtoException e) {
+            m = null;
+        }
+        return onMessage(computerId, displayId, m, data.length, nowMs);
+    }
+
+    /**
+     * {@link #onMessage(UUID, int, byte[], long)} for a message already
+     * unpacked off the render thread ({@code m == null}: it didn't decode).
+     */
+    public static Ack onMessage(UUID computerId, int displayId, UiSceneCodec.Message m, int size, long nowMs) {
+        return onMessage(computerId, displayId, m, size, nowMs, com.example.evanscomputermod.network.ClockSync.clientNowUs());
+    }
+
+    /** {@link #onMessage(UUID, int, UiSceneCodec.Message, int, long)} with the time the message arrived (µs). */
+    public static Ack onMessage(UUID computerId, int displayId, UiSceneCodec.Message m, int size, long nowMs, long recvUs) {
+        messages++;
+        bytes += size;
+        Key key = new Key(computerId, displayId);
+        if (m == null) {
             UiSceneMirror mm = MIRRORS.get(key);
             return keyframeRequest(key, mm == null ? -1 : mm.epoch(), nowMs);
         }
         switch (m.kind()) {
+            case UiSceneCodec.TIMED, UiSceneCodec.TFLUSH -> {
+                UiSceneMirror mirror = MIRRORS.get(key);
+                if (mirror == null || !mirror.ready() || (m.epoch() != mirror.epoch())) return null;
+                UiSceneCodec.Timed t = m.timed();
+                long due = 0;
+                if (m.kind() == UiSceneCodec.TIMED && t.ptsUs() != 0) {
+                    due = com.example.evanscomputermod.network.ClientPlayout.timedDue(computerId, t.ptsUs(), t.sendUs(), recvUs);
+                }
+                if (!mirror.timed(m, due)) return keyframeRequest(key, mirror.epoch(), nowMs);
+                return null; // acked on receipt by the caller (timed acks carry their own sequence)
+            }
             case UiSceneCodec.RESOURCE -> {
                 UiSceneCodec.Resource r = m.resource();
                 putImage(r.key(), r.argb());
@@ -114,14 +141,41 @@ public final class ClientUiScenes {
      * {@code nowMs} into its display's cache entry.
      */
     public static void tick(long nowMs) {
+        long nowUs = com.example.evanscomputermod.network.ClockSync.clientNowUs();
         for (Map.Entry<Key, UiSceneMirror> e : MIRRORS.entrySet()) {
             UiSceneMirror m = e.getValue();
             if (!m.ready()) continue;
+            m.refreshPrediction(nowMs);
+            int shown = m.tickTimed(nowUs, nowMs);
+            if (shown > 0) com.example.evanscomputermod.network.ClientPlayout.noteShown(e.getKey().computerId(), shown);
             List<Box> boxes = m.render(nowMs);
             if (boxes.isEmpty()) continue;
             TerminalDisplay td = ClientDisplayCache.entry(e.getKey().computerId(), e.getKey().displayId()).display;
             m.scanOut(td, boxes);
         }
+    }
+
+    /**
+     * The player's pointer on a display this client draws: the mirror shows
+     * hover, pressed, scrolls and drags at once (Part F). Returns the scroll
+     * to report instead of sending the wheel event, or null.
+     */
+    public static ClientPrediction.ScrollReport pointer(UUID computerId, int displayId, int kind, int x, int y,
+                                                       int button, int scrollDir, long nowMs) {
+        UiSceneMirror m = get(computerId, displayId);
+        return m == null ? null : m.pointer(kind, x, y, button, scrollDir, nowMs);
+    }
+
+    /** Typed text on a display this client draws (shown in the focused text field at once). */
+    public static void typed(UUID computerId, int displayId, String text, long nowMs) {
+        UiSceneMirror m = get(computerId, displayId);
+        if (m != null) m.typed(text, nowMs);
+    }
+
+    /** A key on a display this client draws. */
+    public static void key(UUID computerId, int displayId, int hid, boolean down, long nowMs) {
+        UiSceneMirror m = get(computerId, displayId);
+        if (m != null) m.key(hid, down, nowMs);
     }
 
     /** Leaving a world: scenes go, images stay (they're addressed by content). */

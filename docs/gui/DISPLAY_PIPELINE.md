@@ -70,6 +70,8 @@ flowchart LR
 - **Program frames** skip the tick. After scanout, `requestDisplaySync` paces sends to the refresh rate on a shared `ECM-Display-Sync` thread, then posts the work to the server thread.
 - **Flow control** allows one unacked delta per player per display. An ack immediately triggers the next sync, so the real send rate is bounded by round-trip time and refresh rate. That's inferred from the code, not measured.
 
+*(This section describes the pipeline as it was designed in P0. The display pipeline work replaced its threads, flow control and client handling: see [section 1b](#1b--the-pipeline-today-display-pipeline-display_pipeline_specmd).)*
+
 ### Copies per frame
 
 This is the path for a child program's frame shown on a Terminal GUI with one viewer:
@@ -88,6 +90,94 @@ This is the path for a child program's frame shown on a Terminal GUI with one vi
 3. **The client re-expands and re-uploads the whole texture.** The server already knows which 16×16 tiles changed, and `NativeImage` can upload a sub-region.
 4. **Screen clusters never draw the text plane,** and the attribute flags (bold, underline, blink, inverse) are carried but never rendered anywhere.
 5. **Display and input are addressed by `BlockPos`.** Mouse capture refuses anything that isn't a `TerminalBlockEntity` in gfx mode. This is what blocks the ePhone.
+
+## 1b · The pipeline today (display pipeline, DISPLAY_PIPELINE_SPEC.md)
+
+The diagram above is how frames travelled before the display pipeline work. Since then ([DISPLAY_PIPELINE_SPEC.md](DISPLAY_PIPELINE_SPEC.md), background in [GUI_VIDEO_LAG.md](GUI_VIDEO_LAG.md)) nothing on the display path waits for the Minecraft server thread, flow control is a window, programs can queue frames for a time, moving pictures travel as JPEG and the client plays timed frames and speaker audio on one clock.
+
+```text
+ program -- gfx_present_at(pts) / CommitAt{pts} --> presentation queue (per display, canvas or pixel surface)
+                                                       |  frames go out as soon as queued, tagged with pts
+                                                       v
+                                display pump threads (computer/pipeline/DisplayPump)
+                                 diff . exact tiles or JPEG . deflate, built once per frame
+                                 windowed flow control, per-viewer rate estimate
+                                                       |  the normal game connection
+                                                       v
+ client decode thread: inflate . parse . JPEG decode . ack on receipt
+                                                       v
+ playout buffer (network/ClientPlayout): untimed at once, timed at pts + offset + playout delay
+                                                       v
+ render thread: apply (changed tiles only) . draw;  speaker audio on the same delay
+```
+
+### Threads
+
+| Work | Thread |
+| --- | --- |
+| Diff, encode, compress, send (`DisplaySyncHub`, `UiSceneHub`) | `ECM-Display-Pump-n`, `display.pumpThreads` (0 = min(4, cores / 2)); one `DisplayPump.Lane` per computer, so a computer's passes never overlap and different computers run at once. Replaces `ECM-Display-Sync` and the `server.execute` hop. |
+| Compositor ticks | the same pool (was one `ECM-UI` thread for all computers) |
+| Who watches what (open menus, range, Sable plot tracking, `canInteract`) | the server thread, once per tick, published as an immutable `ViewerSnapshot`; a change of viewers starts a pass |
+| Acks (`terminal_ready`, `ui_scene_ack`) and input (`mouse_input`, `key_input`, `terminal_input`, `ui_scroll`) | the network thread, checked against the snapshot (`ComputerTargets.offThread`); hosts without a snapshot hop to the server thread as before |
+| Speaker audio | the pump, every 20 ms (`SpeakerBlockEntity.pumpAudio`, downstream of `SpeakerAudio.drain()`); the microphone sound field and the cone stay on the tick |
+| Kernel console changes | straight to the pump (paced to the refresh rate), not the next tick |
+| Client: inflate, parse, JPEG decode, ack | `ECM-Display-Decode` |
+| Client: apply and draw, the playout buffer | the render thread, once per rendered frame |
+
+`/ecm gui stats` shows the pump's passes and their mean and longest time, and the display time still spent on the server thread (the goal is 0).
+
+### Flow control
+
+- **Tile path** (`ClientSyncState`): up to `display.windowFrames` (8) frames and `display.windowKiB` (512) unacknowledged per viewer; past either, changes coalesce. A frame unacked for 1 s gives the viewer a keyframe, not a stale chain.
+- **Scene path** (`UiSceneHub`): 32 steps and the same byte limit; timed messages count against the bytes only. The same 1 s timeout.
+- Acks carry the client's receive time: each viewer has a round trip, jitter and delivered throughput estimate (`ViewerRate`), shown by `/ecm gui stats` and used to pick the JPEG quality.
+
+### Timed presentation
+
+- `gfx_present_at(target, flags, pts_us)` (double-buffered displays) and `CommitAt{surface, pts_us}` (UI protocol v2) queue a frame for a time on the program's monotonic clock; the host converts it to the server's display clock (`DisplayClock`) right away. At most `display.queueFrames` (12) frames and `display.queueMs` (500) ahead; `gfx_present_at` returns -11 when full unless asked to wait, `CommitAt` gives Frame events only while there is room.
+- Frames go to clients as soon as they are queued, graphics only, tagged with the time. The server shows each at its time (a pump timer), so its own display always holds what is on screen now (headless computers, screenshots, the Java rasterizer, tile viewers, late joiners).
+- A late joiner gets a keyframe of the screen now plus the frames still queued. `gfx_queue_flush` / `QueueFlush` drop the queue on the server and send a flush marker: clients drop what they hold after the frame shown last.
+- `gfx_present` with frames queued goes after them. `video_decode_to_gfx` still shows at once (and ends a queue); `video_decode_to_back` decodes into the back buffer for `gfx_present_at`.
+
+### Lossy frames
+
+- `gfx_set_hint` / `SurfaceSetContent`: 0 auto (JPEG once half the tiles changed in 8 of the last 10 frames, exact again after a second below that), 1 exact, 2 motion (JPEG while frames keep changing).
+- A whole plane (RGB565 and RGBA8888; palette displays stay exact) or canvas is JPEG-encoded with `javax.imageio` on the pump, once per frame for every viewer. Quality 0.85 / 0.75 / 0.6 / 0.45 and half resolution, the rung picked so the slowest viewer's share of `display.maxStreamKbps` (6000, shared by everything one player watches) holds the stream; a viewer that still can't keep up gets every 2nd or 3rd frame.
+- A lossy picture that stands still for 250 ms is sent exact once. Text, Tier 1 panels and `display.allowLossy = false` never go lossy.
+
+### On the client
+
+- Untimed packets apply on arrival, as before. Timed frames show at `pts + offset + playout delay`; the delay is per computer, `clamp(2 x jitter + 40 ms, 60 ms, display.maxPlayoutMs)`, raised at once by a late frame, lowered slowly; the client option `display.playoutDelayMs` (`evanscomputermod-display-client.toml`) fixes it. Each rendered frame shows the newest due frame. Exact graphics never overtake frames still waiting.
+- The clock offset is one estimate per connection (the least delayed of the last 10 s of timed messages).
+- Speaker blocks carry the time their first sample plays and the computer the speaker is attached to; while that computer streams timed frames (one in the last 2 s) the sound waits the same playout delay, otherwise it plays at once. More than 100 ms late skips ahead. Live audio is the exception: blocks flagged `FLAG_LIVE` (the card's last `drain()` had sound from a live stream, a `phone` or `voice` role: cellular and Discord calls; `SpeakerAudio.lastDrainLive`, set by the per-app mixer) play at once whatever the delay, and the first one drops the delayed blocks still queued; when the call ends, delayed sound resumes after a 20 ms gap (`SpeakerSchedule`). The trade-off: while a call plays, video sound on that speaker isn't lip-synced.
+- With client rendering, the client also shows hover and pressed styles, scrolling of scroll containers, window drags and typed text at once, from v2 node props the apps set ([UI_PROTOCOL.md section 20](UI_PROTOCOL.md)); the server's next answer replaces them.
+
+### Server-side compositing
+
+`Compositor.tick` keeps damage instead of compositing while every viewer draws the scene itself and nothing asked for pixels in the last second (`CompositorHost.pixelsWanted`); a tile viewer, a Screen mirror, a phone onlooker or a reader of the frame (`frameRgba`) composites it.
+
+### Config (`evanscomputermod-common.toml`, `display` section)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `pumpThreads` | 0 (min(4, cores / 2)) | display pump size |
+| `windowFrames` / `windowKiB` | 8 / 512 | unacked frames and KiB per viewer |
+| `queueFrames` / `queueMs` | 12 / 500 | presentation queue limits (can only be lowered) |
+| `allowLossy` | true | JPEG for moving pictures |
+| `maxStreamKbps` | 6000 | lossy budget per viewer, shared by what one player watches |
+| `maxPlayoutMs` | 400 | cap on the client playout delay (sent to clients when they join) |
+| `display.playoutDelayMs` (client) | -1 (adaptive) | fixed playout delay |
+
+### Wire (network protocol 3.3.0)
+
+- `terminal_delta`: a flags byte (timed, graphics only, text only, flush, encoding exact/JPEG), and for timed packets `pts_us` and `server_send_us`; untimed exact packets keep the old payload.
+- `terminal_ready` and `ui_scene_ack` carry the client's receive time; a scene ack with bit 62 set acks a timed message.
+- Scene stream version 2: `TIMED` and `TFLUSH` messages beside the steps (`UiSceneCodec`).
+- `speaker_audio` gains `pts_us`, the computer and a flags byte (`FLAG_LIVE` = 1); new `display_caps` (server to client) and `ui_scroll` (client to server).
+
+### Tests
+
+JUnit (26.1) `DisplayPipelineTest` (lanes, the window and its timeout, the rate estimate, frames sent ahead and shown at their time on the server and the client, late joiners, flushes, queue limits, JPEG once per frame and the exact refine, auto mode, the codec's rungs, the playout buffer, the clock estimate), `SpeakerScheduleTest` (live blocks play now, the delayed queue dropped on the switch, resuming after a gap), `UiTimedSceneTest` (CommitAt end to end, QueueFlush, Frame pacing, motion canvases and refine, v1 apps unchanged, hover / pressed, scroll, typing), and the updated `DisplaySyncHubTest`. GameTests `ecm_display` run the scenarios `video_smooth_under_lag`, `video_seek_flush`, `lossy_refine`, `wall_two_viewers` and `interactive_latency` (TESTING.md).
 
 ## 2 · With a compositor and a swappable shell
 

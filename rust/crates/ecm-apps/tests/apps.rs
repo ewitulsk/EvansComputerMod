@@ -415,6 +415,45 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The DragWindow props (protocol v2) the TreeOps for `surface` in `msgs` set, in order.
+fn drag_props(msgs: &[Message], surface: u32) -> Vec<u32> {
+    let mut v = Vec::new();
+    for m in msgs {
+        if let Message::TreeOps(t) = m {
+            if t.surface != surface {
+                continue;
+            }
+            for op in &t.ops {
+                let props = match op {
+                    proto::TreeOp::Create { props, .. } | proto::TreeOp::Set { props, .. } => props,
+                    _ => continue,
+                };
+                v.extend(props.iter().filter_map(|p| if let proto::Prop::DragWindow(w) = p { Some(*w) } else { None }));
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn the_title_bar_drags_its_window_on_the_client_but_not_maximized() {
+    let root = temp_root("desk5");
+    let (mut desk, _) = Desk::new(&[], &root, 640, 400);
+    let out = desk.open(1, 2, "terminal", "Terminal");
+    let fs = desk.surface_titled("frame:1");
+    assert_eq!(drag_props(&out, fs), vec![1], "the title bar moves app window 1 with the frame");
+    let xb = hit(&desk.d.app, fs, "max");
+    let mut out = desk.step(click(fs, xb));
+    let p = places(&out);
+    out.extend(desk.step(vec![configure(fs, 2, p[&2].2, p[&2].3, 0)]));
+    assert_eq!(drag_props(&out, fs), vec![0], "maximized: no client drag");
+    let mut out = desk.step(click(fs, xb));
+    let p = places(&out);
+    out.extend(desk.step(vec![configure(fs, 3, p[&2].2, p[&2].3, 0)]));
+    assert_eq!(drag_props(&out, fs), vec![1], "restored: draggable again");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn compact_displays_maximize_windows() {
     let root = temp_root("desk4");

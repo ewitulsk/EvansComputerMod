@@ -40,6 +40,13 @@ public class EvansComputerMod {
         LOGGER.info("Initializing Evans Computer Mod");
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, com.example.evanscomputermod.network.DisplayClientConfig.SPEC,
+                "evanscomputermod-display-client.toml");
+        modEventBus.addListener((net.neoforged.fml.event.config.ModConfigEvent e) -> {
+            if (e.getConfig().getSpec() == com.example.evanscomputermod.network.DisplayClientConfig.SPEC) {
+                com.example.evanscomputermod.network.DisplayClientConfig.apply();
+            }
+        });
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.computer.DnsConfig.SPEC,
                 "evanscomputermod-dns-server.toml");
@@ -110,6 +117,16 @@ public class EvansComputerMod {
         // GUI client rendering: a player who leaves no longer holds scene capabilities or images.
         NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
                 com.example.evanscomputermod.computer.ui.UiClients.forget(e.getEntity().getUUID()));
+        // Display pipeline: a joining client learns the server's playout cap; a leaving one frees its stream budget.
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent e) -> {
+            if (e.getEntity() instanceof net.minecraft.server.level.ServerPlayer p
+                    && !(p instanceof net.neoforged.neoforge.common.util.FakePlayer)) {
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p,
+                        new com.example.evanscomputermod.network.DisplayCapsPacket(EcmConfig.displayMaxPlayoutMs()));
+            }
+        });
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
+                com.example.evanscomputermod.computer.pipeline.StreamBudget.forget(e.getEntity().getUUID()));
 
         // Common setup: bind the WASM runtime
         modEventBus.addListener(this::onCommonSetup);

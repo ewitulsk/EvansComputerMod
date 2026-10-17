@@ -405,3 +405,70 @@ assert pick.hex == "#123456"
     let sent = mock.sent_messages();
     assert!(sent.iter().any(|m| matches!(m, Message::TreeOps(_))));
 }
+
+/// The canvas API (protocol v2 timed frames): app.canvas, put, commit_at,
+/// queue_flush, the content hint and ui.now_us; the same script runs in Lua
+/// (lua/src/tests.rs) and both send these messages.
+#[test]
+fn python_canvases_put_commit_at_flush_and_hint() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false), Message::QueueLimits(ecm_ui_proto::QueueLimits { max_queue_frames: 12, max_queue_ms: 500 })]);
+    let handle = register_mock(mock.clone());
+    let interp = interpreter();
+    interp.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+        run(vm, &scope, &format!("{SETUP}_ui.use_mock({handle})\n"));
+        run(
+            vm,
+            &scope,
+            r#"
+import ui
+app = ui.App("dev.test.video")
+cv = app.canvas(4, 2, "rgb565")
+assert cv.resource == 1 and cv.width == 4 and cv.height == 2 and cv.scale == 1
+assert cv.content == "auto"
+win = app.window("Video", ui.Column(children=[cv]))
+cv.content = "motion"
+assert cv.content == "motion"
+try:
+    cv.content = "blurry"
+    raise AssertionError("bad hint accepted")
+except ValueError:
+    pass
+try:
+    ui.Canvas(resource=5).put(b"")
+    raise AssertionError("an unbound canvas has no pixels")
+except RuntimeError:
+    pass
+t0 = ui.now_us()
+assert isinstance(t0, int) and ui.now_us() >= t0
+"#,
+        );
+        let step = |msgs: Vec<Message>| {
+            mock.push(&msgs);
+            run(vm, &scope, "app.step(0)\napp.step(0)\n");
+        };
+        step(vec![Message::Configure(ecm_ui_proto::Configure { surface: 1, serial: 1, w: 200, h: 100, states: 0 })]);
+        let sent = mock.sent_messages();
+        assert!(sent.iter().any(|m| matches!(m, Message::ResourceCreate(r) if r.id == 1 && r.kind == ecm_ui_proto::ResourceKind::Canvas && r.format == ecm_ui_proto::PixelFormat::Rgb565 && r.w == 4)));
+        assert!(sent.iter().any(|m| matches!(m, Message::SurfaceSetContent(c) if c.surface == 1 && c.resource == 1 && c.hint == 2)));
+        // An untimed put: shown with the next loop turn's Commit.
+        mock.clear_sent();
+        run(vm, &scope, "cv.put(bytes(16), [(0, 0, 2, 1)])\napp.step(0)\n");
+        let sent = mock.sent_messages();
+        assert!(sent.iter().any(|m| matches!(m, Message::Commit(_))), "{sent:?}");
+        // A timed one: CommitAt instead, then QueueFlush.
+        mock.clear_sent();
+        run(vm, &scope, "cv.put(b'\x01' * 16)\ncv.commit_at(t0 + 250000)\napp.step(0)\ncv.queue_flush()\n_ui.use_mock(None)\n");
+        let sent = mock.sent_messages();
+        let t0: i64 = scope.globals.get_item("t0", vm).unwrap().try_into_value(vm).unwrap();
+        let names: Vec<&str> = sent.iter().map(|m| m.name()).collect();
+        assert_eq!(names, vec!["CommitAt", "QueueFlush"], "{sent:?}");
+        assert!(matches!(sent[0], Message::CommitAt(ecm_ui_proto::CommitAt { surface: 1, pts_us }) if pts_us == t0 as u64 + 250_000));
+    });
+    let px = &mock.state.borrow().pixels;
+    assert_eq!(px.len(), 2);
+    assert_eq!((px[0].0, px[0].1.len(), px[0].2.clone()), (1, 16, vec![[0, 0, 2, 1]]));
+    assert_eq!(px[1].1, vec![1u8; 16]);
+}

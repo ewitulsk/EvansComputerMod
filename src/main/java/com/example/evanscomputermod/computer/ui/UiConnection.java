@@ -29,6 +29,8 @@ public final class UiConnection {
     final UiProto.Role role;
     String appId;
     boolean hello;
+    /** Protocol version the client said hello with (1 or 2). */
+    int version = 1;
     volatile boolean closed;
     /** Why it closed ({@code null}: closed by the program or the compositor going away). */
     volatile UiError closeReason;

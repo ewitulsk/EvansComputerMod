@@ -64,11 +64,13 @@ public final class ClientDisplayCache {
     public static void invalidate(UUID computerId, int displayId) {
         Entry e = ENTRIES.get(new Key(computerId, displayId));
         if (e != null) e.hasKeyframe = false;
+        ClientPlayout.forget(computerId);
     }
 
     /** Forget everything (leaving a world). */
     public static void clear() {
         ENTRIES.clear();
+        ClientPlayout.clear();
     }
 
     private ClientDisplayCache() {}

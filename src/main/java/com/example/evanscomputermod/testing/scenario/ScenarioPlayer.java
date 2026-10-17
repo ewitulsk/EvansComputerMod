@@ -606,6 +606,12 @@ public final class ScenarioPlayer {
         return ok;
     }
 
+    /** The mouse moved to a pixel (a pointer move, as the client sends it). */
+    public boolean move(UUID computer, int display, int x, int y) {
+        return MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_MOVE,
+                (short) x, (short) y, (byte) 0, (byte) 0, (byte) 0));
+    }
+
     /** One wheel step at a pixel ({@code dir} -1 = towards the end, as the client sends a wheel turned down). */
     public boolean wheel(UUID computer, int display, int x, int y, int dir) {
         return MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_SCROLL,

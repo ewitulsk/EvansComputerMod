@@ -9,6 +9,8 @@
 //! * [`decode_to_gfx`]: straight into a display's framebuffer (the
 //!   terminal's own, or an attached in-world Screen cluster, picked per
 //!   frame with [`Target`]); the program never sees the pixels.
+//! * [`decode_to_back`]: into a double-buffered display's back buffer, shown
+//!   later with `gfx_child::present_at` (timed presentation).
 //! * [`decode_frame`]: into the program's own buffer, for apps that show it
 //!   themselves (a UI canvas).
 //!
@@ -58,6 +60,7 @@ extern "C" {
     fn video_get_info(handle: i32, out_ptr: i32) -> i32;
     fn video_decode_to_gfx(handle: i32, target: i32) -> i64;
     fn video_decode_frame(handle: i32, buf: i32, cap: i32) -> i64;
+    fn video_decode_to_back(handle: i32, target: i32) -> i64;
     fn video_seek(handle: i32, pts_ms: i64) -> i32;
     fn video_audio_open(handle: i32, rate: i32, channels: i32) -> i32;
     fn video_read_audio(handle: i32, buf: i32, cap: i32) -> i32;
@@ -158,6 +161,22 @@ pub fn decode_to_gfx(h: Handle, target: Target) -> DecodeStep {
     if rc == -1 {
         DecodeStep::Eof
     } else if rc == -2 {
+        DecodeStep::Error
+    } else {
+        DecodeStep::Frame(rc)
+    }
+}
+
+/// Decode the next frame into the back buffer of a double-buffered display
+/// without showing it; show it with [`super::gfx_child::present`] or, at
+/// its time, [`super::gfx_child::present_at`]. The display must be set up
+/// with [`super::gfx_child::init2`] and [`super::gfx_child::FLAG_DOUBLE_BUFFER`]
+/// at the size and format given to [`open`].
+pub fn decode_to_back(h: Handle, target: Target) -> DecodeStep {
+    let rc = unsafe { video_decode_to_back(h.0, target as i32) };
+    if rc == -1 {
+        DecodeStep::Eof
+    } else if rc < 0 {
         DecodeStep::Error
     } else {
         DecodeStep::Frame(rc)

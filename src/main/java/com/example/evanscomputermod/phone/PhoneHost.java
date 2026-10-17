@@ -167,7 +167,15 @@ public final class PhoneHost implements IComputerHost {
     private boolean held;
 
     private volatile PhoneState state = PhoneState.OFF;
-    private boolean attached;
+    private volatile boolean attached;
+    /** Display passes on the pump (DISPLAY_PIPELINE_SPEC.md Part A1): the holder's screen, and the onlookers' mirror. */
+    private final com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane syncLane =
+            new com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane("phone", this::syncNow);
+    private final com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane mirrorLane =
+            new com.example.evanscomputermod.computer.pipeline.DisplayPump.Lane("phone-mirror", this::mirrorPass);
+    /** Who sees and may use the phone, as of the last tick (Part A2). */
+    private volatile com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot =
+            com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
     private volatile boolean booting;
     /** Ticks left until a detach is forced; -1 = no detach pending. */
     private int detachIn = -1;
@@ -180,6 +188,8 @@ public final class PhoneHost implements IComputerHost {
     private long ticks;
 
     private final Set<UUID> mirrorViewers = new HashSet<>();
+    /** The onlookers' player objects, for the viewer snapshot (scenario onlookers aren't in the player list). */
+    private final java.util.Map<UUID, ServerPlayer> mirrorPlayers = new java.util.HashMap<>();
     private boolean mirrorPending;
     private long lastMirrorTick;
     private PhoneConfig.Visibility visibility = PhoneConfig.Visibility.OFF;
@@ -331,6 +341,7 @@ public final class PhoneHost implements IComputerHost {
         }
         if (ticks % 20 == 0) writeBatteryToStack(false);
         updateMirror();
+        publishViewers();
         sendStatus(false);
         playSpeaker();
         controllers.tick(System.currentTimeMillis());
@@ -460,7 +471,9 @@ public final class PhoneHost implements IComputerHost {
         ComputerRegistry.unregister(id, this);
         holderSync.reset();
         mirrorSync.reset();
+        viewerSnapshot = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
         mirrorViewers.clear();
+        mirrorPlayers.clear();
         sendStatus(true);
         holder = null;
         stack = ItemStack.EMPTY;
@@ -657,6 +670,7 @@ public final class PhoneHost implements IComputerHost {
         int interval = PhoneConfig.mirrorIntervalTicks();
         if (ticks % interval == 0) {
             mirrorViewers.clear();
+            mirrorPlayers.clear();
             ServerPlayer h = holder;
             if (visibility == PhoneConfig.Visibility.FULL && h != null) {
                 double r = PhoneConfig.mirrorRange();
@@ -664,6 +678,7 @@ public final class PhoneHost implements IComputerHost {
                     if (p == h || p.getUUID().equals(holderId)) continue;
                     if (!PhoneServer.prefs(p.getUUID()).renderOthers()) continue;
                     mirrorViewers.add(p.getUUID());
+                    mirrorPlayers.put(p.getUUID(), p);
                 }
             }
             mirrorSync.retainViewers(mirrorViewers);
@@ -677,12 +692,65 @@ public final class PhoneHost implements IComputerHost {
         mirrorPending = false;
         lastMirrorTick = ticks;
         if (mirrorViewers.isEmpty()) return;
+        mirrorLane.request();
+    }
+
+    /** The holder's display: the phone's screen, its program's presentation queue, lossy unless Tier 1. */
+    private DisplaySyncHub.Source holderSource() {
+        ComputerInstance c = instance();
+        var device = c == null ? null : c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL);
+        var tier = displayTier(DISPLAY_OWN);
+        var d = display;
+        return new DisplaySyncHub.Source() {
+            @Override public com.example.evanscomputermod.computer.TerminalDisplay display() { return d; }
+            @Override public com.example.evanscomputermod.computer.display.PresentQueue queue() {
+                return device == null ? null : device.queue();
+            }
+            @Override public int hint() { return device == null ? 0 : device.hint(); }
+            @Override public boolean lossyAllowed() {
+                return tier != null && tier != com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR;
+            }
+        };
+    }
+
+    /** The mirror's pass, on the display pump, to the onlookers of the last tick. */
+    private void mirrorPass() {
+        List<UUID> to = viewerSnapshot.recipients(DISPLAY_MIRROR);
+        if (to.isEmpty()) return;
+        ComputerInstance ci = instance();
+        if (ci != null) ci.getUiManager().notePixelDemand(); // onlookers get pixels even when the holder draws the scene
         try {
-            mirrorSync.sync(id, display, List.copyOf(mirrorViewers), this::send);
+            mirrorSync.sync(id, display, to, this::send);
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("ePhone mirror sync failed", e);
             mirrorSync.forceKeyframe();
         }
+    }
+
+    /** Once per tick (server thread): the holder and the onlookers, for the pump, acks and input. */
+    private void publishViewers() {
+        var b = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.builder(ticks);
+        ServerPlayer h = holder;
+        if (h != null && attached) {
+            if (state == PhoneState.AWAKE) b.recipient(DISPLAY_OWN, h);
+            b.interact(DISPLAY_OWN, h.getUUID());
+            if (state == PhoneState.AWAKE) b.input(DISPLAY_OWN, h.getUUID());
+            for (UUID m : mirrorViewers) {
+                ServerPlayer p = mirrorPlayers.get(m);
+                if (p == null) continue;
+                b.recipient(DISPLAY_MIRROR, p);
+                b.interact(DISPLAY_MIRROR, m);
+            }
+        }
+        var next = b.build();
+        var prev = viewerSnapshot;
+        viewerSnapshot = next;
+        if (!next.sameRecipients(prev)) syncToClients();
+    }
+
+    @Override
+    public com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot() {
+        return viewerSnapshot;
     }
 
     /** Status (state, visibility, battery) for the holder and nearby players, on change or every second. */
@@ -718,27 +786,30 @@ public final class PhoneHost implements IComputerHost {
         hardwareDirty = true;
     }
 
+    /** Stream the holder's screen: a pass on the display pump, never the server thread. */
     @Override
     public void syncToClients() {
-        server.execute(this::syncNow);
+        syncLane.request();
     }
 
+    /** The holder's pass (display pump); the mirror keeps its own low rate, set by the tick. */
     private void syncNow() {
         if (!attached) return;
-        UUID h = holderId;
-        if (h != null && state == PhoneState.AWAKE) {
+        List<UUID> own = viewerSnapshot.recipients(DISPLAY_OWN);
+        if (!own.isEmpty()) {
+            UUID h = own.get(0);
             if (sceneSync(h)) return;
             try {
-                holderSync.sync(id, display, List.of(h), this::send);
+                ComputerInstance ci = instance();
+                if (ci != null) ci.getUiManager().notePixelDemand();
+                holderSync.setWaker(syncLane::requestIn);
+                holderSync.sync(id, holderSource(), own, this::send);
             } catch (Exception e) {
                 EvansComputerMod.LOGGER.debug("ePhone display sync failed", e);
                 holderSync.forceKeyframe();
             }
         }
-        if (!mirrorViewers.isEmpty()) {
-            if (ticks - lastMirrorTick >= PhoneConfig.mirrorIntervalTicks()) syncMirror();
-            else mirrorPending = true;
-        }
+        if (!viewerSnapshot.recipients(DISPLAY_MIRROR).isEmpty()) mirrorPending = true;
     }
 
     /**
@@ -754,7 +825,7 @@ public final class PhoneHost implements IComputerHost {
         List<UUID> scene = ui.sceneViewers(DISPLAY_OWN, List.of(h));
         try {
             ui.sceneSync(DISPLAY_OWN, scene, (player, d, data) -> {
-                ServerPlayer p = server.getPlayerList().getPlayer(player);
+                ServerPlayer p = viewerSnapshot.player(player);
                 if (p != null && !(p instanceof FakePlayer)) {
                     PacketDistributor.sendToPlayer(p, com.example.evanscomputermod.network.UiScenePackets.packet(player, id, d, data));
                 }
@@ -769,9 +840,14 @@ public final class PhoneHost implements IComputerHost {
 
     @Override
     public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        onSceneAck(player.getUUID(), displayId, epoch, generation, missing, 0);
+    }
+
+    @Override
+    public void onSceneAck(UUID player, int displayId, int epoch, long generation, long[] missing, long clientRecvUs) {
         ComputerInstance c = instance();
-        if (c == null || !player.getUUID().equals(holderId)) return;
-        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
+        if (c == null || !player.equals(holderId)) return;
+        if (c.getUiManager().sceneHub().onAck(player, displayId, epoch, generation, missing, clientRecvUs)) syncToClients();
     }
 
     /** The phone's speaker: what programs wrote, to players near the holder. */
@@ -794,11 +870,17 @@ public final class PhoneHost implements IComputerHost {
         double range = com.example.evanscomputermod.EcmConfig.speakerRange();
         List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
         BlockPos at = h.blockPosition();
+        // When the first sample plays (the card's queue ahead of it), for lip sync on the client (Part E2).
+        int rate = Math.max(1, speakerAudio.rate());
+        long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        boolean live = speakerAudio.lastDrainLive(); // a call plays at once, not on the picture's delay
+        long pts = live ? now : Math.max(now, now + speakerAudio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate);
+        int flags = live ? com.example.evanscomputermod.speaker.SpeakerAudioPacket.FLAG_LIVE : 0;
         for (int off = 0; off < pcm.length; off += 2600) {
             int n = Math.min(2600, pcm.length - off);
             if (near.isEmpty()) continue;
             var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.rate(), n,
-                    speakerEncoder.encode(pcm, off, n));
+                    speakerEncoder.encode(pcm, off, n), live ? now : pts + off * 1_000_000L / rate, id, flags);
             for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
         }
     }
@@ -828,8 +910,8 @@ public final class PhoneHost implements IComputerHost {
 
     private void send(UUID player, TerminalDeltaPacket packet) {
         packetsTo.merge(player, 1, Integer::sum);
-        ServerPlayer p = server.getPlayerList().getPlayer(player);
-        if (p != null && !(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
+        ServerPlayer p = viewerSnapshot.player(player);
+        if (p != null && !(p instanceof FakePlayer) && !p.hasDisconnected()) PacketDistributor.sendToPlayer(p, packet);
     }
 
     @Override
@@ -901,25 +983,28 @@ public final class PhoneHost implements IComputerHost {
 
     @Override
     public void onDisplayAck(ServerPlayer player, int displayId, long generation) {
+        onDisplayAck(player.getUUID(), displayId, generation, 0);
+    }
+
+    /** Any thread (acks come in on the network thread, Part A3). */
+    @Override
+    public void onDisplayAck(UUID player, int displayId, long generation, long clientRecvUs) {
         DisplaySyncHub hub = displayId == DISPLAY_MIRROR ? mirrorSync : holderSync;
+        Runnable pass = displayId == DISPLAY_MIRROR ? mirrorLane::request : syncLane::request;
         // A holder whose client draws the GUI scene gets a scene keyframe instead.
         ComputerInstance ci = instance();
         if (generation == 0 && displayId == DISPLAY_OWN && ci != null
-                && !ci.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
-            ci.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+                && !ci.getUiManager().sceneViewers(displayId, List.of(player)).isEmpty()) {
+            ci.getUiManager().sceneHub().requestKeyframe(player, displayId);
             syncToClients();
             return;
         }
         if (generation != 0) {
-            if (hub.onClientReady(player.getUUID(), generation)) syncToClients();
+            if (hub.onClientReady(player, generation, clientRecvUs)) pass.run();
             return;
         }
-        hub.requestKeyframe(player.getUUID());
-        try {
-            hub.sync(id, display, List.of(player.getUUID()), this::send);
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("ePhone keyframe failed", e);
-        }
+        hub.requestKeyframe(player);
+        pass.run();
     }
 
     // ------------------------------------------------------------ hotkeys and wakes
