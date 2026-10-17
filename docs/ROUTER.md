@@ -715,7 +715,7 @@ default; the ring learns your LAN prefix. Without access to an ISP router you ca
 a fiber instead: the ISPs accept dynamic neighbors on both ring links
 ([tapping the ring](TECH_VILLAGE_NETWORK.md#c-tapping-the-ring)).
 
-## Always-On computers, saves and the Windows uplink
+## Always-On computers, saves and the internet uplink
 
 Install a Module Expansion Card and an Always-On Module in a terminal bay. On
 chunk unload its instance detaches, keeps its worker, network state and processes,
@@ -729,7 +729,14 @@ Server launch properties:
 ```text
 -Devanscomputermod.headlessCap=64
 -Devanscomputermod.techVillages=true
--Devanscomputermod.internetProxy=true
+```
+
+With the internet sidecar installed (below), also:
+
+```text
+-Devanscomputermod.internetProxy=false        # no host sockets at all (default: on)
+-Devanscomputermod.internet.allowLan=true     # also reach private/LAN addresses (default: blocked)
+-Devanscomputermod.tap=tap0                   # Linux: also bridge to this TAP device (default: none)
 ```
 
 The cap bounds detached player computers; if it is reached, additional terminals
@@ -744,16 +751,34 @@ The old directory is retained, and existing world files are not overwritten.
 port counts, last-known cables/NIC positions, removed fiber positions and cuts. Unloaded cable regions retain
 their last topology snapshot; loaded regions refresh it.
 
-On Windows, the unprivileged Java socket proxy supplies gateway `10.0.0.1`.
-It answers ARP and DHCP and bridges TCP/UDP over ordinary host sockets. Village
-1's WAN connects to it through a logical gateway segment. A normal terminal can
-also use a cable segment reaching the Internet Gateway block at world origin.
-The host OS supplies outbound connectivity and firewall policy. UDP allows DNS;
-TCP allows plain HTTP. The proxy bounds flows to 256 and receive queues to 256
-frames; TCP buffers are bounded and replies are acknowledged/retransmitted.
-It does not emulate raw ICMP echo to the real internet, inbound public listeners,
-IPv6 or fragmented IP. Use `curl`/DNS to check external access. Linux retains the
-existing TAP setup in `scripts/setup-tap.sh`.
+The Internet Gateway reaches the real internet only with the optional,
+server-side **internet sidecar** (`evanscomputermod-internet-mc<version>.jar`,
+built by `copy-jar.sh`, in the server's `mods/` folder). The main mod opens no
+host sockets and starts no processes: without the sidecar the gateway is offline
+and in-game networks only reach each other. The sidecar plugs in through
+`api/internet/InternetUplinkProvider` (ServiceLoader, like the FFmpeg sidecar's
+video backend).
+
+With the sidecar, an unprivileged Java socket proxy supplies gateway `10.0.0.1`
+on every OS. It answers ARP (not DHCP: use a static address or a DHCP server a
+player runs) and bridges TCP/UDP over ordinary host sockets. Village 1's WAN
+connects to it through a logical gateway segment. A normal terminal can also use
+a cable segment reaching the Internet Gateway block at world origin. The host OS
+supplies outbound connectivity and firewall policy. UDP allows DNS; TCP allows
+plain HTTP. Only public destinations are reached: loopback, link-local, multicast
+and `0.0.0.0/8` never, and private/LAN ranges (`10/8`, `172.16/12`,
+`192.168/16`, `100.64/10`) only with `-Devanscomputermod.internet.allowLan=true`;
+a TCP connection to a blocked address is refused at once (curl prints `Failed to
+connect`). The proxy bounds flows to 256 and receive queues to 256 frames; TCP
+buffers are bounded and replies are acknowledged/retransmitted. It does not
+emulate raw ICMP echo to the real internet, inbound public listeners, IPv6 or
+fragmented IP. Use `curl`/DNS to check external access.
+
+Linux TAP mode is off unless the server names a device with
+`-Devanscomputermod.tap=<device>` (a name matching `^[A-Za-z0-9_.-]{1,15}$`,
+created beforehand with `scripts/setup-tap.sh`); the sidecar then starts a
+`python3` helper that opens `/dev/net/tun` and relays the gateway's frames to it,
+beside the socket proxy.
 
 The compiled kernel is cached by file content hash. Chicory shares its compiled
 module across instances. The pinned Wasmtime Java binding cannot serialize
@@ -785,7 +810,8 @@ with increasing TTL; `*` means no matching response within the receive timeout.
 | `SegmentGraph` / `RingPieces` | Pure segment computation (flood fill + union-find; copper/fiber/panel rules, carrier) and the ring's pieces, breaks and taps (JUnit `SegmentGraphTest`) |
 | `CableNetworkManager` | World glue: block codes, last-known topology, one coalesced recompute per tick, snapshots for worker threads |
 | `rust/crates/ecm-chat`, `chat` | The chat command's protocol and client logic (host-tested); the backend is `discordd` (docs/DISCORD.md) |
-| `InternetProxy` | Ethernet/host TCP and UDP adapter, ARP/DHCP and bounded flow state |
+| `api/internet/*` | The Internet Gateway's uplink interface; `NetworkHub` uses the installed provider, if any |
+| `evanscomputermod-internet` sidecar: `InternetProxy`, `TapBridge` | Ethernet/host TCP and UDP adapter (ARP, LAN blocking, bounded flow state) and the optional Linux TAP helper |
 
 All protocol engines use caller-supplied time and bounded state. Pure tests and
 the simulator use virtual time. The kernel owns networking; Java supplies NIC
@@ -802,7 +828,8 @@ scripts/Test.ps1 -Area tech-world -GameTests ecm_router,ecm_router_scenarios -Mc
 scripts/Test.ps1 -Area tech-client -ClientChecks -ClientSuite tech
 scripts/Test.ps1 -Area tech-client-flat -ClientChecks -ClientSuite tech -LevelType flat
 scripts/Test.ps1 -Area fiber-line -JUnit FiberLineTest,SegmentGraphTest -McVersion 26.1
-scripts/Test.ps1 -Area proxy -JUnit InternetProxyTest -McVersion 26.1
+scripts/Test.ps1 -Area proxy -Internet -JUnit InternetProxyTest -McVersion 26.1
+scripts/Test.ps1 -Area internet -Internet -GameTests ecm_internet
 scripts/Test.ps1 -Area host -JUnit KernelHostIntegrationTest -McVersion 26.1
 scripts/Test.ps1 -Area cancellation -Wasmtime -JUnit InterruptIsolationTest -McVersion 26.1
 ```

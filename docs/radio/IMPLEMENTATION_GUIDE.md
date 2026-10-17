@@ -23,7 +23,7 @@ Build on these; don't reinvent them. `J/` = `src/main/java/com/example/evanscomp
 
 | Area | Existing code | Used for |
 | --- | --- | --- |
-| L2 fabric | `J/computer/NetworkHub` (per-segment flood, `NicMailbox` rx queues, TAP and InternetProxy egress), `J/computer/CableNetworkManager` (BFS segments, atomic snapshot publish, `logicalLink`), `J/block/NetworkCableBlock` | `transmitFromPort`, forwarding table, `RadioMedium` beside it |
+| L2 fabric | `J/computer/NetworkHub` (per-segment flood, `NicMailbox` rx queues, internet uplink egress via `api/internet` and the internet sidecar), `J/computer/CableNetworkManager` (BFS segments, atomic snapshot publish, `logicalLink`), `J/block/NetworkCableBlock` | `transmitFromPort`, forwarding table, `RadioMedium` beside it |
 | Kernel network | `rust/operating-system/rust/src/net/mod.rs` (`Nics` trait, `eth{i}`), `net/ipc.rs` (socket syscalls 0–14, no `AF_PACKET`), `net/netlink.rs` | `wlan0`, packet sockets, `radio0` |
 | Stack | `rust/crates/ecm-net` (arp/eth/ipv4/icmp/udp/tcp/dns/http, plus `dhcp.rs`: DHCPv4 codec and client from #48); kernel `net/config.rs` runs it for `iface <name> dhcp` | `dhclient` drives it |
 | Router (#48) | `rust/crates/ecm-router` (NAT, `dhcp.rs` pools/leases), `ecm-bgp`, kernel `router_svc.rs`, `J/computer/WorldNetwork`, `RouterScenarios` | `dhcpd` reuses the pool logic |

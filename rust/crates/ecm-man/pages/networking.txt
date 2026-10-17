@@ -61,9 +61,13 @@ ROUTING
     A router forwards between subnets. The router command makes a
     computer a router with NAT (many private computers behind one
     address), port forwarding, a DHCP server, static routes and BGP.
-    The Internet Gateway block reaches the real internet: give the port
-    cabled to it a static address in 10.0.0.0/24 with gateway
-    10.0.0.1 (it serves no DHCP).
+    The Internet Gateway block reaches the real internet when the
+    server has the internet add-on (evanscomputermod-internet); without
+    it the gateway is offline. Give the port cabled to it a static
+    address in 10.0.0.0/24 with gateway 10.0.0.1 (it serves no DHCP).
+    Only public addresses are reached: the server's own LAN (10.x,
+    172.16-31.x, 192.168.x, 100.64-127.x) is refused unless the server
+    allows it.
 
 WI-FI
     Put a Wi-Fi Module in a bay, then wifi connect <network>

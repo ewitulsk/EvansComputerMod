@@ -14,6 +14,11 @@ DESCRIPTION
     If the name cannot be found or the connection fails, curl says so
     (and why the name lookup failed).
 
+    Real websites need a computer cabled to the Internet Gateway and
+    the internet add-on (evanscomputermod-internet) on the server.
+    Addresses on the server's own LAN are refused: curl prints Failed
+    to connect.
+
 OPTIONS
     -v
         Also print the request line and the reply's headers.

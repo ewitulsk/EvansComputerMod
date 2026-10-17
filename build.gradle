@@ -199,7 +199,6 @@ neoForge {
                 systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
                 // The tech suite needs the headless ISP ring (BGP reroute checks); other suites do not.
                 systemProperty 'evanscomputermod.techVillages', providers.gradleProperty('visualSuite').getOrElse('tech') == 'tech' ? 'true' : 'false'
-                systemProperty 'evanscomputermod.tap', 'none'
                 // 6 GB: the tech suite boots the whole ring headless, DNS included (44 infrastructure
                 // computers; docs/DNS.md "Memory"), then generates and screenshots several villages.
                 jvmArgument '-Xmx6G'

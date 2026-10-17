@@ -1,4 +1,7 @@
-package com.example.evanscomputermod.computer;
+package com.example.evanscomputermod.internet;
+
+import com.example.evanscomputermod.api.internet.InternetUplink;
+import com.example.evanscomputermod.api.internet.InternetUplinks;
 
 import java.io.IOException;
 import java.net.*;
@@ -8,11 +11,22 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
 
-/** Unprivileged Ethernet-to-host socket gateway. Bounded, nonblocking TCP/UDP flows. */
-public final class InternetProxy implements AutoCloseable {
-    public static final byte[] MAC = {2, 0, 0, 0, 0, 1};
+/**
+ * Unprivileged Ethernet-to-host socket gateway. Bounded, nonblocking TCP/UDP flows.
+ *
+ * <p>Only public destinations are reached: loopback, link-local, multicast and
+ * "this network" never, and private/LAN ranges (10/8, 172.16/12, 192.168/16,
+ * 100.64/10) only when the proxy was made with {@code allowLan} (the server's
+ * {@code -Devanscomputermod.internet.allowLan=true}). A {@link TestSite}'s own
+ * address and port are always reachable while it is open.
+ */
+public final class InternetProxy implements InternetUplink {
+    public static final byte[] MAC = InternetUplinks.GATEWAY_MAC;
     private static final int GATEWAY = 0x0a000001, MAX_FLOWS = 256, MAX_BUFFER = 65536;
+    /** (address << 16 | port) of open {@link TestSite}s, reachable even with the LAN blocked. */
+    static final Set<Long> EXEMPT = ConcurrentHashMap.newKeySet();
     private final Consumer<byte[]> output;
+    private final boolean allowLan;
     private final ScheduledExecutorService worker =
             Executors.newSingleThreadScheduledExecutor(
                     r -> {
@@ -44,11 +58,13 @@ public final class InternetProxy implements AutoCloseable {
         }
     }
 
-    public InternetProxy(Consumer<byte[]> output) {
+    public InternetProxy(Consumer<byte[]> output, boolean allowLan) {
         this.output = output;
+        this.allowLan = allowLan;
         worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.MILLISECONDS);
     }
 
+    @Override
     public void sendFrame(byte[] frame) {
         if (!closed && frame.length <= 1536) frames.offer(frame.clone());
     }
@@ -128,7 +144,7 @@ public final class InternetProxy implements AutoCloseable {
                 }
             }
         } catch (RuntimeException e) {
-            com.example.evanscomputermod.EvansComputerMod.LOGGER.warn(
+            InternetSidecarMod.LOGGER.warn(
                     "Internet proxy rejected frame", e);
         }
     }
@@ -167,7 +183,7 @@ public final class InternetProxy implements AutoCloseable {
                     && transportChecksum(
                                     src, dst, 17, Arrays.copyOfRange(frame, offset, offset + len))
                             != 0) return;
-            if (!routable(dst)) return;
+            if (!routable(dst, dport)) return;
             Key key = new Key(src, sport, dst, dport, 17);
             Flow f = flows.get(key);
             try {
@@ -191,14 +207,25 @@ public final class InternetProxy implements AutoCloseable {
                 }
             }
         } else if (proto == 6 && len >= 20) {
-            if (transportChecksum(src, dst, 6, Arrays.copyOfRange(frame, offset, offset + len)) != 0
-                    || !routable(dst)) return;
+            if (transportChecksum(src, dst, 6, Arrays.copyOfRange(frame, offset, offset + len)) != 0)
+                return;
             int header = (frame[offset + 12] >>> 4 & 15) * 4;
             if (header < 20 || header > len) return;
             int flags = frame[offset + 13] & 255;
             long seq = Integer.toUnsignedLong(i32(frame, offset + 4)),
                     ack = Integer.toUnsignedLong(i32(frame, offset + 8));
             Key key = new Key(src, u16(frame, offset), dst, u16(frame, offset + 2), 6);
+            if (!routable(dst, key.dport)) {
+                // Refuse a blocked destination at once (RST) rather than letting the SYN time out.
+                if ((flags & 6) == 2) {
+                    Flow refused = new Flow();
+                    refused.key = key;
+                    refused.mac = peer;
+                    refused.receive = (seq + 1) & 0xffffffffL;
+                    sendTcp(refused, 20, new byte[0], false);
+                }
+                return;
+            }
             Flow f = flows.get(key);
             if ((flags & 4) != 0) {
                 if (f != null) f.close();
@@ -254,9 +281,24 @@ public final class InternetProxy implements AutoCloseable {
         }
     }
 
-    private static boolean routable(int ip) {
+    /** Whether computers may reach {@code ip:port} through this proxy (see the class comment). */
+    boolean routable(int ip, int port) {
         int first = ip >>> 24;
-        return first != 0 && first < 224 && first != 127 && (ip & 0xffff0000) != 0xa9fe0000;
+        if (first == 0 || first >= 224 || first == 127 || (ip & 0xffff0000) == 0xa9fe0000) return false;
+        if (allowLan || !isLan(ip)) return true;
+        return EXEMPT.contains(exemptKey(ip, port));
+    }
+
+    /** Private and carrier-grade NAT ranges: the host's LAN, never the internet. */
+    static boolean isLan(int ip) {
+        return (ip & 0xff000000) == 0x0a000000 // 10.0.0.0/8
+                || (ip & 0xfff00000) == 0xac100000 // 172.16.0.0/12
+                || (ip & 0xffff0000) == 0xc0a80000 // 192.168.0.0/16
+                || (ip & 0xffc00000) == 0x64400000; // 100.64.0.0/10
+    }
+
+    static long exemptKey(int ip, int port) {
+        return (Integer.toUnsignedLong(ip) << 16) | (port & 0xffff);
     }
 
     private static InetSocketAddress address(int ip, int port) throws UnknownHostException {
@@ -375,6 +417,7 @@ public final class InternetProxy implements AutoCloseable {
         put16(b, p + 2, value);
     }
 
+    @Override
     public void close() {
         closed = true;
         worker.shutdown();
