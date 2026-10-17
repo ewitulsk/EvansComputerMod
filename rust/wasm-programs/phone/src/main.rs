@@ -3,8 +3,9 @@
 //! open apps are still there, so the last session isn't reopened again).
 //!
 //! The status comes from `/dev/uictl phone` (battery, signal, background
-//! modes, hotkey claims) once a second; the apps from `app_ctl list` and
-//! their `icon.png` every few seconds.
+//! modes, MIC, media sessions, hotkey claims) once a second; the apps from
+//! `app_ctl list` and their `icon.png` every few seconds; `/dev/mixer` twice
+//! a second while the notification sheet is open (its volume strips).
 
 use ecm_host_abi::apps;
 use ecm_ui_proto as proto;
@@ -43,6 +44,16 @@ impl Env for Live {
         match apps::ctl(&["session"]) {
             Some((0, s)) => String::from_utf8_lossy(&s).lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect(),
             _ => Vec::new(),
+        }
+    }
+
+    fn mixer(&mut self) -> String {
+        std::fs::read_to_string(ecm_audio::mixer::DEVICE).unwrap_or_default()
+    }
+
+    fn mixer_command(&mut self, cmd: &str) {
+        if let Err(e) = ecm_audio::mixer::command(cmd) {
+            eprintln!("phone: mixer: {cmd}: {e}");
         }
     }
 }
@@ -89,12 +100,15 @@ fn main() {
     println!("phone: shell up, display {}x{}{}", ps.sh.display.w, ps.sh.display.h, if restarted { " (restarted)" } else { "" });
     let mut last_status = Instant::now();
     let mut last_apps = Instant::now();
+    let mut last_mixer = Instant::now();
     loop {
         if let Err(e) = ps.render() {
             eprintln!("phone: {e}");
             std::process::exit(2);
         }
-        let events = match ps.sh.step(1000) {
+        // While the notification sheet is open its meters move: wake up for them.
+        let timeout = if ps.sheet_open() { 250 } else { 1000 };
+        let events = match ps.sh.step(timeout) {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("phone: {e}");
@@ -105,6 +119,11 @@ fn main() {
         if last_status.elapsed() >= Duration::from_millis(1000) {
             last_status = Instant::now();
             ps.refresh_status();
+        }
+        // The sheet's volume strips, about twice a second, only while it is open.
+        if ps.sheet_open() && last_mixer.elapsed() >= Duration::from_millis(500) {
+            last_mixer = Instant::now();
+            ps.refresh_mixer();
         }
         if last_apps.elapsed() >= Duration::from_secs(4) {
             last_apps = Instant::now();

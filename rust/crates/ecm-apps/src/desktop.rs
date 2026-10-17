@@ -26,11 +26,25 @@
 //! * **Restart-safe**: after a crash the compositor starts the shell again
 //!   with `--restart` and reports every open window; the desktop frames them
 //!   again and doesn't relaunch the session's `--launch` apps.
+//! * **The last session**: at its first start (not with `--restart`) the
+//!   desktop relaunches the apps that were running when the computer last
+//!   shut down (`app_ctl session`, the app manager's `lastSession()`).
+//! * **The tray** (in the taskbar, left of the Wi-Fi bars): one icon per app
+//!   with an active background mode (`AppModes`) or a window hidden to the
+//!   tray. Closing the window of an app with an active mode hides it to the
+//!   tray (`SetVisible` false) instead of closing it; a click on its icon
+//!   shows it again, right-click has Open and Quit (Quit = `CloseWindow` on
+//!   its windows). A speaker icon opens the Volume Mixer popup: Now Playing
+//!   (`MediaSessionChanged`, buttons send `MediaControl`), a master strip per
+//!   speaker, a strip per app (volume 0-150 %, mute, meter, "ducked", and a
+//!   route picker with several speakers) and the microphones (`/dev/mixer`).
 
 use crate::sys::{self, CellState, Sys, WifiState};
 use crate::uitoml;
+use ecm_audio::mixer::{self, Strips};
+use ecm_ui::{MediaSession, MediaState};
 use ecm_ui::conn::{ConnError, Connection};
-use ecm_ui::element::{button, column, custom, image, label, list, row, spacer, stack, Align, Element};
+use ecm_ui::element::{button, checkbox, column, custom, image, label, list, row, slider, spacer, stack, Align, Element};
 use ecm_ui::window::{Content, EventValue};
 use ecm_ui::{App, Core, Ctx, Theme};
 use ecm_ui_proto as proto;
@@ -56,6 +70,10 @@ pub const SWITCH_COMMIT_MS: u64 = 900;
 pub const STATUS_MS: u64 = 2000;
 /// How often `/etc/ui.toml` is checked for a new theme (ms).
 pub const THEME_POLL_MS: u64 = 1000;
+/// How often the Volume Mixer popup's strips and meters are read again while it is open (ms).
+pub const MIXER_MS: u64 = 500;
+/// Width of the Volume Mixer popup (lu).
+pub const MIXER_W: i32 = 300;
 
 pub const CHORD_SWITCH: u32 = 1;
 pub const CHORD_CLOSE: u32 = 2;
@@ -142,6 +160,86 @@ pub fn icon_for(app_id: &str) -> &'static str {
         "visual" => "visual",
         "store" => "store",
         _ => "app",
+    }
+}
+
+// ------------------------------------------------------------------ the computer's app manager and mixer
+
+/// What the desktop asks the computer's app manager for besides [`Sys`] (which has the
+/// Volume Mixer, `Sys::mixer`): the last session, and stopping an app with no window.
+pub trait DesktopHost {
+    /// Apps that were running at the last shutdown (`app_ctl session`).
+    fn last_session(&mut self) -> Vec<String>;
+    /// Stop an app that has no window to close (`app_ctl kill <pid>`).
+    fn kill(&mut self, pid: u32);
+}
+
+/// The computer's app manager (`app_ctl`; nothing off-target).
+pub struct LiveHost;
+
+impl DesktopHost for LiveHost {
+    fn last_session(&mut self) -> Vec<String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some((0, s)) = ecm_host_abi::apps::ctl(&["session"]) {
+                return String::from_utf8_lossy(&s).lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+            }
+        }
+        Vec::new()
+    }
+
+    fn kill(&mut self, pid: u32) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ecm_host_abi::apps::ctl(&["kill", &pid.to_string()]);
+        }
+        let _ = pid;
+    }
+}
+
+/// What a [`FakeHost`] holds and was asked.
+#[derive(Clone, Debug, Default)]
+pub struct FakeHostState {
+    pub session: Vec<String>,
+    pub killed: Vec<u32>,
+}
+
+/// An in-memory computer for tests and golden sessions (shared, so the test can still look).
+#[derive(Clone, Default)]
+pub struct FakeHost {
+    pub state: Rc<RefCell<FakeHostState>>,
+}
+
+impl DesktopHost for FakeHost {
+    fn last_session(&mut self) -> Vec<String> {
+        self.state.borrow().session.clone()
+    }
+    fn kill(&mut self, pid: u32) {
+        self.state.borrow_mut().killed.push(pid);
+    }
+}
+
+type HostRef = Rc<RefCell<Box<dyn DesktopHost>>>;
+
+/// What a background mode keeps an app running for, in the first-time prompt.
+pub fn background_words(mode: &str) -> String {
+    match mode {
+        "call" => "calls".into(),
+        "audio" => "audio".into(),
+        "radio" => "radio".into(),
+        "transfer" => "downloads".into(),
+        "navigation" => "navigation".into(),
+        "refresh" => "updates".into(),
+        other => other.to_string(),
+    }
+}
+
+/// The permission dialog's question: "Allow <app> to use <permission>?", or for a background
+/// mode's first-time prompt (`background:<mode>`) "Keep <app> running in the background for <calls|...>?".
+pub fn prompt_question(app_name: &str, permission: &str) -> String {
+    match permission.strip_prefix("background:") {
+        Some(mode) => format!("Keep {app_name} running in the background for {}?", background_words(mode)),
+        None => format!("Allow {app_name} to use {permission}?"),
     }
 }
 
@@ -239,6 +337,8 @@ pub struct Win {
     /// Rect before maximizing.
     pub saved: Option<R>,
     pub minimized: bool,
+    /// Closed while its app had a background mode: hidden to the tray (not in the taskbar).
+    pub hidden: bool,
     pub maximized: bool,
     pub fullscreen: bool,
     sent: Option<(R, u32)>,
@@ -280,6 +380,42 @@ pub struct Prompt {
     pub permission: String,
 }
 
+/// An app's active background modes (`AppModes`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayApp {
+    pub pid: u32,
+    pub app_id: String,
+    pub modes: Vec<String>,
+}
+
+/// An app's media session (`MediaSessionChanged`), for Now Playing in the mixer popup.
+#[derive(Clone, Debug)]
+pub struct TrayMedia {
+    pub pid: u32,
+    pub app_id: String,
+    pub session: MediaSession,
+}
+
+/// One icon in the tray.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayEntry {
+    pub app_id: String,
+    pub pid: u32,
+    /// Active background modes (may be empty while a window is still hidden to the tray).
+    pub modes: Vec<String>,
+    /// Windows of it hidden to the tray.
+    pub hidden: Vec<u32>,
+}
+
+/// What closing a window's title bar does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseAction {
+    /// Its app has an active background mode: hide it to the tray.
+    HideToTray,
+    /// `CloseWindow` (the app quits or closes the window).
+    Close,
+}
+
 #[derive(Clone, Debug)]
 pub struct Switcher {
     pub order: Vec<u32>,
@@ -316,6 +452,19 @@ pub struct State {
     pub last_theme_poll: Option<u64>,
     pub last_title_click: Option<(u32, u64)>,
     stacked: Vec<u32>,
+    /// Apps with active background modes, in the order they started.
+    pub tray: Vec<TrayApp>,
+    /// Media sessions, newest first.
+    pub media: Vec<TrayMedia>,
+    /// `/dev/mixer` as last read.
+    pub mixer: Strips,
+    pub last_mixer: Option<u64>,
+    /// The Volume Mixer popup and what it was sized for.
+    pub mixer_popup: Option<u32>,
+    mixer_shape: Vec<String>,
+    host: HostRef,
+    /// The computer (the mixer's commands are sent from widget handlers).
+    sys: SysRef,
 }
 
 impl State {
@@ -330,7 +479,50 @@ impl State {
         self.wins.iter().find(|w| w.id == wid || w.frame_wid == Some(wid)).map(|w| w.id)
     }
     fn topmost_shown(&self) -> Option<u32> {
-        self.wins.iter().rev().find(|w| !w.minimized).map(|w| w.id)
+        self.wins.iter().rev().find(|w| !w.minimized && !w.hidden).map(|w| w.id)
+    }
+
+    /// The active background modes of the app a window belongs to (same pid or app id).
+    pub fn modes_of(&self, wid: u32) -> Vec<String> {
+        let Some(w) = self.win(wid) else { return Vec::new() };
+        self.tray.iter().filter(|t| t.pid == w.pid || t.app_id == w.app_id).flat_map(|t| t.modes.iter().cloned()).collect()
+    }
+
+    /// What the title bar's close does for `wid`: an app with an active background mode is
+    /// hidden to the tray; any other window is closed.
+    pub fn close_action(&self, wid: u32) -> CloseAction {
+        if self.modes_of(wid).is_empty() {
+            CloseAction::Close
+        } else {
+            CloseAction::HideToTray
+        }
+    }
+
+    /// The tray's icons: every app with an active mode, then apps that only have windows
+    /// hidden to the tray (their mode ended since).
+    pub fn tray_entries(&self) -> Vec<TrayEntry> {
+        let mut out: Vec<TrayEntry> = Vec::new();
+        for t in &self.tray {
+            if t.app_id == self.own_app_id {
+                continue;
+            }
+            match out.iter_mut().find(|e| e.app_id == t.app_id) {
+                Some(e) => e.modes.extend(t.modes.iter().cloned()),
+                None => out.push(TrayEntry { app_id: t.app_id.clone(), pid: t.pid, modes: t.modes.clone(), hidden: Vec::new() }),
+            }
+        }
+        for w in self.wins.iter().filter(|w| w.hidden) {
+            match out.iter_mut().find(|e| e.app_id == w.app_id) {
+                Some(e) => e.hidden.push(w.id),
+                None => out.push(TrayEntry { app_id: w.app_id.clone(), pid: w.pid, modes: Vec::new(), hidden: vec![w.id] }),
+            }
+        }
+        out
+    }
+
+    /// Windows of an app (hidden or not), bottom to top.
+    pub fn windows_of(&self, app_id: &str) -> Vec<u32> {
+        self.wins.iter().filter(|w| w.app_id == app_id).map(|w| w.id).collect()
     }
 }
 
@@ -344,6 +536,10 @@ pub struct Desktop {
     pub sys: SysRef,
 }
 
+fn host(st: &Shared) -> HostRef {
+    st.borrow().host.clone()
+}
+
 fn ms(sys: &SysRef) -> u64 {
     sys.borrow_mut().now_ms()
 }
@@ -352,6 +548,11 @@ impl Desktop {
     /// Connect as the shell and set up the desktop. `args`: the program's
     /// arguments (`--restart`, `--launch PROG[:ARG...]`).
     pub fn new(conn: Box<dyn Connection>, sys: Box<dyn Sys>, args: &[String]) -> Result<Desktop, ConnError> {
+        Desktop::with_host(conn, sys, Box::new(LiveHost), args)
+    }
+
+    /// [`Desktop::new`] with the app manager and mixer it uses (tests and golden sessions pass a [`FakeHost`]).
+    pub fn with_host(conn: Box<dyn Connection>, sys: Box<dyn Sys>, host: Box<dyn DesktopHost>, args: &[String]) -> Result<Desktop, ConnError> {
         let core = Core::connect("dev.ecm.desktop", conn, proto::Role::Shell)?;
         let app = App::from_core(core);
         let sys: SysRef = Rc::new(RefCell::new(sys));
@@ -383,6 +584,14 @@ impl Desktop {
             last_theme_poll: None,
             last_title_click: None,
             stacked: Vec::new(),
+            tray: Vec::new(),
+            media: Vec::new(),
+            mixer: Strips::default(),
+            last_mixer: None,
+            mixer_popup: None,
+            mixer_shape: Vec::new(),
+            host: Rc::new(RefCell::new(host)),
+            sys: sys.clone(),
         }));
         let mut d = Desktop { app, state, sys };
         d.setup(args);
@@ -408,9 +617,11 @@ impl Desktop {
         core.send(Message::BindChord(proto::BindChord { id: CHORD_CLOSE, mods: proto::mods::ALT, keys: vec![HID_F4] }));
         core.send(Message::BindChord(proto::BindChord { id: CHORD_LAUNCHER, mods: proto::mods::CTRL, keys: vec![HID_ESCAPE] }));
         refresh_status(&self.sys, &self.state, true);
+        refresh_mixer(&self.sys, &self.state, true);
 
         // Session apps, unless this is a restart after a crash.
         let restarted = args.first().map(String::as_str) == Some("--restart");
+        let mut launched: Vec<String> = Vec::new();
         let mut it = args.iter();
         while let Some(a) = it.next() {
             if a == "--launch" {
@@ -421,9 +632,22 @@ impl Desktop {
                     let mut parts = spec.split(':').map(String::from);
                     if let Some(prog) = parts.next() {
                         let rest: Vec<String> = parts.collect();
+                        launched.push(prog.clone());
                         self.app.core.send(Message::Launch(proto::Launch { app_id: prog, args: rest }));
                     }
                 }
+            }
+        }
+        // The apps that were running at the last shutdown (the app manager's lastSession()).
+        if !restarted {
+            let own = self.state.borrow().own_app_id.clone();
+            let session = host(&self.state).borrow_mut().last_session();
+            for id in session {
+                if id == own || id == "dev.ecm.desktop" || launched.contains(&id) {
+                    continue;
+                }
+                launched.push(id.clone());
+                self.app.core.send(Message::Launch(proto::Launch { app_id: id, args: Vec::new() }));
             }
         }
 
@@ -527,6 +751,29 @@ fn refresh_status(sys: &SysRef, st: &Shared, force: bool) -> bool {
     changed
 }
 
+/// Re-read `/dev/mixer`: every [`STATUS_MS`] for the tray's speaker icon, every [`MIXER_MS`]
+/// while the Volume Mixer popup is open. Returns whether it was read.
+fn refresh_mixer(sys: &SysRef, st: &Shared, force: bool) -> bool {
+    let now = ms(sys);
+    {
+        let s = st.borrow();
+        let period = if s.mixer_popup.is_some() { MIXER_MS } else { STATUS_MS };
+        if !force && s.last_mixer.is_some_and(|t| now.saturating_sub(t) < period) {
+            return false;
+        }
+    }
+    let strips = sys.borrow_mut().mixer().unwrap_or_default();
+    let mut s = st.borrow_mut();
+    s.last_mixer = Some(now);
+    s.mixer = strips;
+    true
+}
+
+/// What the tray's speaker icon shows: (there is a speaker, the first one is muted).
+fn speaker_state(m: &Strips) -> (bool, bool) {
+    (!m.outputs.is_empty(), m.outputs.first().is_some_and(|o| o.mute))
+}
+
 // ------------------------------------------------------------------ the timer
 
 fn tick(cx: &mut Ctx, st: &Shared, sys: &SysRef) -> bool {
@@ -537,6 +784,18 @@ fn tick(cx: &mut Ctx, st: &Shared, sys: &SysRef) -> bool {
         cx.set_window(tb);
         cx.invalidate();
         changed = true;
+    }
+    // The Volume Mixer: the tray's speaker icon, and the popup's meters while it is open.
+    let before = speaker_state(&st.borrow().mixer);
+    if refresh_mixer(sys, st, false) {
+        if speaker_state(&st.borrow().mixer) != before {
+            invalidate_taskbar(cx, st);
+            changed = true;
+        }
+        if st.borrow().mixer_popup.is_some() {
+            refresh_mixer_popup(cx, st, sys);
+            changed = true;
+        }
     }
     // Theme changes written by Settings.
     let poll = st.borrow().last_theme_poll.map_or(true, |t| now.saturating_sub(t) >= THEME_POLL_MS);
@@ -614,6 +873,7 @@ fn on_message(cx: &mut Ctx, st: &Shared, sys: &SysRef, m: &Message) {
                     rect,
                     saved: None,
                     minimized: false,
+                    hidden: false,
                     maximized,
                     fullscreen: false,
                     sent: None,
@@ -690,8 +950,9 @@ fn on_message(cx: &mut Ctx, st: &Shared, sys: &SysRef, m: &Message) {
         Message::Chord(c) => match c.id {
             CHORD_SWITCH => switch_next(cx, st, sys),
             CHORD_CLOSE => {
-                if let Some(f) = st.borrow().focused {
-                    cx.send(Message::CloseWindow(proto::CloseWindow { window: f }));
+                let f = st.borrow().focused;
+                if let Some(f) = f {
+                    request_close(cx, st, f);
                 }
             }
             CHORD_LAUNCHER => open_launcher(cx, st, sys),
@@ -718,6 +979,48 @@ fn on_message(cx: &mut Ctx, st: &Shared, sys: &SysRef, m: &Message) {
             let name = app_name(&**sys.borrow(), &p.app_id).unwrap_or_else(|| p.app_id.clone());
             st.borrow_mut().prompts.push_back(Prompt { req: p.req, app_id: p.app_id.clone(), app_name: name, permission: p.permission.clone() });
             show_prompt(cx, st);
+        }
+        Message::AppModes(m) => {
+            {
+                let mut s = st.borrow_mut();
+                let pos = s.tray.iter().position(|t| t.pid == m.pid);
+                match (pos, m.modes.is_empty()) {
+                    (Some(i), true) => {
+                        s.tray.remove(i);
+                    }
+                    (Some(i), false) => s.tray[i].modes = m.modes.clone(),
+                    (None, false) => s.tray.push(TrayApp { pid: m.pid, app_id: m.app_id.clone(), modes: m.modes.clone() }),
+                    (None, true) => {}
+                }
+            }
+            invalidate_taskbar(cx, st);
+        }
+        Message::MediaSessionChanged(m) => {
+            let session = MediaSession::from_wire(&m.info);
+            {
+                let mut s = st.borrow_mut();
+                let pos = s.media.iter().position(|x| x.pid == m.pid);
+                match (pos, session.state == MediaState::None) {
+                    (Some(i), true) => {
+                        s.media.remove(i);
+                    }
+                    (Some(i), false) => s.media[i].session = session,
+                    (None, false) => s.media.insert(0, TrayMedia { pid: m.pid, app_id: m.app_id.clone(), session }),
+                    (None, true) => {}
+                }
+            }
+            if st.borrow().mixer_popup.is_some() {
+                refresh_mixer_popup(cx, st, sys);
+            }
+        }
+        Message::PopupDone(p) => {
+            let mut s = st.borrow_mut();
+            if s.mixer_popup == Some(p.surface) {
+                s.mixer_popup = None;
+            }
+            if s.launcher == Some(p.surface) {
+                s.launcher = None;
+            }
         }
         _ => {}
     }
@@ -748,7 +1051,7 @@ pub fn place_all(cx: &mut Ctx, st: &Shared) {
         let d = s.display.clone();
         let focused = s.focused;
         for w in &mut s.wins {
-            let show = !w.minimized;
+            let show = !w.minimized && !w.hidden;
             if w.shown != Some(show) {
                 w.shown = Some(show);
                 msgs.push(Message::SetVisible(proto::SetVisible { window: w.id, visible: show }));
@@ -829,6 +1132,7 @@ pub fn focus(cx: &mut Ctx, st: &Shared, id: u32) {
         let Some(i) = s.wins.iter().position(|w| w.id == id) else { return };
         let mut w = s.wins.remove(i);
         w.minimized = false;
+        w.hidden = false;
         s.wins.push(w);
         let prev = s.focused.replace(id);
         s.mru.retain(|x| *x != id);
@@ -851,7 +1155,7 @@ pub fn minimize(cx: &mut Ctx, st: &Shared, id: u32) {
         w.minimized = true;
         if s.focused == Some(id) {
             s.focused = None;
-            s.wins.iter().rev().find(|w| !w.minimized).map(|w| w.id)
+            s.wins.iter().rev().find(|w| !w.minimized && !w.hidden).map(|w| w.id)
         } else {
             None
         }
@@ -949,11 +1253,67 @@ fn frame_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef, wid: u32) -> Ele
         .child(spacer())
         .child(mk("_", "min").on_click(move |cx, _| minimize(cx, &s1, wid)))
         .child(mk(if w.maximized { "=" } else { "[]" }, "max").on_click(move |cx, _| toggle_maximize(cx, &s2, wid)))
-        .child(mk("x", "close").on_click(move |cx, _| {
-            let _ = &s3; // keeps the frame's state alive with its buttons
-            cx.send(Message::CloseWindow(proto::CloseWindow { window: wid }));
-        }));
+        .child(mk("x", "close").on_click(move |cx, _| request_close(cx, &s3, wid)));
     stack().child(area).child(column().gap(0).child(buttons).child(spacer()))
+}
+
+/// The title bar's close (button, menu, Alt+F4): an app with an active background mode is
+/// hidden to the tray and keeps running; any other window gets `CloseWindow`.
+pub fn request_close(cx: &mut Ctx, st: &Shared, wid: u32) {
+    let action = st.borrow().close_action(wid);
+    match action {
+        CloseAction::Close => cx.send(Message::CloseWindow(proto::CloseWindow { window: wid })),
+        CloseAction::HideToTray => hide_to_tray(cx, st, wid),
+    }
+}
+
+/// Hide a window to the tray: not shown, not in the taskbar or Alt+Tab; its app keeps running.
+pub fn hide_to_tray(cx: &mut Ctx, st: &Shared, wid: u32) {
+    let next = {
+        let mut s = st.borrow_mut();
+        let Some(w) = s.win_mut(wid) else { return };
+        w.hidden = true;
+        s.mru.retain(|x| *x != wid);
+        if s.focused == Some(wid) {
+            s.focused = None;
+            s.topmost_shown()
+        } else {
+            None
+        }
+    };
+    match next {
+        Some(n) => focus(cx, st, n),
+        None => place_all(cx, st),
+    }
+    invalidate_taskbar(cx, st);
+}
+
+/// A click on an app's tray icon (or Open): its windows come back, the top one focused.
+pub fn tray_open(cx: &mut Ctx, st: &Shared, app_id: &str) {
+    let wins = st.borrow().windows_of(app_id);
+    let Some(&top) = wins.last() else { return };
+    for &w in &wins {
+        if let Some(x) = st.borrow_mut().win_mut(w) {
+            x.hidden = false;
+            x.minimized = false;
+        }
+    }
+    focus(cx, st, top);
+}
+
+/// Quit from the tray: `CloseWindow` on every window of the app (it then quits); an app
+/// with no window is stopped through the app manager.
+pub fn tray_quit(cx: &mut Ctx, st: &Shared, app_id: &str, pid: u32) {
+    let wins = st.borrow().windows_of(app_id);
+    if wins.is_empty() {
+        host(st).borrow_mut().kill(pid);
+        let mut s = st.borrow_mut();
+        s.tray.retain(|t| t.app_id != app_id);
+    }
+    for w in wins {
+        cx.send(Message::CloseWindow(proto::CloseWindow { window: w }));
+    }
+    invalidate_taskbar(cx, st);
 }
 
 /// Which edges a point of the frame grabs (0 = the title bar = move; None = nothing).
@@ -1018,7 +1378,7 @@ fn frame_pointer(cx: &mut Ctx, st: &Shared, sys: &SysRef, wid: u32, p: &ecm_ui::
             cx.popup_menu(p.x, p.y, items, move |cx, i| match i {
                 0 => minimize(cx, &st2, wid),
                 1 => toggle_maximize(cx, &st2, wid),
-                _ => cx.send(Message::CloseWindow(proto::CloseWindow { window: wid })),
+                _ => request_close(cx, &st2, wid),
             });
         }
         proto::PointerKind::Move => {
@@ -1127,7 +1487,7 @@ fn taskbar_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     let mut r = row().gap(3).padding(2).align(Align::Center).child(button("Apps").id("apps").style("primary").on_click(move |cx, _| open_launcher(cx, &st1, &sys1)));
     let compact = vcx.class == proto::SizeClass::Compact;
     let bw = if compact { 60 } else { 110 };
-    for w in &s.wins {
+    for w in s.wins.iter().filter(|w| !w.hidden) {
         let id = w.id;
         let st2 = st.clone();
         let active = s.focused == Some(id) && !w.minimized;
@@ -1150,6 +1510,44 @@ fn taskbar_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
         r = r.child(b);
     }
     r = r.child(spacer());
+    // The tray: apps running in the background, then the speaker (the Volume Mixer).
+    for e in s.tray_entries() {
+        let id = format!("tray:{}", e.app_id);
+        let mut nodes = Vec::new();
+        let mut img = vec![Prop::X(0), Prop::Y(0), Prop::W(16), Prop::H(16)];
+        if let Some(res) = s.icons.get(icon_for(&e.app_id)) {
+            img.push(Prop::Resource(*res));
+        }
+        nodes.push(SceneNode::new("icon", NodeKind::Image, img));
+        if !e.modes.is_empty() {
+            // A dot: it is doing something in the background now.
+            nodes.push(SceneNode::new("dot", NodeKind::Rect, vec![Prop::X(11), Prop::Y(11), Prop::W(5), Prop::H(5), Prop::Fill(t.accent), Prop::Radius(2)]));
+        }
+        let (st2, app, pid, key) = (st.clone(), e.app_id.clone(), e.pid, id.clone());
+        r = r.child(custom().id(id).width(16).height(16).nodes(nodes).on_pointer(move |cx, ev| {
+            if let EventValue::Pointer(p) = &ev.value {
+                if p.kind != proto::PointerKind::Down {
+                    return;
+                }
+                if p.button == proto::Button::Right {
+                    tray_menu(cx, &st2, &key, &app, pid);
+                } else {
+                    tray_open(cx, &st2, &app);
+                }
+            }
+        }));
+    }
+    let (has_speaker, muted) = speaker_state(&s.mixer);
+    if has_speaker {
+        let (st2, sys2) = (st.clone(), sys.clone());
+        r = r.child(custom().id("tray:mixer").width(16).height(16).nodes(speaker_nodes(t.text, if muted { t.danger } else { t.text }, muted)).on_pointer(move |cx, ev| {
+            if let EventValue::Pointer(p) = &ev.value {
+                if p.kind == proto::PointerKind::Down {
+                    toggle_mixer_popup(cx, &st2, &sys2);
+                }
+            }
+        }));
+    }
     // Wi-Fi.
     let wifi_bars = if s.wifi.connected { sys::bars(s.wifi.signal_dbm.unwrap_or(-90)) } else { 0 };
     let wifi_on = if s.wifi.connected { t.text } else { t.text_muted };
@@ -1181,6 +1579,299 @@ fn taskbar_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     let clock = s.clock.map(|(h, m)| format!("{h:02}:{m:02}")).unwrap_or_else(|| "--:--".into());
     r = r.child(label(clock).id("clock").wrap(false));
     stack().child(custom().id("bg").nodes(vec![bg, line])).child(r)
+}
+
+// ------------------------------------------------------------------ tray and Volume Mixer
+
+/// The tray's speaker: a box, a cone, and waves (or an X when muted).
+fn speaker_nodes(fg: u32, accent: u32, muted: bool) -> Vec<SceneNode> {
+    let line = |key: &str, pts: &[(i32, i32)], w: u16, c: u32| SceneNode::new(key, NodeKind::Line, vec![Prop::Points(pts.iter().map(|&(x, y)| proto::Point { x, y }).collect()), Prop::Width(w), Prop::Color(c)]);
+    let mut n = vec![
+        SceneNode::new("box", NodeKind::Rect, vec![Prop::X(1), Prop::Y(6), Prop::W(4), Prop::H(5), Prop::Fill(fg)]),
+        line("cone", &[(5, 6), (9, 2), (9, 14), (5, 10)], 2, fg),
+    ];
+    if muted {
+        n.push(line("x1", &[(11, 5), (15, 11)], 2, accent));
+        n.push(line("x2", &[(15, 5), (11, 11)], 2, accent));
+    } else {
+        n.push(line("w1", &[(11, 5), (13, 8), (11, 11)], 1, fg));
+        n.push(line("w2", &[(13, 3), (16, 8), (13, 13)], 1, fg));
+    }
+    n
+}
+
+/// Right-click on a tray icon: Open, Quit.
+fn tray_menu(cx: &mut Ctx, st: &Shared, key: &str, app_id: &str, pid: u32) {
+    let tb = st.borrow().taskbar;
+    let x = cx.core().window(tb).and_then(|w| w.rect_of(key)).map_or(0, |r| r.x);
+    let (st2, app) = (st.clone(), app_id.to_string());
+    let el = ecm_ui::element::menu(["Open", "Quit"]).id("tray_menu").on_select(move |cx, e| {
+        if let EventValue::Index(i) = e.value {
+            if i == 0 {
+                tray_open(cx, &st2, &app);
+            } else {
+                tray_quit(cx, &st2, &app, pid);
+            }
+        }
+    });
+    let theme = cx.core().theme.clone();
+    let (w, h) = ecm_ui::window::measure(&el, &theme, proto::SizeClass::Compact, 200);
+    let w = w.max(90);
+    let dw = st.borrow().display.w;
+    let s = cx.core().create_popup(tb, x.min(dw - w).max(0), -h - 2, w, h, Content::Static(el));
+    if let Some(win) = cx.core().window_mut(s) {
+        win.close_on_select = true;
+    }
+}
+
+/// What the Volume Mixer popup is laid out for (it is made again when this changes).
+fn mixer_shape(s: &State) -> Vec<String> {
+    let mut v: Vec<String> = s.media.iter().map(|m| format!("np{}", m.pid)).collect();
+    v.extend(s.mixer.outputs.iter().map(|o| format!("out:{}", o.side)));
+    v.extend(s.mixer.apps.iter().map(|a| format!("app:{}", a.app)));
+    v.extend(s.mixer.inputs.iter().map(|i| format!("in:{}", i.side)));
+    v
+}
+
+/// The speaker icon: open the Volume Mixer popup, or close it.
+pub fn toggle_mixer_popup(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
+    let open = st.borrow().mixer_popup;
+    if let Some(p) = open {
+        st.borrow_mut().mixer_popup = None;
+        if cx.core().window(p).is_some() {
+            cx.core().close_window(p);
+            return;
+        }
+    }
+    refresh_mixer(sys, st, true);
+    open_mixer_popup(cx, st, sys);
+}
+
+fn open_mixer_popup(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
+    let theme = cx.core().theme.clone();
+    let el = mixer_content(st, sys, &theme);
+    let (_, h) = ecm_ui::window::measure(&el, &theme, proto::SizeClass::Compact, MIXER_W);
+    let (tb, d) = {
+        let s = st.borrow();
+        (s.taskbar, s.display.clone())
+    };
+    let w = MIXER_W.min(d.w - 8);
+    let h = h.min(d.h - TASKBAR_H - 8);
+    let (st2, sys2) = (st.clone(), sys.clone());
+    let p = cx.core().create_popup(tb, d.w - w - 4, -h - 2, w, h, Content::View(Box::new(move |vcx| mixer_view(vcx, &st2, &sys2))));
+    let mut s = st.borrow_mut();
+    s.mixer_popup = Some(p);
+    s.mixer_shape = mixer_shape(&s);
+}
+
+/// New strips or sessions: the popup is made again at its new size; otherwise it is redrawn.
+fn refresh_mixer_popup(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
+    let (popup, same) = {
+        let s = st.borrow();
+        (s.mixer_popup, s.mixer_shape == mixer_shape(&s))
+    };
+    let Some(p) = popup else { return };
+    if cx.core().window(p).is_none() {
+        st.borrow_mut().mixer_popup = None;
+        return;
+    }
+    if same {
+        invalidate(cx, p);
+    } else {
+        cx.core().close_window(p);
+        open_mixer_popup(cx, st, sys);
+    }
+}
+
+/// One mixer command; the strips change at once (`edit`) so the popup doesn't jump back.
+fn mixer_set(st: &Shared, cmd: String, edit: impl FnOnce(&mut Strips)) {
+    edit(&mut st.borrow_mut().mixer);
+    let sys = st.borrow().sys.clone();
+    let _ = sys.borrow_mut().mixer_command(&cmd);
+}
+
+/// The meters' level colour.
+const METER: u32 = 0x5ad17aff;
+
+/// A level meter, `fill` 0-100, `w` lu wide.
+fn meter(id: String, w: i32, fill: u32, bg: u32, fg: u32) -> Element {
+    let mut n = vec![SceneNode::new("bg", NodeKind::Rect, vec![Prop::W(w), Prop::H(3), Prop::Fill(bg), Prop::Radius(1)])];
+    if fill > 0 {
+        n.push(SceneNode::new("fill", NodeKind::Rect, vec![Prop::W((w * fill.min(100) as i32 / 100).max(1)), Prop::H(3), Prop::Fill(fg), Prop::Radius(1)]));
+    }
+    custom().id(id).width(w).height(3).nodes(n)
+}
+
+fn badge(id: String, text: &str, fill: u32, fg: u32) -> Element {
+    let f = ecm_ui_proto::fonts::face(proto::Font::Ui, 8).unwrap();
+    let w = f.text_width(text) + 6;
+    custom().id(id).width(w).height(11).nodes(vec![
+        SceneNode::new("bg", NodeKind::Rect, vec![Prop::W(w), Prop::H(11), Prop::Fill(fill), Prop::Radius(3)]),
+        SceneNode::new("t", NodeKind::Text, vec![Prop::X(3), Prop::Y(1), Prop::Text(text.into()), Prop::Font(proto::Font::Ui), Prop::Size(8), Prop::Color(fg)]),
+    ])
+}
+
+/// A name for an app that isn't installed as one: `dev.ecm.discord` -> "Discord"; a
+/// program's strip (`aplay`) keeps its name.
+fn short_name(id: &str) -> String {
+    let last = id.rsplit('.').next().unwrap_or(id);
+    if !id.contains('.') || last.is_empty() {
+        return id.to_string();
+    }
+    let mut c = last.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+fn clock_of(ms: u32) -> String {
+    let s = ms / 1000;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The Volume Mixer popup: Now Playing, a master strip per speaker, a strip per app, the microphones.
+fn mixer_content(st: &Shared, sys: &SysRef, t: &Theme) -> Element {
+    let s = st.borrow();
+    let inner = MIXER_W - 16;
+    let mut c = column().padding(8).gap(3);
+    let name_of = |id: &str| app_name(&**sys.borrow(), id).unwrap_or_else(|| short_name(id));
+    // Now Playing.
+    for m in &s.media {
+        let ses = &m.session;
+        let pid = m.pid;
+        let title = if ses.artist.is_empty() { ses.title.clone() } else { format!("{} - {}", ses.title, ses.artist) };
+        c = c.child(label(format!("Now Playing: {}", name_of(&m.app_id))).style("caption").wrap(false).id(format!("np{pid}:app")));
+        c = c.child(label(title).wrap(false).id(format!("np{pid}:title")));
+        let fill = if ses.duration_ms > 0 { (ses.position_ms.min(ses.duration_ms) as u64 * 100 / ses.duration_ms as u64) as u32 } else { 0 };
+        c = c.child(meter(format!("np{pid}:bar"), inner, fill, t.border, t.accent));
+        let offers = |a: &str| ses.actions.is_empty() || ses.actions.iter().any(|x| x == a);
+        let toggle = if matches!(ses.state, MediaState::Playing | MediaState::Buffering) { "pause" } else { "play" };
+        let mut r = row().gap(4).align(Align::Center);
+        for (text, action, key) in [("|<", "previous", "prev"), (if toggle == "pause" { "||" } else { ">" }, toggle, "play"), (">|", "next", "next")] {
+            r = r.child(button(text).id(format!("np{pid}:{key}")).style("flat").size(8).width(28).enabled(offers(action)).on_click(move |cx, _| {
+                cx.send(Message::MediaControl(proto::MediaControl { pid, action: action.into(), position_ms: 0 }));
+            }));
+        }
+        r = r.child(spacer());
+        if ses.duration_ms > 0 {
+            r = r.child(label(format!("{} / {}", clock_of(ses.position_ms), clock_of(ses.duration_ms))).style("caption").wrap(false));
+        }
+        c = c.child(r);
+    }
+    c = c.child(label("Volume Mixer").style("title").id("mixer:title"));
+    let outputs = s.mixer.outputs.clone();
+    let several = outputs.len() > 1;
+    // A master strip per speaker.
+    for o in &outputs {
+        let side = o.side.clone();
+        let target = if several { format!("master.{side}") } else { "master".to_string() };
+        let label_text = if o.label.is_empty() { format!("Speaker ({side})") } else { o.label.clone() };
+        let (st1, st2, tg1, tg2, s1, s2) = (st.clone(), st.clone(), target.clone(), target.clone(), side.clone(), side.clone());
+        c = c.child(row().gap(4).align(Align::Center).child(label(label_text).wrap(false).id(format!("out:{side}:name"))).child(spacer()).child(label(if o.mute { "muted".to_string() } else { format!("{}%", o.volume) }).style("caption").wrap(false)));
+        c = c.child(
+            row()
+                .gap(4)
+                .align(Align::Center)
+                .child(slider(0, 100).value(o.volume.min(100) as i32).id(format!("vol:out:{side}")).grow(1).on_change(move |cx, e| {
+                    if let EventValue::Int(v) = e.value {
+                        let v = v.clamp(0, 100) as u32;
+                        let s1 = s1.clone();
+                        mixer_set(&st1, format!("set {tg1} {v}"), move |m| m.outputs.iter_mut().filter(|o| o.side == s1).for_each(|o| o.volume = v));
+                        cx.invalidate();
+                    }
+                }))
+                .child(checkbox("Mute").checked(o.mute).id(format!("mute:out:{side}")).on_change(move |cx, _| {
+                    let s2 = s2.clone();
+                    mixer_set(&st2, format!("mute {tg2} toggle"), move |m| m.outputs.iter_mut().filter(|o| o.side == s2).for_each(|o| o.mute = !o.mute));
+                    cx.invalidate();
+                })),
+        );
+        c = c.child(meter(format!("out:{side}:meter"), inner, if o.mute { 0 } else { mixer::meter_percent(o.peak) }, t.track, METER));
+    }
+    // A strip per app.
+    for a in &s.mixer.apps {
+        let id = a.app.clone();
+        let mut head = row().gap(4).align(Align::Center).child(label(name_of(&id)).wrap(false).id(format!("app:{id}:name")));
+        if a.ducked {
+            head = head.child(badge(format!("app:{id}:ducked"), "ducked", 0xe8b339ff, 0x0b0f14ff));
+        }
+        head = head.child(spacer()).child(label(if a.mute { "muted".to_string() } else { format!("{}%", a.volume) }).style("caption").wrap(false).id(format!("app:{id}:pct")));
+        c = c.child(head);
+        let (st1, st2, i1, i2) = (st.clone(), st.clone(), id.clone(), id.clone());
+        let mut controls = row()
+            .gap(4)
+            .align(Align::Center)
+            .child(slider(0, mixer::MAX_APP_PERCENT as i32).value(a.volume.min(mixer::MAX_APP_PERCENT) as i32).id(format!("vol:app:{id}")).grow(1).on_change(move |cx, e| {
+                if let EventValue::Int(v) = e.value {
+                    let v = v.clamp(0, mixer::MAX_APP_PERCENT as i32) as u32;
+                    let i1b = i1.clone();
+                    mixer_set(&st1, format!("set {i1} {v}"), move |m| m.apps.iter_mut().filter(|a| a.app == i1b).for_each(|a| a.volume = v));
+                    cx.invalidate();
+                }
+            }))
+            .child(checkbox("Mute").checked(a.mute).id(format!("mute:app:{id}")).on_change(move |cx, _| {
+                let i2b = i2.clone();
+                mixer_set(&st2, format!("mute {i2} toggle"), move |m| m.apps.iter_mut().filter(|a| a.app == i2b).for_each(|a| a.mute = !a.mute));
+                cx.invalidate();
+            }));
+        if several {
+            // The route picker: which speaker it plays on.
+            let current = a.route.as_ref().and_then(|r| outputs.iter().find(|o| &o.side == r)).map_or("Default".to_string(), |o| o.label.clone());
+            let (st3, i3, outs) = (st.clone(), id.clone(), outputs.clone());
+            let key = format!("route:{id}");
+            let key2 = key.clone();
+            controls = controls.child(button(current).id(key).size(8).on_click(move |cx, _| {
+                let me = cx.window();
+                let anchor = cx.core().window(me).and_then(|w| w.rect_of(&key2)).unwrap_or_default();
+                let mut items = vec!["Default".to_string()];
+                items.extend(outs.iter().map(|o| if o.label.is_empty() { o.side.clone() } else { o.label.clone() }));
+                let (st4, i4, outs2) = (st3.clone(), i3.clone(), outs.clone());
+                cx.popup_menu_below(anchor, items, move |cx, i| {
+                    let side = if i == 0 { None } else { outs2.get(i - 1).map(|o| o.side.clone()) };
+                    let i4b = i4.clone();
+                    let s2 = side.clone();
+                    mixer_set(&st4, format!("route {i4} {}", side.as_deref().unwrap_or("-")), move |m| m.apps.iter_mut().filter(|a| a.app == i4b).for_each(|a| a.route = s2.clone()));
+                    let p = st4.borrow().mixer_popup;
+                    if let Some(p) = p {
+                        invalidate(cx, p);
+                    }
+                });
+            }));
+        }
+        c = c.child(controls);
+        c = c.child(meter(format!("app:{id}:meter"), inner, if a.mute { 0 } else { mixer::meter_percent(a.peak) }, t.track, METER));
+    }
+    if s.mixer.apps.is_empty() {
+        c = c.child(label("No app is playing sound").style("caption").id("mixer:none"));
+    }
+    // The microphones.
+    let many_in = s.mixer.inputs.len() > 1;
+    for i in &s.mixer.inputs {
+        let side = i.side.clone();
+        let name = if many_in { format!("Microphone ({side})") } else { "Microphone".to_string() };
+        c = c.child(row().gap(4).child(label(name).wrap(false).id(format!("in:{side}:name"))).child(spacer()).child(label(format!("{}%", i.gain)).style("caption").wrap(false)));
+        let (st1, s1) = (st.clone(), side.clone());
+        c = c.child(slider(0, 100).value(i.gain.min(100) as i32).id(format!("gain:{side}")).on_change(move |cx, e| {
+            if let EventValue::Int(v) = e.value {
+                let v = v.clamp(0, 100) as u32;
+                let s1b = s1.clone();
+                mixer_set(&st1, format!("gain {s1} {v}"), move |m| m.inputs.iter_mut().filter(|i| i.side == s1b).for_each(|i| i.gain = v));
+                cx.invalidate();
+            }
+        }));
+        let fill = (((i.level.clamp(-60, 0) + 60) * 100) / 60) as u32;
+        c = c.child(meter(format!("in:{side}:meter"), inner, fill, t.track, METER));
+    }
+    c
+}
+
+/// The popup's view: the strips on a card filling the popup.
+fn mixer_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
+    let t = vcx.theme;
+    let card = SceneNode::new(
+        "card",
+        NodeKind::Rect,
+        vec![Prop::W(vcx.width), Prop::H(vcx.height), Prop::Fill(t.surface), Prop::BorderW(1), Prop::BorderColor(t.border), Prop::Radius(4)],
+    );
+    stack().child(custom().id("mixer:card").nodes(vec![card])).child(mixer_content(st, sys, t))
 }
 
 // ------------------------------------------------------------------ launcher
@@ -1250,9 +1941,9 @@ fn switch_next(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
         None => {
             let order: Vec<u32> = {
                 let s = st.borrow();
-                let mut o: Vec<u32> = s.mru.iter().copied().filter(|id| s.win(*id).is_some()).collect();
+                let mut o: Vec<u32> = s.mru.iter().copied().filter(|id| s.win(*id).is_some_and(|w| !w.hidden)).collect();
                 for w in s.wins.iter().rev() {
-                    if !o.contains(&w.id) {
+                    if !o.contains(&w.id) && !w.hidden {
                         o.push(w.id);
                     }
                 }
@@ -1460,6 +2151,21 @@ fn show_prompt(cx: &mut Ctx, st: &Shared) {
 fn prompt_view(p: &Prompt, st: &Shared) -> Element {
     let req = p.req;
     let (s1, s2) = (st.clone(), st.clone());
+    if p.permission.starts_with("background:") {
+        // The first-time background prompt: Allow / Don't allow, remembered either way.
+        return column()
+            .gap(6)
+            .padding(10)
+            .child(label(prompt_question(&p.app_name, &p.permission)).style("title").id("question"))
+            .child(label("It keeps working while its window is closed; quit it from the tray.").style("caption"))
+            .child(
+                row()
+                    .gap(6)
+                    .child(spacer())
+                    .child(button("Don't allow").id("deny").on_click(move |cx, _| answer_as(cx, &s1, req, false, true)))
+                    .child(button("Allow").id("allow").style("primary").on_click(move |cx, _| answer_as(cx, &s2, req, true, true))),
+            );
+    }
     let what = match p.permission.split(':').next().unwrap_or("") {
         "network" => "the network (sockets, DNS, HTTP)",
         "radio" => "the radio (raw Wi-Fi frames, SDR, transmitting)",
@@ -1476,7 +2182,7 @@ fn prompt_view(p: &Prompt, st: &Shared) -> Element {
     column()
         .gap(6)
         .padding(10)
-        .child(label(format!("Allow {} to use {}?", p.app_name, p.permission)).style("title").id("question"))
+        .child(label(prompt_question(&p.app_name, &p.permission)).style("title").id("question"))
         .child(label(if what.is_empty() { String::from("The app asked for this permission.") } else { format!("It wants to use {what}.") }).style("caption"))
         .child(ecm_ui::element::checkbox("Remember my choice").id("remember"))
         .child(
@@ -1490,6 +2196,10 @@ fn prompt_view(p: &Prompt, st: &Shared) -> Element {
 
 fn answer(cx: &mut Ctx, st: &Shared, req: u32, allow: bool) {
     let remember = cx.checked("remember");
+    answer_as(cx, st, req, allow, remember);
+}
+
+fn answer_as(cx: &mut Ctx, st: &Shared, req: u32, allow: bool, remember: bool) {
     cx.send(Message::AnswerPermission(proto::AnswerPermission { req, allow, remember }));
     let surface = {
         let mut s = st.borrow_mut();
@@ -1527,5 +2237,102 @@ mod tests {
         assert_eq!(grab_edges(200, 100, 1, 50, false), Some(proto::edges::LEFT));
         assert_eq!(grab_edges(200, 100, 199, 99, false), Some(proto::edges::RIGHT | proto::edges::BOTTOM));
         assert_eq!(grab_edges(200, 100, 100, 50, false), None);
+    }
+
+    fn state() -> State {
+        let sys: SysRef = Rc::new(RefCell::new(Box::new(sys::MockSys::new(std::env::temp_dir()))));
+        State {
+            display: disp(640, 400),
+            own_app_id: "dev.ecm.desktop".into(),
+            wins: Vec::new(),
+            focused: None,
+            mru: Vec::new(),
+            opened: 0,
+            drag: None,
+            toasts: Vec::new(),
+            prompts: VecDeque::new(),
+            prompt_surface: None,
+            switcher: None,
+            launcher: None,
+            launch_items: Vec::new(),
+            wifi: WifiState::default(),
+            cells: Vec::new(),
+            clock: None,
+            theme_name: String::new(),
+            taskbar: 0,
+            wallpaper: 0,
+            icons: HashMap::new(),
+            last_status: None,
+            last_theme_poll: None,
+            last_title_click: None,
+            stacked: Vec::new(),
+            tray: Vec::new(),
+            media: Vec::new(),
+            mixer: Strips::default(),
+            last_mixer: None,
+            mixer_popup: None,
+            mixer_shape: Vec::new(),
+            host: Rc::new(RefCell::new(Box::new(FakeHost::default()))),
+            sys,
+        }
+    }
+
+    fn win(id: u32, pid: u32, app: &str) -> Win {
+        Win {
+            id,
+            pid,
+            app_id: app.into(),
+            title: app.into(),
+            min: (0, 0),
+            max: (0, 0),
+            frame_surface: 100 + id,
+            frame_wid: None,
+            rect: (10, 30, 200, 100),
+            saved: None,
+            minimized: false,
+            hidden: false,
+            maximized: false,
+            fullscreen: false,
+            sent: None,
+            sent_frame: None,
+            shown: None,
+        }
+    }
+
+    #[test]
+    fn close_goes_to_the_tray_only_while_the_app_has_a_mode() {
+        let mut s = state();
+        s.wins.push(win(1, 41, "dev.ecm.discord"));
+        s.wins.push(win(2, 42, "terminal"));
+        assert_eq!(s.close_action(1), CloseAction::Close, "no mode: close");
+        assert!(s.tray_entries().is_empty());
+        // A mode, matched by pid ...
+        s.tray.push(TrayApp { pid: 41, app_id: "dev.ecm.discord".into(), modes: vec!["call".into()] });
+        assert_eq!(s.close_action(1), CloseAction::HideToTray);
+        assert_eq!(s.close_action(2), CloseAction::Close, "other apps still close");
+        // ... or by app id (a window of another process of the app).
+        s.wins.push(win(3, 77, "dev.ecm.discord"));
+        assert_eq!(s.close_action(3), CloseAction::HideToTray);
+        assert_eq!(s.tray_entries(), vec![TrayEntry { app_id: "dev.ecm.discord".into(), pid: 41, modes: vec!["call".into()], hidden: vec![] }]);
+        // Hidden, then the mode ends: still in the tray (to bring it back or quit it), and close closes.
+        s.wins[0].hidden = true;
+        s.tray.clear();
+        assert_eq!(s.tray_entries(), vec![TrayEntry { app_id: "dev.ecm.discord".into(), pid: 41, modes: vec![], hidden: vec![1] }]);
+        assert_eq!(s.close_action(3), CloseAction::Close);
+        assert_eq!(s.topmost_shown(), Some(3), "hidden windows aren't focused");
+        assert_eq!(s.windows_of("dev.ecm.discord"), vec![1, 3]);
+        // The desktop's own surfaces never get an icon.
+        s.tray.push(TrayApp { pid: 1, app_id: "dev.ecm.desktop".into(), modes: vec!["audio".into()] });
+        assert_eq!(s.tray_entries().len(), 1);
+    }
+
+    #[test]
+    fn background_prompts_are_worded_for_the_mode() {
+        assert_eq!(prompt_question("Discord", "background:call"), "Keep Discord running in the background for calls?");
+        assert_eq!(prompt_question("Music", "background:audio"), "Keep Music running in the background for audio?");
+        assert_eq!(prompt_question("Radio", "background:radio"), "Keep Radio running in the background for radio?");
+        assert_eq!(prompt_question("Maps", "background:navigation"), "Keep Maps running in the background for navigation?");
+        assert_eq!(prompt_question("Store", "background:transfer"), "Keep Store running in the background for downloads?");
+        assert_eq!(prompt_question("Notes", "files:documents"), "Allow Notes to use files:documents?");
     }
 }

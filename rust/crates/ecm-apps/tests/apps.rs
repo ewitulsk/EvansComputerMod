@@ -595,7 +595,7 @@ fn desktop_mixer_popup_controls_the_mixer_and_now_playing() {
     assert_eq!((pop.role, pop.parent), (proto::SurfaceRole::Popup, tb));
     assert!(pop.y < 0 && pop.x + pop.w <= 640, "above the taskbar, on the right");
     desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
-    for want in ["Now Playing", "Sweden - C418", "0:30 / 3:35", "Volume Mixer", "Speaker", "AirPods", "dev.ecm.music", "ducked", "80%", "Microphone", "50%", "Default"] {
+    for want in ["Now Playing", "Sweden - C418", "0:30 / 3:35", "Volume Mixer", "Speaker", "AirPods", "Music", "ducked", "80%", "Microphone", "50%", "Default"] {
         assert!(desk.t.has(pop.surface, want), "{want}: {:?}", desk.t.of(pop.surface));
     }
     let log = |d: &Desk| d.sys.state.borrow().log.clone();
