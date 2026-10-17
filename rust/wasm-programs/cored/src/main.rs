@@ -8,6 +8,9 @@
 //!   cored site remove <id>
 //!   cored sim new [--label L] [--quota BYTES]   write the blank SIM in the Card Reader/Writer
 //!   cored add <imsi> <key> [quota] | revoke | unrevoke | quota <imsi> <bytes> | remove | label <imsi> <l> | release
+//!   cored block add|remove <NPA-NXX> | blocks | numbers | number <who> [+number]   telephony numbering
+//!   cored ims pool=<cidr> [pcscf=..] [domain=..] [mmsc=..] | ims off        the IMS bearer (VoLTE, SMS, MMS)
+//!   cored feature <who> <key> <value> | port-code <who> <code>             the TAS profile (HSS)
 //!   cored config | config set <key> <value> | config keys
 //!   cored enable | disable            start at boot (services.cfg)
 //!

@@ -1165,6 +1165,19 @@ impl Core {
                 }
                 format!("{} {} {}", imsi, key, value)
             }
+            ["ims", rest @ ..] if !rest.is_empty() => {
+                // validated by the database parser: rebuild the file with the new `ims` line
+                let text: String = self.db.to_text().lines().filter(|l| !l.starts_with("ims ")).map(|l| format!("{}\n", l)).collect();
+                let text = format!("{}ims {}\n", text, rest.join(" "));
+                let db = Db::parse(&text).map_err(|e| e.msg)?;
+                self.db.ims = db.ims;
+                let i = self.db.ims.as_ref().expect("parsed");
+                format!("ims pool {}/{} pcscf {} domain {}", fmt_ip(i.pool), i.prefix, fmt_ip(i.pcscf), i.domain)
+            }
+            ["ims-off"] => {
+                self.db.ims = None;
+                "ims off (phones get no IMS bearer)".to_string()
+            }
             ["port-code", who, code] => {
                 let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
                 if code.len() < 4 || code.len() > 16 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {

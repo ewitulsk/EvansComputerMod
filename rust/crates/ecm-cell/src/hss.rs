@@ -22,7 +22,7 @@
 //! | `IPD <data-ip>` | (P-GW header enrichment, for the MMSC) who is at a default-bearer address | `imsi`, `msisdn` |
 //! | `AAR <ue-ip> <ue-port> <remote-ip> <remote-port>` | Rx auth-request: a voice bearer | `bearer <id>`, `sent 0\|1` |
 //! | `STR <ue-ip> <bearer>` | Rx session-termination | |
-//! | `NUM` | numbering | `cc`, `domain`, `block <NPA-NXX>` lines |
+//! | `NUM` | numbering and the IMS setup | `cc`, `domain`, `pcscf`, `ims_pool`, `mmsc`, `carrier`, `block <NPA-NXX>` lines |
 //! | `REGS` | registrations held | `reg <imsi> <msisdn> <server>` lines |
 //!
 //! `<who>` is an IMSI or an E.164 number. Values that are empty are written `-`.
@@ -158,6 +158,10 @@ impl Core {
             ["NUM"] => {
                 let db = self.db();
                 let mut s = format!("cc {}\ndomain {}\n", db.cc, db.ims.as_ref().map(|i| i.domain.clone()).unwrap_or_else(|| format!("{}.ecm", db.carrier)));
+                if let Some(i) = &db.ims {
+                    s.push_str(&format!("pcscf {}\nims_pool {}/{}\nmmsc {}\n", fmt_ip(i.pcscf), fmt_ip(i.pool), i.prefix, i.mmsc.map(fmt_ip).unwrap_or_else(|| "-".into())));
+                }
+                s.push_str(&format!("carrier {}\n", db.carrier));
                 for b in &db.blocks {
                     s.push_str(&format!("block {}\n", b));
                 }

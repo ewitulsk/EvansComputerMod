@@ -1160,9 +1160,7 @@ dependencies = [
 name = "discord"
 version = "0.1.0"
 dependencies = [
- "ecm-apps-ui",
  "ecm-audio",
- "ecm-auth",
  "ecm-chat",
  "ecm-disco",
  "ecm-discord",
@@ -1413,6 +1411,16 @@ dependencies = [
  "ecm-rtp",
  "hmac",
  "sha2",
+]
+
+[[package]]
+name = "ecm-tel-net"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-dns",
+ "ecm-host-abi",
+ "ecm-tel",
 ]
 
 [[package]]
@@ -1955,6 +1963,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "imsd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2450,10 +2468,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmscd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
+]
+
+[[package]]
 name = "mousetest"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "mrfd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
 ]
 
 [[package]]
@@ -3982,6 +4020,17 @@ dependencies = [
  "proc-macro2",
  "quote 1.0.45",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "smscd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
 ]
 
 [[package]]
