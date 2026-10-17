@@ -1159,7 +1159,9 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * Files of the carrier network's computers. The core: its router service (its data center
      * address, forwarding between the LAN and the phones' tun), the database {@code cored init},
      * {@code cored site-add} for every site and {@code cored add} for every Phone Store SIM would
-     * write ({@link CellPlan#coreDb}), and {@code cored start &} (what {@code cored enable} adds).
+     * write ({@link CellPlan#coreDb}, with every village's number block, the IMS pool and every SIM's number),
+ * {@code cored start &} (what {@code cored enable} adds) and the IMS daemons ({@code imsd}, {@code smscd},
+ * {@code mmscd}, {@code mrfd} {@code start --wait &}, what their {@code enable} adds).
      * A cell site: its address (the Phone Store's on the data center LAN, a span site's in its
      * chord's link subnet), /etc/celld-site.toml and {@code celld-site start --wait &} (what
      * {@code celld-site enable} adds: the site waits for its SDR, which attaches when its chunk ticks).
@@ -1170,7 +1172,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put("router.cfg", "configure terminal\nip routing\ninterface eth1\nip address " + cells.coreAddress()
                     + "/24\nexit\nip route 0.0.0.0/0 100." + oct + ".0.1 eth1\nend\n");
             // Phones' searches reach the core (their gateway); it passes them on to its village's ISP.
-            files.put("services.cfg", "router on\ncored start &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            // Telephony (docs/TELEPHONY.md "Tech Villages"): the IMS core beside cored (calls, texts, MMS,
+            // voicemail and the 611 support line); each waits for cored's HSS at boot.
+            files.put("services.cfg", "router on\ncored start &\nimsd start --wait &\nsmscd start --wait &\nmmscd start --wait &\n"
+                    + "mrfd start --wait &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put(VillageDiscovery.CONF, VillageDiscovery.RELAY);
             files.put("etc/cored.db", cells.coreDb());
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-core"));

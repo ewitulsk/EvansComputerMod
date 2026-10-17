@@ -36,7 +36,7 @@ public final class PhoneStore {
     /** A SIM card written for the carrier: its identity and its key. */
     public static ItemStack sim(CellPlan plan, CellPlan.Sim m) {
         ItemStack sim = new ItemStack(CellularContent.SIM_CARD.get());
-        sim.set(CellularContent.SIM_CARD_DATA.get(), new SimIdentity(plan.carrier, Long.parseLong(m.imsi())));
+        sim.set(CellularContent.SIM_CARD_DATA.get(), new SimIdentity(plan.carrier, Long.parseLong(m.imsi()), m.msisdn()));
         sim.set(CellularContent.SIM_SECRET.get(), SimSecret.of(m.key()));
         return sim;
     }
