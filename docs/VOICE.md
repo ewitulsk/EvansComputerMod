@@ -81,9 +81,19 @@ level meter (it records from the microphone while the page is open).
 
 ## Your microphone (client)
 
-Each player decides whether the mod may hear them: **Microphone input** in
-Mods > Evans Computer Mod > Config (`config/evanscomputermod-voice-client.toml`),
-off by default. While it is off the microphone is never opened.
+Each player decides whether the mod may hear them: **Microphone Input** in
+Minecraft's own **Options > Music & Sounds**, under the output Device, off by
+default. While it is off the microphone is never opened. Beside it:
+
+- **Input Device**: the system's microphones, listed when the screen opens
+  (like the output Device), or System Default. With a voice chat mod installed
+  it says the microphone is provided by that mod.
+- **Input Volume**: 0-200 %, applied to your microphone before it is sent
+  (and before voice activation measures it).
+- **Mic Mode** (Push to Talk / Voice Activation), **Activation Level**, **Mic Indicator**.
+
+The same values are in `config/evanscomputermod-voice-client.toml` and
+Mods > Evans Computer Mod > Config.
 
 When it is on, the server tells the client what wants the player's voice (a
 Microphone within range that a program is reading, or a switched-on

@@ -165,6 +165,60 @@ public final class RadioClientChecks {
         if (handheldTicks < 20) return;   // settings packet reaches the server, the item syncs back
         mc.player.connection.sendCommand("ecmvisual radio handheld check");
         capture(mc, "radio_handheld_screen");
+        handheldPhase = 40;
+        handheldTicks = 0;
+      }
+      case 40 -> {
+        // Options > Music & Sounds: the microphone settings sit under the output Device.
+        if (handheldTicks < 10) return;
+        mc.setScreen(new net.minecraft.client.gui.screens.options.SoundOptionsScreen(null, mc.options));
+        handheldPhase = 41;
+        handheldTicks = 0;
+      }
+      case 41 -> {
+        if (handheldTicks < 10) return;
+        if (!(mc.screen instanceof net.minecraft.client.gui.screens.options.SoundOptionsScreen screen))
+          throw new IllegalStateException("Music & Sounds didn't open: " + mc.screen);
+        java.util.List<net.minecraft.client.gui.components.AbstractWidget> widgets = new java.util.ArrayList<>();
+        net.minecraft.client.gui.components.OptionsList list = null;
+        for (var c : screen.children()) {
+          if (c instanceof net.minecraft.client.gui.components.OptionsList l) {
+            list = l;
+            for (Object entry : (java.util.List<?>) l.children())
+              if (entry instanceof net.minecraft.client.gui.components.events.ContainerEventHandler ce)
+                for (var w : ce.children())
+                if (w instanceof net.minecraft.client.gui.components.AbstractWidget aw) widgets.add(aw);
+          }
+        }
+        java.util.function.Function<String, net.minecraft.client.gui.components.AbstractWidget> find = prefix -> {
+          for (var w : widgets) if (w.getMessage().getString().startsWith(prefix)) return w;
+          throw new IllegalStateException("no '" + prefix + "' in Music & Sounds: "
+              + widgets.stream().map(w -> w.getMessage().getString()).toList());
+        };
+        if (list != null) list.setScrollAmount(10_000);
+        // Click Microphone Input (off -> on), and click Input Volume three quarters along (about 150 %).
+        var input = find.apply("Microphone Input");
+        input.onClick(input.getX() + 2, input.getY() + 2);
+        var volume = find.apply("Input Volume");
+        volume.onClick(volume.getX() + volume.getWidth() * 0.75, volume.getY() + 5);
+        volume.onRelease(volume.getX() + volume.getWidth() * 0.75, volume.getY() + 5);
+        String device = find.apply("Input Device").getMessage().getString();
+        boolean on = com.example.evanscomputermod.voice.VoiceClientConfig.enabled();
+        int vol = com.example.evanscomputermod.voice.VoiceClientConfig.inputVolume();
+        var devices = com.example.evanscomputermod.voice.client.MicrophoneOptions.captureDevices();
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_SOUND_OPTIONS input={} volume={} device='{}' devices={}", on, vol, device, devices);
+        if (!on) throw new IllegalStateException("clicking Microphone Input didn't turn it on");
+        if (vol <= 100) throw new IllegalStateException("the Input Volume slider didn't go above 100%: " + vol);
+        mc.player.connection.sendCommand("ecmvisual radio voice check " + vol + " " + devices.size());
+        handheldPhase = 42;
+        handheldTicks = 0;
+      }
+      case 42 -> {
+        if (handheldTicks < 5) return;
+        capture(mc, "voice_sound_options");
+        // Back to the defaults: microphone off, 100 %.
+        com.example.evanscomputermod.voice.VoiceClientConfig.ENABLED.set(false);
+        com.example.evanscomputermod.voice.VoiceClientConfig.INPUT_VOLUME.set(100);
         handheldPhase = 5;
         handheldTicks = 0;
       }

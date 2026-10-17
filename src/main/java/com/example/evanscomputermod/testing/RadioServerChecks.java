@@ -61,6 +61,13 @@ public final class RadioServerChecks {
                             .then(Commands.literal("give").executes(c -> guarded(c.getSource().getServer(), () -> giveHandheld(c.getSource()))))
                             .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> checkHandheld(c.getSource())))))
                     .then(
+                        Commands.literal("voice")
+                            .then(Commands.literal("check").then(Commands.argument("info", StringArgumentType.greedyString())
+                                .executes(c -> {
+                                  EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS voice_sound_options {}", StringArgumentType.getString(c, "info"));
+                                  return 1;
+                                }))))
+                    .then(
                         Commands.literal("controller")
                             .then(Commands.literal("setup").executes(c -> guarded(c.getSource().getServer(), () -> controllerSetup(c.getSource()))))
                             .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> controllerCheck(c.getSource())))))

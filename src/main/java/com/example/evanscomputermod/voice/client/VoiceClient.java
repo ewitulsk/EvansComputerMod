@@ -83,6 +83,7 @@ public final class VoiceClient {
         if (svc || plasmo) EvansComputerMod.LOGGER.info("Microphone: using {}'s capture", svc ? "Simple Voice Chat" : "Plasmo Voice");
         container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> new ConfigurationScreen(mod, parent));
         modBus.addListener((RegisterKeyMappingsEvent e) -> e.register(TALK));
+        MicrophoneOptions.register();
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> tick());
         NeoForge.EVENT_BUS.addListener((RenderGuiEvent.Post e) -> hud(e));
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut e) -> reset());
@@ -91,6 +92,11 @@ public final class VoiceClient {
     /** The server's {@code DEMAND_*} bits. */
     public static void onDemand(int flags) {
         demand = flags;
+    }
+
+    /** A voice chat mod provides the microphone (ECM doesn't open it). */
+    public static boolean usesVoiceMod() {
+        return svc || plasmo;
     }
 
     /** Which capture is in use: "Simple Voice Chat", "Plasmo Voice" or "OpenAL". */
@@ -146,10 +152,17 @@ public final class VoiceClient {
         boolean fromSvc = false;
         int peak = 0;
         CaptureBuffer.Block b;
+        int volume = VoiceClientConfig.inputVolume();
         while ((b = CaptureBuffer.poll()) != null) {
             if (resampler == null || resampler.inRate() != b.rate()) resampler = new Resampler(b.rate(), VoicePackets.VOICE_RATE);
-            for (short s : b.pcm()) peak = Math.max(peak, Math.abs(s));
-            short[] r = resampler.process(b.pcm(), 0, b.pcm().length);
+            short[] in = b.pcm();
+            if (volume != 100) {
+                // Input volume (0-200 %), like a sound card's capture level: applied before anything else, clipped.
+                in = in.clone();
+                for (int i = 0; i < in.length; i++) in[i] = (short) Math.max(-32768, Math.min(32767, in[i] * volume / 100));
+            }
+            for (short s : in) peak = Math.max(peak, Math.abs(s));
+            short[] r = resampler.process(in, 0, in.length);
             parts.add(r);
             total += r.length;
             fromSvc |= b.source() == CaptureBuffer.Source.SIMPLE_VOICE_CHAT;
