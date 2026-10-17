@@ -7,7 +7,7 @@
 //! root letters. The owner (or an operator) can revoke it again.
 //!
 //! The database (`/etc/ianad.db`): `account <handle> <salt> <hash> <created>` and
-//! `tld <label> <handle> <created>`.
+//! `tld <label> <handle> <created>`, and the numbering lines of [`crate::numbering`].
 
 use crate::name::{fqdn, ip_str, is_ldh, is_sub, normalize, Ip};
 use crate::registrar::{hash, Account};
@@ -26,6 +26,8 @@ pub struct Iana {
     pub accounts: BTreeMap<String, Account>,
     /// TLD -> (owner handle, created).
     pub tlds: BTreeMap<String, (String, u64)>,
+    /// Number blocks and ports (ENUM).
+    pub numbering: crate::numbering::Numbering,
 }
 
 impl Iana {
@@ -43,7 +45,9 @@ impl Iana {
                 ["tld", t, h, created] => {
                     i.tlds.insert(t.to_string(), (h.to_string(), created.parse().unwrap_or(0)));
                 }
-                _ => {}
+                w => {
+                    i.numbering.parse_line(w);
+                }
             }
         }
         i
@@ -57,6 +61,7 @@ impl Iana {
         for (t, (h, c)) in &self.tlds {
             let _ = writeln!(s, "tld {t} {h} {c}");
         }
+        s.push_str(&self.numbering.render());
         s
     }
 

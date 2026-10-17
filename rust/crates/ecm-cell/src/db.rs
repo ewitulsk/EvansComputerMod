@@ -24,17 +24,19 @@
 //! ```text
 //! cc 1                           the world's country code (default 1)
 //! block 214-555                  a number block (NPA-NXX) the carrier holds, one line each
+//! enum key=00112233...ff         the ENUM key IANA issued with the blocks (signs port-out codes)
 //! ims pool=10.250.0.0/16 pcscf=100.65.2.1 domain=cell-red.ecm net=100.65.2.1/32
 //! sub ... msisdn=+12145550142 ims_ip=10.250.0.2 cfu=+1... cfb=+1... cfnr=+1... cfnrc=+1...
-//!         cw=1 clir=0 dnd=0 vm=1 block=+12145550199,+12145550198 port=7Q2K9X
+//!         cw=1 clir=0 dnd=0 vm=1 block=+12145550199,+12145550198 port=3fa2c1-b843a26d ported=1
 //! ```
 //! `ims`: the IMS bearer's private pool (it routes only to `net`, the IMS core),
 //! the P-CSCF the phones register with (default: the core's gateway, i.e. `imsd`
 //! on the core's computer) and the carrier's SIP domain (default `<carrier>.ecm`).
 //! Per subscriber: the number (`msisdn`, E.164), the sticky IMS address, call
 //! forwarding (unconditional, busy, no answer, unreachable), call waiting,
-//! caller-ID restriction, do not disturb, voicemail, the network block list and a
-//! port-out code. This is the HSS of a real network.
+//! caller-ID restriction, do not disturb, voicemail, the network block list, a
+//! port-out code ([`port_code`]) and `ported=1` for a number ported in from another
+//! carrier (outside the blocks). This is the HSS of a real network.
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -83,6 +85,8 @@ pub struct ImsProfile {
     pub blocked: Vec<String>,
     /// Port-out code (empty: none issued).
     pub port: String,
+    /// The number was ported in (it is outside the carrier's blocks).
+    pub ported: bool,
 }
 
 impl Default for ImsProfile {
@@ -100,6 +104,7 @@ impl Default for ImsProfile {
             vm: true,
             blocked: Vec::new(),
             port: String::new(),
+            ported: false,
         }
     }
 }
@@ -129,6 +134,19 @@ pub struct ImsConf {
     pub net_prefix: u8,
     /// The MMSC (`mmscd`): traffic to and from it on the default bearer is zero-rated.
     pub mmsc: Option<[u8; 4]>,
+}
+
+/// A port-out code: 4-16 of letters, digits and `-`.
+pub fn valid_port_code(s: &str) -> bool {
+    (4..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// The port-out code for `number` with `nonce` (6 hex digits): `<nonce>-<mac>`, the mac the
+/// first 8 hex digits of HMAC-SHA256(enum key, `ECM-PORT` || number || nonce). `ianad`
+/// checks it against the key it issued with the number's block (`ecm_dns::numbering`).
+pub fn port_code(key: &[u8; 16], number: &str, nonce: &str) -> String {
+    let m = crate::crypto::hmac_sha256_parts(key, &[b"ECM-PORT", number.as_bytes(), nonce.as_bytes()]);
+    format!("{}-{}", nonce, hex(&m[..4]))
 }
 
 /// A subscriber label: 1-32 of `a-z A-Z 0-9 . _ -`.
@@ -172,6 +190,8 @@ pub struct Db {
     pub blocks: Vec<String>,
     /// The IMS bearer, when the carrier offers calls.
     pub ims: Option<ImsConf>,
+    /// The ENUM key IANA issued with the carrier's blocks (`enum key=`).
+    pub enum_key: Option<[u8; 16]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,7 +208,7 @@ impl core::fmt::Display for DbError {
 
 impl Db {
     pub fn new(carrier: &str, pool: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Db {
-        Db { carrier: carrier.into(), pool, prefix, gateway, dns: [0; 4], mtu: 1500, sites: BTreeMap::new(), subs: BTreeMap::new(), cc: "1".into(), blocks: Vec::new(), ims: None }
+        Db { carrier: carrier.into(), pool, prefix, gateway, dns: [0; 4], mtu: 1500, sites: BTreeMap::new(), subs: BTreeMap::new(), cc: "1".into(), blocks: Vec::new(), ims: None, enum_key: None }
     }
 
     pub fn parse(text: &str) -> Result<Db, DbError> {
@@ -246,6 +266,10 @@ impl Db {
                         return Err(err(format!("block {} twice", w[1])));
                     }
                     db.blocks.push(w[1].to_string());
+                }
+                ("enum", 2) => {
+                    let k = w[1].strip_prefix("key=").ok_or_else(|| err(format!("expected key=<32 hex>, got '{}'", w[1])))?;
+                    db.enum_key = Some(unhex::<16>(k).ok_or_else(|| err("the enum key must be 32 hex digits".into()))?);
                 }
                 ("ims", n) if n >= 2 => {
                     let mut pool = None;
@@ -352,10 +376,17 @@ impl Db {
                                 }
                             }
                             "port" => {
-                                if v.len() > 16 || !v.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                                if !valid_port_code(v) {
                                     return Err(err(format!("bad port-out code '{}'", v)));
                                 }
                                 s.ims.port = v.to_string();
+                            }
+                            "ported" => {
+                                s.ims.ported = match v {
+                                    "0" => false,
+                                    "1" => true,
+                                    _ => return Err(err("ported must be 0 or 1".into())),
+                                }
                             }
                             _ => return Err(err(format!("unknown key '{}'", k))),
                         }
@@ -424,6 +455,9 @@ impl Db {
         for b in &self.blocks {
             let _ = writeln!(s, "block {}", b);
         }
+        if let Some(k) = &self.enum_key {
+            let _ = writeln!(s, "enum key={}", hex(k));
+        }
         if let Some(i) = &self.ims {
             let _ = write!(s, "ims pool={}/{} pcscf={} domain={} net={}/{}", fmt_ip(i.pool), i.prefix, fmt_ip(i.pcscf), i.domain, fmt_ip(i.net), i.net_prefix);
             if let Some(m) = i.mmsc {
@@ -465,6 +499,9 @@ impl Db {
             }
             if !p.port.is_empty() {
                 let _ = write!(s, " port={}", p.port);
+            }
+            if p.ported {
+                let _ = write!(s, " ported=1");
             }
             s.push('\n');
         }
@@ -524,9 +561,10 @@ impl Db {
         None
     }
 
-    /// Give `imsi` a number: `requested` (which must be free; it may be outside the
-    /// blocks only when ported in) or the next free one. Returns the number.
-    pub fn assign_number(&mut self, imsi: &str, requested: Option<&str>) -> Result<String, String> {
+    /// Give `imsi` a number: `requested` (which must be free and, once the carrier holds
+    /// blocks, in one of them unless `ported` in from another carrier) or the next free one.
+    /// Returns the number.
+    pub fn assign_number(&mut self, imsi: &str, requested: Option<&str>, ported: bool) -> Result<String, String> {
         if !self.subs.contains_key(imsi) {
             return Err(format!("no subscriber {}", imsi));
         }
@@ -540,11 +578,21 @@ impl Db {
                         return Err(format!("{} already belongs to {}", r, other));
                     }
                 }
+                let ours = self.block_of(r).is_some();
+                if ported && ours {
+                    return Err(format!("{} is in this carrier's block {}: it is not ported in", r, self.block_of(r).unwrap_or("")));
+                }
+                if !ported && !ours && !self.blocks.is_empty() {
+                    return Err(format!("{} is outside this carrier's blocks (add 'ported' for a number ported in)", r));
+                }
                 r.to_string()
             }
+            None if ported => return Err("a ported number must be given".into()),
             None => self.next_free_number().ok_or_else(|| if self.blocks.is_empty() { "no number block configured (cored block add NPA-NXX)".to_string() } else { "every number in the blocks is taken".to_string() })?,
         };
-        self.subs.get_mut(imsi).expect("checked").ims.msisdn = n.clone();
+        let p = &mut self.subs.get_mut(imsi).expect("checked").ims;
+        p.msisdn = n.clone();
+        p.ported = ported;
         Ok(n)
     }
 
@@ -556,7 +604,7 @@ impl Db {
         let need: Vec<String> = self.subs.iter().filter(|(_, s)| s.ims.msisdn.is_empty()).map(|(i, _)| i.clone()).collect();
         let mut n = 0;
         for imsi in need {
-            if self.assign_number(&imsi, None).is_ok() {
+            if self.assign_number(&imsi, None, false).is_ok() {
                 n += 1;
             }
         }
@@ -657,7 +705,7 @@ mod tests {
         // the next free number starts at line 0100
         assert_eq!(db.fill_numbers(), 1);
         assert_eq!(db.subs["310150000000002"].ims.msisdn, "+12145550100");
-        assert!(db.assign_number("310150000000002", Some("+12145550142")).is_err(), "taken");
+        assert!(db.assign_number("310150000000002", Some("+12145550142"), false).is_err(), "taken");
         assert_eq!(db.ims_address_for("310150000000001"), Some([10, 250, 0, 2]));
         assert_eq!(db.ims_address_for("310150000000002"), Some([10, 250, 0, 3]));
         let again = Db::parse(&db.to_text()).unwrap();
@@ -674,7 +722,38 @@ mod tests {
         assert!(Db::parse(&dup).unwrap_err().msg.contains("two subscribers"));
         let mut none = Db::parse(SAMPLE).unwrap();
         assert_eq!(none.fill_numbers(), 0);
-        assert!(none.assign_number("310150000000001", None).unwrap_err().contains("no number block"));
+        assert!(none.assign_number("310150000000001", None, false).unwrap_err().contains("no number block"));
         assert_eq!(none.ims_address_for("310150000000001"), None);
+    }
+
+    #[test]
+    fn enum_key_and_ported_numbers() {
+        let head = SAMPLE.split("site site-a").next().unwrap();
+        let text = format!(
+            "{}block 214-555\nenum key=000102030405060708090a0b0c0d0e0f\n\
+             sub 310150000000001 key=00112233445566778899aabbccddeeff msisdn=+19725550123 ported=1 port=3fa2c1-b843a26d\n\
+             sub 310150000000002 key=00112233445566778899aabbccddeeff\n",
+            head
+        );
+        let mut db = Db::parse(&text).unwrap();
+        assert_eq!(db.enum_key, Some([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
+        assert!(db.subs["310150000000001"].ims.ported);
+        assert_eq!(Db::parse(&db.to_text()).unwrap(), db, "round trip");
+        assert!(db.to_text().contains("enum key=000102030405060708090a0b0c0d0e0f\n"));
+        assert!(db.to_text().contains(" ported=1"));
+        for bad in ["enum key=00", "enum 000102030405060708090a0b0c0d0e0f"] {
+            assert!(Db::parse(&format!("{}{}\n", text, bad)).is_err(), "{}", bad);
+        }
+        // a number outside the blocks only when ported in, one inside never
+        let b = "310150000000002";
+        assert!(db.assign_number(b, Some("+13125550100"), false).unwrap_err().contains("outside"));
+        assert!(db.assign_number(b, Some("+12145550100"), true).unwrap_err().contains("not ported in"));
+        assert!(db.assign_number(b, None, true).is_err());
+        assert_eq!(db.assign_number(b, Some("+13125550100"), true).as_deref(), Ok("+13125550100"));
+        assert!(db.subs[b].ims.ported);
+        assert_eq!(db.assign_number(b, Some("+12145550100"), false).as_deref(), Ok("+12145550100"));
+        assert!(!db.subs[b].ims.ported);
+        // the code ianad checks (ecm_dns::numbering shares this vector)
+        assert_eq!(port_code(&db.enum_key.unwrap(), "+12145550142", "3fa2c1"), "3fa2c1-b843a26d");
     }
 }

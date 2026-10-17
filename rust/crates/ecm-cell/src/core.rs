@@ -929,7 +929,10 @@ impl Core {
     /// `list`, `sites`, `sessions`, `add <imsi> <key-hex> [quota]`, `revoke <imsi>`,
     /// `unrevoke <imsi>`, `quota <imsi> <bytes>`, `reset-usage <imsi>`,
     /// `site-add <id> <secret-hex>`, `site-remove <id>`, `release <imsi>`, `remove <imsi>`,
-    /// `label <imsi> <label>`; `add` takes an optional label after the quota.
+    /// `label <imsi> <label>`; `add` takes an optional label after the quota. Telephony:
+    /// `block-add`, `block-remove`, `blocks`, `numbers`, `number <who> [+number [ported]]`,
+    /// `number-release`, `number-move`, `feature`, `enum-key <hex>`, `port-code <who> [code]`
+    /// (no code: one signed with the enum key, which the subscriber takes to the new carrier).
     pub fn admin(&mut self, line: &str, now: u64) -> Result<String, String> {
         let w: Vec<&str> = line.split_whitespace().collect();
         let need_sub = |db: &Db, imsi: &str| -> Result<(), String> {
@@ -1098,15 +1101,17 @@ impl Core {
                 }
                 return Ok(s);
             }
-            ["number", who] | ["number", who, _] => {
+            ["number", who] | ["number", who, _] | ["number", who, _, "ported"] => {
                 let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
-                let n = self.db.assign_number(&imsi, w.get(2).copied())?;
-                format!("{} number {}", imsi, n)
+                let ported = w.len() == 4;
+                let n = self.db.assign_number(&imsi, w.get(2).copied(), ported)?;
+                format!("{} number {}{}", imsi, n, if ported { " (ported in)" } else { "" })
             }
             ["number-release", who] => {
                 let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
                 let u = self.db.subs.get_mut(&imsi).expect("found");
                 let old = core::mem::take(&mut u.ims.msisdn);
+                u.ims.ported = false;
                 if old.is_empty() {
                     return Err(format!("{} has no number", imsi));
                 }
@@ -1118,8 +1123,12 @@ impl Core {
                 if !self.db.subs[&to].ims.msisdn.is_empty() {
                     return Err(format!("{} already has {}", to, self.db.subs[&to].ims.msisdn));
                 }
-                self.db.subs.get_mut(&from).expect("found").ims.msisdn.clear();
-                self.db.subs.get_mut(&to).expect("found").ims.msisdn = (*num).into();
+                let f = &mut self.db.subs.get_mut(&from).expect("found").ims;
+                f.msisdn.clear();
+                let ported = core::mem::take(&mut f.ported);
+                let t = &mut self.db.subs.get_mut(&to).expect("found").ims;
+                t.msisdn = (*num).into();
+                t.ported = ported;
                 format!("{} moved from {} to {}", num, from, to)
             }
             ["feature", who, key, value] => {
@@ -1180,11 +1189,31 @@ impl Core {
             }
             ["port-code", who, code] => {
                 let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
-                if code.len() < 4 || code.len() > 16 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                    return Err("a port-out code is 4-16 letters and digits".into());
+                if !crate::db::valid_port_code(code) {
+                    return Err("a port-out code is 4-16 letters, digits and '-'".into());
                 }
                 self.db.subs.get_mut(&imsi).expect("found").ims.port = (*code).into();
                 format!("{} port-out code set", imsi)
+            }
+            ["port-code", who] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                let key = self.db.enum_key.ok_or("no enum key (cored enum-key <hex>, the key IANA issued with the block)")?;
+                let p = &self.db.subs[&imsi].ims;
+                if p.msisdn.is_empty() {
+                    return Err(format!("{} has no number", imsi));
+                }
+                if p.ported || self.db.block_of(&p.msisdn).is_none() {
+                    return Err(format!("{} is not in this carrier's blocks: its block's holder issues its port-out codes", p.msisdn));
+                }
+                let number = p.msisdn.clone();
+                let nonce = hex(&self.random::<3>());
+                let code = crate::db::port_code(&key, &number, &nonce);
+                self.db.subs.get_mut(&imsi).expect("found").ims.port = code.clone();
+                format!("{} port-out code for {} is {}", imsi, number, code)
+            }
+            ["enum-key", k] => {
+                self.db.enum_key = Some(crate::codec::unhex::<16>(k).ok_or("the enum key is 32 hex digits")?);
+                "enum key set (port-out codes are signed with it)".to_string()
             }
             _ => return Err(format!("unknown command '{}'", line.trim())),
         };
@@ -1195,14 +1224,19 @@ impl Core {
 
     // ------------------------------------------------------------ IMS (HSS + PCRF)
 
-    /// The subscriber behind an IMSI or a number (`+1...`).
+    /// The subscriber behind an IMSI, a number (`+1...`) or a label only one subscriber has.
     pub fn imsi_of(&self, who: &str) -> Option<String> {
         if who.starts_with('+') {
             self.db.by_number(who).map(|s| s.into())
         } else if self.db.subs.contains_key(who) {
             Some(who.into())
         } else {
-            None
+            // a label, when exactly one subscriber has it
+            let mut it = self.db.subs.iter().filter(|(_, s)| !s.label.is_empty() && s.label == who);
+            match (it.next(), it.next()) {
+                (Some((imsi, _)), None) => Some(imsi.clone()),
+                _ => None,
+            }
         }
     }
 

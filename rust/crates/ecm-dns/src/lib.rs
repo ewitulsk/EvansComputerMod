@@ -13,6 +13,7 @@
 //! * [`conf`], [`server`]: `named`.
 //! * [`registry`], [`registrar`], [`iana`]: who may put what in which zone.
 //! * [`enum_dns`]: ENUM (RFC 6116) names for phone numbers and the NAPTR rewrite to SIP.
+//! * [`numbering`]: IANA as numbering administrator: number blocks, ports, `e164.arpa`.
 
 pub mod auth;
 pub mod cache;
@@ -20,6 +21,7 @@ pub mod conf;
 pub mod enum_dns;
 pub mod iana;
 pub mod name;
+pub mod numbering;
 pub mod registrar;
 pub mod registrar_web;
 pub mod registry;

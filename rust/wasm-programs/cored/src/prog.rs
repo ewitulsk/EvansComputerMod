@@ -28,9 +28,10 @@ fn usage() -> ! {
     println!("       cored add <imsi> <key> [quota] | revoke <imsi> | unrevoke <imsi> | quota <imsi> <bytes>");
     println!("       cored remove <imsi> | label <imsi> <label> | release <imsi> | reset-usage <imsi>");
     println!("       cored block add <NPA-NXX> | block remove <NPA-NXX> | blocks");
-    println!("       cored numbers | number <imsi|label> [+number] | number release <who> | number move <+number> <who>");
+    println!("       cored numbers | number <imsi|label> [+number [ported]] | number release <who> | number move <+number> <who>");
+    println!("       cored enum-key <hex> | port-code <who> [code]");
     println!("       cored ims pool=<cidr> [pcscf=<ip>] [domain=<d>] [net=<cidr>] [mmsc=<ip>] | ims off");
-    println!("       cored feature <who> <cfu|cfb|cfnr|cfnrc|cw|clir|dnd|vm|block|unblock> <value> | port-code <who> <code>");
+    println!("       cored feature <who> <cfu|cfb|cfnr|cfnrc|cw|clir|dnd|vm|block|unblock> <value>");
     println!("       cored config | config set <key> <value>... | config keys");
     println!("       cored enable | disable");
     std::process::exit(2);
@@ -219,6 +220,9 @@ pub fn main() {
         ["number", "move", num, who] => print_or_fail(command(&format!("number-move {num} {}", who_imsi(who)))),
         ["number", who] => print_or_fail(command(&format!("number {}", who_imsi(who)))),
         ["number", who, num] => print_or_fail(command(&format!("number {} {num}", who_imsi(who)))),
+        ["number", who, num, "ported"] => print_or_fail(command(&format!("number {} {num} ported", who_imsi(who)))),
+        ["enum-key", k] => print_or_fail(command(&format!("enum-key {k}"))),
+        ["port-code", who] => print_or_fail(command(&format!("port-code {}", who_imsi(who)))),
         ["ims", "off"] => print_or_fail(command("ims-off")),
         ["ims", rest @ ..] if !rest.is_empty() => print_or_fail(command(&format!("ims {}", rest.join(" ")))),
         ["feature", who, k, v] => print_or_fail(command(&format!("feature {} {k} {v}", who_imsi(who)))),

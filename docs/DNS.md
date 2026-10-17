@@ -342,6 +342,58 @@ The other two ways real life has work too:
 * **Local zone**: a resolver answers a private TLD itself (`zone home primary
   /etc/named/home.zone` on a home router or your own resolver), without asking the root.
 
+## ENUM: number blocks and porting
+
+IANA is also the numbering administrator, as NANPA is: `ianad` hands carriers blocks of
+10,000 numbers (one NPA-NXX, written `+1214555`) and publishes who serves each number under
+`e164.arpa` (`ecm_dns::numbering`; how imsd uses it: [TELEPHONY.md](TELEPHONY.md)).
+
+**How the zone is reached.** `ianad` keeps `e164.arpa` in the same `named` as the root
+zone. When it starts (and on every change) it adds `zone e164.arpa primary
+/etc/named/e164.arpa.zone` to `/etc/named.conf` and `e164.arpa. NS iana.ring.` to the root
+zone if they are missing, then has named reload; the root letters get the delegation by
+NOTIFY + AXFR. A resolver anywhere asks a root letter, is referred to `iana.ring` (no glue:
+it looks `iana.ring` up in `ring.`), and asks IANA's named. `enum-ns` in `/etc/ianad.conf`
+names the nameserver if IANA's computer is called something else.
+
+**A block.** The carrier publishes its SIP border first (`_sip._udp.<domain>` SRV, or at
+least the domain's A record), then applies:
+
+```text
+domain enum apply +1214555 cell-red.ecm
+```
+
+`ianad` checks the block (NANP: NPA and NXX start 2-9 and are not N11; not held yet) and that
+the SRV or the A record resolves, grants it and writes one NAPTR at the block's name:
+
+```text
+5.5.5.4.1.2.1.e164.arpa. 300 IN NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:\\1@cell-red.ecm!" .
+```
+
+The reply carries the domain's ENUM key (32 hex digits), shown once. The carrier stores it in
+`cored enum-key <hex>`. A domain's next blocks need the key: `domain enum apply +1214556
+cell-red.ecm <key>`.
+
+**A port.** The subscriber asks the losing carrier for a port-out code (`cored port-code
+<who>`): `<nonce>-<mac>`, 6 and 8 hex digits, the mac the first 8 hex digits of
+HMAC-SHA256(block key, `ECM-PORT` || number || nonce). The gaining carrier gives the number
+its new SIM (`cored number <who> +12145550142 ported`) and asks IANA:
+
+```text
+domain enum port +12145550142 cell-blue.ecm 3fa2c1-b843a26d <cell-blue's key>
+```
+
+`ianad` checks the key is the one it issued to `cell-blue.ecm`, the mac against the key of
+the number's block, and that the code was not used before, then writes a NAPTR at the
+number's own name (`2.4.1.0.5.5.5.4.1.2.1.e164.arpa`) that overrides the block's. Lookups ask
+the number's name first, then the block's (`ecm_tel_net::sys::enum_lookup`). Porting back to
+the block's holder removes the override. Codes always come from the block's holder, so a
+ported-in number's carrier cannot issue one.
+
+`domain enum list` (or `ianad enum` at the console) lists blocks and ports; an operator takes
+a block back with `ianad enum-revoke +1214555` (its ports go too). The database lines are
+`enum-key`, `enum-block`, `enum-port` and `enum-used` in `/etc/ianad.db`.
+
 ## Provisioning
 
 `PROVISION_VERSION` 6 (`WorldNetwork`) adds the computers above, with their `named.conf`,

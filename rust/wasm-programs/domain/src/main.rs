@@ -1,4 +1,5 @@
-//! domain: your names at the registrar and your TLD at IANA (docs/DNS.md).
+//! domain: your names at the registrar, your TLD and your number blocks at IANA
+//! (docs/DNS.md).
 //!
 //! ```text
 //! domain account create HANDLE PASSWORD     make an account (and log in)
@@ -12,6 +13,9 @@
 //! domain show NAME.ecm | domain list | domain delete NAME.ecm
 //! domain tld apply base ns1.base=10.200.0.53 ns2.base=10.201.0.53
 //! domain tld show base | domain tld list | domain tld revoke base
+//! domain enum apply +1214555 cell-red.ecm [KEY]        a number block for a SIP domain
+//! domain enum port +12145550142 cell-blue.ecm CODE KEY  repoint a number (port-in)
+//! domain enum list
 //! ```
 //! Options: `--registrar URL` (default http://nic.ring/), `--iana URL` (http://iana.ring/),
 //! `--handle H --password P` instead of the saved login.
@@ -29,6 +33,7 @@ fn usage() {
     println!("       domain ns NAME.ecm NS[=ADDRESS]... | --hosted");
     println!("       domain list");
     println!("       domain tld apply TLD NS[=ADDRESS]... | show TLD | list | revoke TLD");
+    println!("       domain enum apply BLOCK SIP-DOMAIN [KEY] | port NUMBER SIP-DOMAIN CODE KEY | list");
     println!("Options: --registrar URL (http://nic.ring/), --iana URL (http://iana.ring/), --handle H --password P");
 }
 
@@ -137,6 +142,10 @@ fn main() {
         ["tld", "show", t] => post(&iana, &[("op", "show"), ("tld", t)]),
         ["tld", "list"] => post(&iana, &[("op", "list")]),
         ["tld", "revoke", t] => post(&iana, &[("op", "revoke"), ("tld", t), auth[0], auth[1]]),
+        ["enum", "apply", b, d] => post(&iana, &[("op", "enum-apply"), ("block", b), ("domain", d)]),
+        ["enum", "apply", b, d, k] => post(&iana, &[("op", "enum-apply"), ("block", b), ("domain", d), ("key", k)]),
+        ["enum", "port", n, d, code, k] => post(&iana, &[("op", "enum-port"), ("number", n), ("domain", d), ("code", code), ("key", k)]),
+        ["enum", "list"] => post(&iana, &[("op", "enum-list")]),
         _ => {
             usage();
             1
