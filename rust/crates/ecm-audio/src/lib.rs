@@ -221,6 +221,12 @@ impl Device {
     pub fn stat(&mut self, key: &str) -> io::Result<Option<i64>> {
         Ok(self.status()?.into_iter().find(|(k, _)| k == key).map(|(_, v)| v))
     }
+
+    /// When a sample written now would play, on the display clock (microseconds, the clock of
+    /// `ecm_ui` `now_us` and `CommitAt`): the end of what is queued, or now when idle.
+    pub fn next_pts_us(&mut self) -> Option<i64> {
+        self.stat("pts_us").ok().flatten()
+    }
 }
 
 /// An open microphone: the capture side.

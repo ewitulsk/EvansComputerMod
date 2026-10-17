@@ -281,6 +281,19 @@ public final class AudioStream {
         return (long) rate * latencyMs / 1000;
     }
 
+    /**
+     * When a sample written now would play, on the display clock ({@code DisplayClock},
+     * microseconds; {@code ui.now_us} in programs): the end of what is queued, or now when the
+     * stream is idle. A program pacing pictures to its sound commits them at this clock.
+     */
+    public long nextPtsUs() {
+        synchronized (card) {
+            long now = System.nanoTime();
+            long t = written > played(now) ? timeOf(written) : now;
+            return com.example.evanscomputermod.computer.pipeline.DisplayClock.ofNanoTime(t);
+        }
+    }
+
     /** Wall time (nanos) at which sample {@code index} plays. */
     long timeOf(long index) {
         return anchorNanos + (index - anchorIndex) * 1_000_000_000L / rate;
@@ -424,9 +437,9 @@ public final class AudioStream {
     public String status() {
         synchronized (card) {
             return String.format(Locale.ROOT,
-                    "rate %d\nbits %d\nchannels %d\nvolume %d\nlatency %d\nbuffered_ms %d\nunderruns %d\nrole %s\nducked %d\n",
+                    "rate %d\nbits %d\nchannels %d\nvolume %d\nlatency %d\nbuffered_ms %d\nunderruns %d\nrole %s\nducked %d\npts_us %d\n",
                     rate, bits, channels, volume, latencyMs, (int) ((written - played(System.nanoTime())) * 1000 / rate), underruns,
-                    role.id(), ducked ? 1 : 0);
+                    role.id(), ducked ? 1 : 0, nextPtsUs());
         }
     }
 

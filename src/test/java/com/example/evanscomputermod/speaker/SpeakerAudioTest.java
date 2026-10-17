@@ -211,6 +211,9 @@ class SpeakerAudioTest {
         music.setLatencyMs(1000);
         music.write(constant(1600, 3000), 0, 3200, false); // 200 ms
         long before = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        // /dev/audioctl's pts_us: a sample written now plays after the 200 ms queued.
+        long next = Long.parseLong(music.status().lines().filter(l -> l.startsWith("pts_us ")).findFirst().orElseThrow().substring(7));
+        assertTrue(next - before > 150_000 && next - before < 260_000, "pts_us " + (next - before) + " us ahead");
         assertTrue(a.drain().length > 0);
         assertFalse(a.lastDrainLive(), "music alone is not live");
         long pts = a.lastDrainPtsUs();
