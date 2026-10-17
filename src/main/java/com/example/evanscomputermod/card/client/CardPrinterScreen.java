@@ -25,8 +25,8 @@ public class CardPrinterScreen extends AbstractContainerScreen<CardPrinterMenu> 
     public CardPrinterScreen(CardPrinterMenu menu, Inventory inv, Component title) {
         super(menu, inv, title);
         imageWidth = 212;
-        imageHeight = 166;
-        inventoryLabelY = imageHeight - 94;
+        imageHeight = CardPrinterMenu.INV_Y + 82;
+        inventoryLabelY = CardPrinterMenu.INV_Y - 11;
     }
 
     @Override
@@ -35,7 +35,7 @@ public class CardPrinterScreen extends AbstractContainerScreen<CardPrinterMenu> 
         autoEject = CycleButton.<Boolean>builder(v -> Component.literal(v ? "true" : "false"))
                 .withValues(false, true)
                 .withInitialValue(menu.autoEject())
-                .create(leftPos + 62, topPos + 54, 144, 16, Component.translatable("gui.evanscomputermod.card_printer.auto_eject"),
+                .create(leftPos + 62, topPos + 76, 144, 16, Component.translatable("gui.evanscomputermod.card_printer.auto_eject"),
                         (b, v) -> Minecraft.getInstance().gameMode.handleInventoryButtonClick(menu.containerId,
                                 v ? CardPrinterMenu.BUTTON_AUTO_EJECT_TRUE : CardPrinterMenu.BUTTON_AUTO_EJECT_FALSE));
         addRenderableWidget(autoEject);
@@ -53,6 +53,7 @@ public class CardPrinterScreen extends AbstractContainerScreen<CardPrinterMenu> 
         g.fill(x, y, x + imageWidth, y + imageHeight, EDGE);
         g.fill(x + 1, y + 1, x + imageWidth - 1, y + imageHeight - 1, BG);
         g.fill(x + 6, y + 14, x + 56, y + 74, PANEL);
+        g.fill(x + 60, y + 56, x + imageWidth - 6, y + 72, PANEL);
         for (Slot s : menu.slots) {
             g.fill(x + s.x - 1, y + s.y - 1, x + s.x + 17, y + s.y + 17, EDGE);
             g.fill(x + s.x, y + s.y, x + s.x + 16, y + s.y + 16, SLOT);
@@ -68,7 +69,7 @@ public class CardPrinterScreen extends AbstractContainerScreen<CardPrinterMenu> 
         g.drawString(font, title, titleLabelX, titleLabelY, TEXT, false);
         g.drawString(font, playerInventoryTitle, inventoryLabelX, inventoryLabelY, DIM, false);
         String state = menu.progress() >= 0 ? "printing" : menu.kindOut() != null ? "done" : menu.kindIn() != null ? "ready" : "empty";
-        g.drawString(font, Component.translatable("gui.evanscomputermod.card_printer.state." + state), 62, 40,
+        g.drawString(font, Component.translatable("gui.evanscomputermod.card_printer.state." + state), 64, 60,
                 "done".equals(state) ? GOOD : TEXT, false);
     }
 

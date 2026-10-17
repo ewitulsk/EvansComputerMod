@@ -225,12 +225,8 @@
   "block.evanscomputermod.nfc_reader": "NFC Reader",
   "gui.evanscomputermod.card_printer.auto_eject": "Auto Eject",
   "gui.evanscomputermod.card_printer.state.empty": "No card",
-  "gui.evanscomputermod.card_printer.state.ready": "Card ready: a program prints it",
+  "gui.evanscomputermod.card_printer.state.ready": "Card loaded: a program prints it",
   "gui.evanscomputermod.card_printer.state.printing": "Printing...",
   "gui.evanscomputermod.card_printer.state.done": "Printed card waiting",
-  "message.evanscomputermod.card_printer.occupied": "The printer already holds a card",
-  "message.evanscomputermod.card_printer.inserted": "Card loaded",
-  "message.evanscomputermod.card_printer.dye_added": "%s dye added",
-  "message.evanscomputermod.card_printer.dye_full": "That dye slot is full",
   "message.evanscomputermod.card.stripe_scrambled": "Your cards' magnetic stripes were scrambled by the field!"
 }

@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
  *   y=2  computer (0,2,0)  device (1,2,0)  chest (2,2,0)      floor x -1..4, z -2..5
  * </pre>
  * <ul>
- *   <li>{@code card_print}: a blank bank card and dyes clicked into a Card Printer; the bank.card design typed in;
+ *   <li>{@code card_print}: a blank bank card and dyes shift-clicked into a Card Printer's screen; the bank.card design typed in;
  *       {@code cardtool print bank.card} paints it (dyes consumed, the printed card lands in the chest with those
  *       faces, fields and stripe); control: a second blank with the red dye gone is refused with {@code no_dye:red}.</li>
  *   <li>{@code card_bank}: a blank bank card in the Card Reader/Writer; {@code cardtool bank write} personalises
@@ -100,17 +100,14 @@ public final class CardSystemScenarios {
                 }))
                 .note("The design: bank.card (typed in from Python; the Card Designer app saves the same file)");
         PlayerKit.typeBundledFile(b, "pc", "/bank.card", "/evanscomputermod/scenarios/bank.card");
-        return b.note("Open the printer (right-click it empty-handed), set Auto Eject to true; click dyes and a blank bank card in")
+        return b.note("Open the printer (right-click it), set Auto Eject to true; shift-click dyes and a blank bank card into its slots")
                 .mutate(r -> setPrinterAutoEject(r, true), "printer screen: Auto Eject = true")
                 .mutate(r -> {
-                    useOnDevice(r, new ItemStack(Items.WHITE_DYE, 2));
-                    useOnDevice(r, new ItemStack(Items.RED_DYE, 1));
-                    useOnDevice(r, new ItemStack(Items.BLUE_DYE, 2));
-                    useOnDevice(r, new ItemStack(Items.BLACK_DYE, 2));
-                    useOnDevice(r, new ItemStack(CardContent.BANK_CARD.get()));
+                    loadPrinter(r, new ItemStack(Items.WHITE_DYE, 2), new ItemStack(Items.RED_DYE, 1), new ItemStack(Items.BLUE_DYE, 2),
+                            new ItemStack(Items.BLACK_DYE, 2), new ItemStack(CardContent.BANK_CARD.get()));
                     CardPrinterBlockEntity be = printer(r);
                     if (be == null || be.cardIn().isEmpty() || be.dyes().size() != 4) throw new IllegalStateException("the printer took no card / dyes: " + (be == null ? "-" : be.dyes()));
-                }, "right-click the printer with 2 white, 1 red, 2 blue and 2 black dye, then a blank bank card")
+                }, "in the printer's screen: 2 white, 1 red, 2 blue and 2 black dye, then a blank bank card, shift-clicked in")
                 .send("pc", "cardtool cost bank.card")
                 .expect("pc", "^dyes: .*red.*", "the design costs white, red, blue and black dye")
                 .expect("pc", PROMPT, "cardtool finished")
@@ -119,7 +116,7 @@ public final class CardSystemScenarios {
                 .expect("pc", PROMPT, "cardtool finished")
                 .await(CardSystemScenarios::printedCardInChest, "the printed card is in the chest with the design's faces, fields and stripe; the dyes were spent", 5_000)
                 .note("Control: the red dye is gone, so the same design can't be printed on a second blank")
-                .mutate(r -> useOnDevice(r, new ItemStack(CardContent.BANK_CARD.get())), "a second blank bank card clicked in")
+                .mutate(r -> loadPrinter(r, new ItemStack(CardContent.BANK_CARD.get())), "a second blank bank card shift-clicked in")
                 .send("pc", "cardtool print bank.card")
                 .expectOrFail("pc", "^cardtool: .*no_dye:red", "refused: no_dye:red", "^printed$")
                 .expect("pc", PROMPT, "cardtool finished")
@@ -141,6 +138,20 @@ public final class CardSystemScenarios {
 
     static List<String> useOnDevice(ScenarioRun r, ItemStack held) {
         return r.player().use(held, r.abs(DEVICE), Direction.NORTH, false);
+    }
+
+    /** Open the printer's screen and shift-click each stack from the hotbar into its slots (dye to its colour, a card to the input). */
+    static void loadPrinter(ScenarioRun r, ItemStack... stacks) {
+        var p = r.player().entity();
+        if (r.player().openMenu(r.abs(DEVICE), Direction.NORTH, false) == null) throw new IllegalStateException("the printer screen did not open");
+        int hotbar0 = p.containerMenu.slots.size() - 9;
+        for (int i = 0; i < stacks.length; i++) {
+            p.getInventory().setItem(1 + i, stacks[i]);
+            r.player().shiftClick(hotbar0 + 1 + i);
+            if (!p.getInventory().getItem(1 + i).isEmpty()) throw new IllegalStateException("the printer did not take " + stacks[i]);
+        }
+        p.closeContainer();
+        p.getInventory().clearContent();
     }
 
     static List<ItemStack> contents(ScenarioRun r, BlockPos rel) {

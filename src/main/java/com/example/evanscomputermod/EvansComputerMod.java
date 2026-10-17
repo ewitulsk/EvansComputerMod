@@ -54,6 +54,8 @@ public class EvansComputerMod {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.GuiServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("phone"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.PhoneServerChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("cards"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.CardsServerChecks::tick);
         else
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
         //?}
@@ -146,6 +148,7 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.ScreenServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.GuiServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.PhoneServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.CardsServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
         com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());

@@ -159,20 +159,6 @@ public class CardPrinterBlockEntity extends BlockEntity implements MenuProvider 
 
     // ------------------------------------------------------------ hands and automation
 
-    /** A card or dye from a player's hand; returns what wasn't taken. */
-    ItemStack insertByHand(ItemStack stack) {
-        if (CardItem.isCard(stack)) return cardIn().isEmpty() && !printing() ? slots.insertItem(SLOT_IN, stack, false) : stack;
-        if (stack.getItem() instanceof DyeItem d) return slots.insertItem(SLOT_DYE0 + d.getDyeColor().ordinal(), stack, false);
-        return stack;
-    }
-
-    /** The printed card, else the unprinted one (not while printing), else EMPTY. */
-    ItemStack takeByHand() {
-        if (!cardOut().isEmpty()) return slots.extractItem(SLOT_OUT, 1, false);
-        if (!cardIn().isEmpty() && !printing()) return slots.extractItem(SLOT_IN, 1, false);
-        return ItemStack.EMPTY;
-    }
-
     List<ItemStack> drops() {
         List<ItemStack> l = new ArrayList<>();
         for (int i = 0; i < SLOTS; i++) {

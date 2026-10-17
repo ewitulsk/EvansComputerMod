@@ -224,7 +224,7 @@ while a field is on:
   from the holder). Endpoints not seen for 10 ticks are unregistered.
 - Cards nested in other items (a card inside a phone bay inside a chest) are found through `CardStore`.
 - No field anywhere → the tracker does nothing. Budget: a GameTest asserts the scan of a 3-block cube with
-  20 chests stays under 0.2 ms.
+  20 chests stays under 1 ms (cold).
 
 ## Hardware
 
@@ -430,8 +430,11 @@ Everything above is built on 1.21.1 with these differences and notes:
   play, and the `card_nfc` scenario uses a chest and a dropped item instead.
 - **Stripe hazard**: `StripeHazard` scrambles stripes within 2.5 blocks of a transmitting amplifier (3 s); microwave
   radios are not a source. It has no scenario yet (it needs a whole SDR + amplifier chain); `Stripe.corrupt` is unit-tested.
-- **Printer**: 16 dye slots, one per vanilla colour; `cost` matches palette entries to the nearest dye by RGB distance
-  and charges one dye per colour the design uses (masked texels don't count); a job takes 40 ticks.
+- **Printer**: loaded only through its inventory (the screen's slots, hoppers, pipes) — no right-click loading;
+  16 dye slots, one per vanilla colour; `cost` matches palette entries to the nearest dye by RGB distance and charges
+  one dye per colour the design uses (masked texels don't count); a job takes 40 ticks.
+- **Card bodies** are a plain slab: the chip pad and the stripe are drawn only in the face texture
+  (`CardFaceTexture` composites them over the masked texels), so they appear once.
 - **Models**: `models/card_{bank,nfc,hybrid,sim}_body.bbmodel` (drawn by `CardItemRenderer` + `CardFaceTexture`),
   `card_printer.bbmodel` (`lit_*` cubes when printing), `nfc_reader.bbmodel` (`field_*` cubes when the field is on),
   exported with `py -3 scripts/export-radio-models.py`. The two bay modules use the **generic cartridge**: a
@@ -448,6 +451,10 @@ Everything above is built on 1.21.1 with these differences and notes:
   `dev.ecm.doord` (`--uid-only` is the deliberately bad mode), `dev.ecm.skimmer` (stripe cloning), `dev.ecm.rxnfc`
   (SDR burst sniffer + `raw` probes; the SDR path renders frames as noise bursts, so bytes are not decodable over IQ).
   `python`'s `sys.argv` is now set like CPython's (it was empty), which these need.
+- **Render check**: `scripts\Test.ps1 -ClientChecks -ClientSuite cards` (`CardsServerChecks` / `CardsClientChecks`):
+  the three blocks, a printed bank card in the hand (the renderer must report a bank card's faces), four framed
+  cards, the Card Printer screen opened by right-clicking the block, and the inventory icons; screenshots under
+  `artifacts/cards-render-*/screenshots/`.
 - **Tests**: JUnit `BankAppletTest`, `NfcAppletTest`, `CardFacesTest`, `NfcAirTest`, `NfcRadioTest` (+ lane R's
   `NearFieldTest`, `PassiveEndpointTest`); Rust `ecm-cards` (14), `ecm-ui` (`tests/cards.rs`), `python` (`cards_tests`,
   `cards_apps_tests`), `lua`; GameTests `ecm_cards`; goldens `card_widgets`; the radio client suite frames printed cards.

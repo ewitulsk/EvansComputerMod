@@ -36,15 +36,17 @@ the walkthrough.
 | NFC Module | `ICI / IRI` | a bay module (Terminal or ePhone) |
 
 Blocks go **against a side of a Terminal** like any peripheral; `peripherals` on the computer lists them
-(`card_reader`, `card_printer`, `nfc_reader`). Right-click a reader or printer with a card to put it in, with an
-empty hand to take it out, sneak-right-click (or empty) to open the screen (the Auto Eject toggle).
+(`card_reader`, `card_printer`, `nfc_reader`). Right-click a reader with a card to put it in, with an empty hand to
+take it out, sneak-right-click (or empty) to open its screen. The **printer is inventory-only**: right-click opens
+its screen (card in, card out, sixteen dye slots, one per colour); hoppers and pipes feed the sides and top and
+pull from below.
 
 ## 2. Print a card
 
 Option A, the **Card Designer** app (on any Terminal desktop / App Store → Installed): New → pick the kind, paint
 the front and back (the chip pad and stripe rows are locked), set the palette with the colour picker, fill in
-name / number / issuer, the stripe tracks for bank cards, Save. Put dyes and a blank card in a Card Printer next
-to the computer and press **Print**: it shows the dye cost, prints, and the card appears in the printer's output
+name / number / issuer, the stripe tracks for bank cards, Save. Open the Card Printer next to the computer and
+put dyes and a blank card in its slots, then press **Print**: it shows the dye cost, prints, and the card appears in the printer's output
 slot (or is pushed into an adjacent chest with Auto Eject on).
 
 Option B, the shell, with a design file (the Designer saves the same format under

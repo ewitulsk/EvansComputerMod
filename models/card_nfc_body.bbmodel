@@ -1,1 +1,253 @@
-{"meta":{"format_version":"5.0","model_format":"java_block","box_uv":false},"name":"card_nfc_body","parent":"","java_block_version":"1.21.11","ambientocclusion":true,"front_gui_light":false,"visible_box":[1,1,0],"variable_placeholders":"","variable_placeholder_buttons":[],"unhandled_root_fields":{},"ai_used":true,"ai_agents":"claude-code","resolution":{"width":16,"height":16},"elements":[{"name":"card","box_uv":false,"render_order":"default","rescale":false,"locked":false,"shade":true,"light_emission":0,"allow_mirror_modeling":true,"from":[1,3.625,7.75],"to":[15,12.375,8.25],"autouv":0,"color":6,"origin":[0,0,0],"faces":{"north":{"uv":[0,0,8,8],"texture":0},"east":{"uv":[0,12,0.5,16],"texture":0},"south":{"uv":[0,0,8,8],"texture":0},"west":{"uv":[0,12,0.5,16],"texture":0},"up":{"uv":[0,12,16,12.5],"texture":0},"down":{"uv":[0,12,16,12.5],"texture":0}},"type":"cube","uuid":"81142746-e1f1-f0c3-efb8-fd19dd14cc3a"}],"groups":[],"outliner":["81142746-e1f1-f0c3-efb8-fd19dd14cc3a"],"textures":[{"name":"card_body","path":"C:\\Users\\evanw\\AppData\\Local\\Temp\\claude-cards\\card_body.png","folder":"","namespace":"","id":"0","group":"","width":16,"height":16,"uv_width":16,"uv_height":16,"particle":false,"use_as_default":false,"layers_enabled":false,"sync_to_project":"","render_mode":"default","render_sides":"auto","pbr_channel":"color","frame_time":1,"frame_order_type":"loop","frame_order":"","frame_interpolate":false,"visible":true,"internal":true,"saved":true,"uuid":"a12555bd-ee1c-682d-8e9b-106ed63148da","source":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAXElEQVR4nGP88vHVfwY84ME+Xzj7yfPvDDKSnCjyTAwUAqYBN4CFkAKQv/HxWQgZgBxogzMQGaWl5f9T5AJeXn44hxw2I8UuYKAQMK5aNo8iF7DIyclR5IKBTwcAx/IYg6+ybIAAAAAASUVORK5CYII="}],"display":{"thirdperson_righthand":{"rotation":[60,-180,0],"translation":[0,2,1],"scale":[0.55,0.55,0.55]},"thirdperson_lefthand":{"rotation":[60,-180,0],"translation":[0,2,1],"scale":[0.55,0.55,0.55]},"firstperson_righthand":{"rotation":[-10,160,0],"translation":[-1,5,-1],"scale":[0.8,0.8,0.8]},"firstperson_lefthand":{"rotation":[-10,160,0],"translation":[-1,5,-1],"scale":[0.8,0.8,0.8]},"ground":{"rotation":[90,0,0],"translation":[0,1,0],"scale":[0.5,0.5,0.5]},"gui":{"rotation":[0,-180,0],"scale":[1.1,1.1,1.1]},"fixed":{"rotation":[0,-180,0]}}}
+{
+  "meta": {
+    "format_version": "5.0",
+    "model_format": "java_block",
+    "box_uv": false
+  },
+  "name": "card_nfc_body",
+  "parent": "",
+  "java_block_version": "1.21.11",
+  "ambientocclusion": true,
+  "front_gui_light": false,
+  "visible_box": [
+    1,
+    1,
+    0
+  ],
+  "variable_placeholders": "",
+  "variable_placeholder_buttons": [],
+  "unhandled_root_fields": {},
+  "ai_used": true,
+  "ai_agents": "claude-code",
+  "resolution": {
+    "width": 16,
+    "height": 16
+  },
+  "elements": [
+    {
+      "name": "card",
+      "box_uv": false,
+      "render_order": "default",
+      "rescale": false,
+      "locked": false,
+      "shade": true,
+      "light_emission": 0,
+      "allow_mirror_modeling": true,
+      "from": [
+        1,
+        3.625,
+        7.75
+      ],
+      "to": [
+        15,
+        12.375,
+        8.25
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            8,
+            8
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            0,
+            12,
+            0.5,
+            16
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            8,
+            8
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            0,
+            12,
+            0.5,
+            16
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            0,
+            12,
+            16,
+            12.5
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            0,
+            12,
+            16,
+            12.5
+          ],
+          "texture": 0
+        }
+      },
+      "type": "cube",
+      "uuid": "81142746-e1f1-f0c3-efb8-fd19dd14cc3a"
+    }
+  ],
+  "groups": [],
+  "outliner": [
+    "81142746-e1f1-f0c3-efb8-fd19dd14cc3a"
+  ],
+  "textures": [
+    {
+      "name": "card_body",
+      "path": "C:\\Users\\evanw\\AppData\\Local\\Temp\\claude-cards\\card_body.png",
+      "folder": "",
+      "namespace": "",
+      "id": "0",
+      "group": "",
+      "width": 16,
+      "height": 16,
+      "uv_width": 16,
+      "uv_height": 16,
+      "particle": false,
+      "use_as_default": false,
+      "layers_enabled": false,
+      "sync_to_project": "",
+      "render_mode": "default",
+      "render_sides": "auto",
+      "pbr_channel": "color",
+      "frame_time": 1,
+      "frame_order_type": "loop",
+      "frame_order": "",
+      "frame_interpolate": false,
+      "visible": true,
+      "internal": true,
+      "saved": true,
+      "uuid": "a12555bd-ee1c-682d-8e9b-106ed63148da",
+      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAXElEQVR4nGP88vHVfwY84ME+Xzj7yfPvDDKSnCjyTAwUAqYBN4CFkAKQv/HxWQgZgBxogzMQGaWl5f9T5AJeXn44hxw2I8UuYKAQMK5aNo8iF7DIyclR5IKBTwcAx/IYg6+ybIAAAAAASUVORK5CYII="
+    }
+  ],
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [
+        60,
+        -180,
+        0
+      ],
+      "translation": [
+        0,
+        2,
+        1
+      ],
+      "scale": [
+        0.55,
+        0.55,
+        0.55
+      ]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [
+        60,
+        -180,
+        0
+      ],
+      "translation": [
+        0,
+        2,
+        1
+      ],
+      "scale": [
+        0.55,
+        0.55,
+        0.55
+      ]
+    },
+    "firstperson_righthand": {
+      "rotation": [
+        -10,
+        160,
+        0
+      ],
+      "translation": [
+        -1,
+        5,
+        -1
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "firstperson_lefthand": {
+      "rotation": [
+        -10,
+        160,
+        0
+      ],
+      "translation": [
+        -1,
+        5,
+        -1
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "ground": {
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        1,
+        0
+      ],
+      "scale": [
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "gui": {
+      "rotation": [
+        0,
+        -180,
+        0
+      ],
+      "scale": [
+        1.1,
+        1.1,
+        1.1
+      ]
+    },
+    "fixed": {
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

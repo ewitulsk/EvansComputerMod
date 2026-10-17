@@ -36,6 +36,8 @@ public final class CardClient {
             for (CardKind k : CardKind.values()) e.register(CardItemRenderer.BODIES.get(k));
         });
         NeoForge.EVENT_BUS.addListener((RenderFrameEvent.Post e) -> CardFaceTexture.endFrame());
+        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("cards"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.CardsClientChecks::tick);
     }
 
     private static Item[] cardItems() {

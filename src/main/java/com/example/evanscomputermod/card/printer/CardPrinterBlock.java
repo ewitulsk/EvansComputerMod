@@ -2,16 +2,13 @@ package com.example.evanscomputermod.card.printer;
 
 //? if <=1.21.1 {
 import com.example.evanscomputermod.card.CardContent;
-import com.example.evanscomputermod.card.CardItem;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.DyeItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
@@ -31,9 +28,9 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Card Printer (docs/cards/CARDS.md): paints a card's faces, prints its fields and
- * encodes its stripe, consuming dye; a graphics device only. Right-click with a card to
- * feed it, with dye to fill a dye slot, with an empty hand to take the printed card (or
- * open the screen). Hoppers and pipes insert on the sides and top and extract below.
+ * encodes its stripe, consuming dye; a graphics device only. It is loaded only through its
+ * inventory: right-click opens the screen (a card slot, the output slot, sixteen dye slots);
+ * hoppers and pipes insert on the sides and top and extract below.
  * The computer next to it drives it as the {@code card_printer} peripheral.
  */
 public class CardPrinterBlock extends BaseEntityBlock {
@@ -87,40 +84,18 @@ public class CardPrinterBlock extends BaseEntityBlock {
         return level.isClientSide() ? null : createTickerHelper(type, CardContent.CARD_PRINTER_BE.get(), CardPrinterBlockEntity::serverTick);
     }
 
-    @Override
-    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player,
-                                              InteractionHand hand, BlockHitResult hit) {
-        boolean card = CardItem.isCard(stack), dye = stack.getItem() instanceof DyeItem;
-        if (!card && !dye || !(level.getBlockEntity(pos) instanceof CardPrinterBlockEntity be))
-            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
-        if (!level.isClientSide()) {
-            ItemStack rest = be.insertByHand(stack.copy());
-            int taken = stack.getCount() - rest.getCount();
-            if (taken == 0) {
-                player.displayClientMessage(Component.translatable(card ? "message.evanscomputermod.card_printer.occupied"
-                        : "message.evanscomputermod.card_printer.dye_full"), true);
-            } else {
-                if (!player.getAbilities().instabuild) stack.shrink(taken);
-                player.displayClientMessage(Component.translatable(card ? "message.evanscomputermod.card_printer.inserted"
-                        : "message.evanscomputermod.card_printer.dye_added", taken), true);
-            }
-        }
-        return ItemInteractionResult.sidedSuccess(level.isClientSide());
-    }
-
+    /** Right-click opens the screen; cards and dye go in through its slots (or hoppers and pipes), never by hand. */
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (!(level.getBlockEntity(pos) instanceof CardPrinterBlockEntity be)) return InteractionResult.PASS;
-        if (!level.isClientSide()) {
-            ItemStack out = player.isShiftKeyDown() ? ItemStack.EMPTY : be.takeByHand();
-            if (!out.isEmpty()) {
-                if (!player.getInventory().add(out)) player.drop(out, false);
-                player.displayClientMessage(Component.translatable("message.evanscomputermod.card_reader.taken"), true);
-            } else {
-                player.openMenu(be);
-            }
-        }
+        if (!level.isClientSide()) player.openMenu(be);
         return InteractionResult.sidedSuccess(level.isClientSide());
+    }
+
+    @Override
+    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player,
+                                              InteractionHand hand, BlockHitResult hit) {
+        return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
     }
 
     @Override

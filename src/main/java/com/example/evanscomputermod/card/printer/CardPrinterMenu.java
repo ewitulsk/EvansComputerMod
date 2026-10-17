@@ -23,6 +23,8 @@ import org.jetbrains.annotations.Nullable;
 public class CardPrinterMenu extends AbstractContainerMenu {
     public static final int BUTTON_AUTO_EJECT_FALSE = 0, BUTTON_AUTO_EJECT_TRUE = 1;
     public static final int IN_X = 26, IN_Y = 20, OUT_X = 26, OUT_Y = 50, DYE_X = 62, DYE_Y = 17;
+    /** The player's inventory starts below the printer's own rows. */
+    public static final int INV_Y = 108;
 
     private final @Nullable CardPrinterBlockEntity be;
     private final ContainerData data;
@@ -68,8 +70,8 @@ public class CardPrinterMenu extends AbstractContainerMenu {
             });
         }
         for (int row = 0; row < 3; row++)
-            for (int col = 0; col < 9; col++) addSlot(new Slot(inv, col + row * 9 + 9, 8 + col * 18, 84 + row * 18));
-        for (int col = 0; col < 9; col++) addSlot(new Slot(inv, col, 8 + col * 18, 142));
+            for (int col = 0; col < 9; col++) addSlot(new Slot(inv, col + row * 9 + 9, 8 + col * 18, INV_Y + row * 18));
+        for (int col = 0; col < 9; col++) addSlot(new Slot(inv, col, 8 + col * 18, INV_Y + 58));
         addDataSlots(data);
     }
 
