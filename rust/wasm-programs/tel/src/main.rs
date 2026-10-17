@@ -52,6 +52,9 @@ fn main() {
                     if c.muted { "  muted" } else { "" },
                     if c.merged { "  3-way" } else { "" }
                 );
+                if c.state == "active" || c.rx + c.tx > 0 {
+                    println!("    voice in {} out {} packets", c.rx, c.tx);
+                }
             }
         }
     };

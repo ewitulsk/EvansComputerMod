@@ -136,6 +136,8 @@ fn run(wait: bool) {
         }
         let afds = admin.fds();
         fds.extend(&afds);
+        // connections accepted below have no entry in `ready` until the next round
+        let polled = bots.len();
         let ready = sys::readable(&fds, 10);
         let now = ms();
         if ready[0] {
@@ -152,7 +154,7 @@ fn run(wait: bool) {
         }
         let mut gone = Vec::new();
         for (i, b) in bots.iter_mut().enumerate() {
-            if !ready[2 + i] {
+            if i >= polled || !ready[2 + i] {
                 continue;
             }
             match sys::read_now(b.fd, &mut buf) {

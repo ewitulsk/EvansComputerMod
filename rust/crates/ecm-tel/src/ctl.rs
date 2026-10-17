@@ -136,12 +136,15 @@ pub struct CallLine {
     pub codec: String,
     pub loss: f32,
     pub merged: bool,
+    /// Voice packets received and sent on this call (RTP).
+    pub rx: u64,
+    pub tx: u64,
 }
 
 impl CallLine {
     pub fn line(&self) -> String {
         format!(
-            "call {} {} {} {} {} {} {} {} {} {:.1} {}",
+"call {} {} {} {} {} {} {} {} {} {:.1} {} {} {}",
             self.id,
             self.state,
             enc(&self.number),
@@ -152,12 +155,15 @@ impl CallLine {
             self.hd as u8,
             enc(&self.codec),
             self.loss,
-            self.merged as u8
+            self.merged as u8,
+            self.rx,
+            self.tx
         )
     }
     pub fn parse(l: &str) -> Option<CallLine> {
         let w: Vec<&str> = l.split_whitespace().collect();
-        if w.len() != 12 || w[0] != "call" {
+        // (12 fields before the voice packet counters were added)
+        if (w.len() != 12 && w.len() != 14) || w[0] != "call" {
             return None;
         }
         Some(CallLine {
@@ -172,6 +178,8 @@ impl CallLine {
             codec: dec(w[9]),
             loss: w[10].parse().unwrap_or(0.0),
             merged: w[11] == "1",
+            rx: w.get(12).and_then(|v| v.parse().ok()).unwrap_or(0),
+            tx: w.get(13).and_then(|v| v.parse().ok()).unwrap_or(0),
         })
     }
 }
@@ -290,8 +298,12 @@ mod tests {
         let e = Event::new("sms", &[("from", "+12145550142"), ("text", "hi there")]);
         assert_eq!(Event::parse(&e.line()), Some(e.clone()));
         assert_eq!(e.get("text"), "hi there");
-        let c = CallLine { id: 3, state: "active".into(), number: "+12145550143".into(), hd: true, codec: "ADPCM-WB".into(), seconds: 12, ..Default::default() };
-        assert_eq!(CallLine::parse(&c.line()), Some(c));
+        let c = CallLine { id: 3, state: "active".into(), number: "+12145550143".into(), hd: true, codec: "ADPCM-WB".into(), seconds: 12, rx: 600, tx: 598, ..Default::default() };
+        assert_eq!(CallLine::parse(&c.line()), Some(c.clone()));
+        // a line without the packet counters still parses
+        let full = c.line();
+        let old = full.rsplitn(3, ' ').nth(2).unwrap();
+        assert_eq!(CallLine::parse(old), Some(CallLine { rx: 0, tx: 0, ..c }));
         let m = MsgLine { id: 9, incoming: true, from: "+1".into(), time_ms: 5, status: "failed:the phone is off".into(), mms: true, text: "a b".into(), files: vec!["/home/Messages/9/p.png".into()] };
         assert_eq!(MsgLine::parse(&m.line()), Some(m));
         let t = ThreadLine { key: "+12145550143,+12145550144".into(), unread: 2, time_ms: 7, preview: "pizza?".into() };
