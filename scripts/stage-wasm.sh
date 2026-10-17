@@ -64,11 +64,11 @@ done
 
 ls wasm-bin/*.wasm | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
 
-# The Tech Village repository's package (docs/TECH_VILLAGE_NETWORK.md "Apps"): Chat packed
-# from the staged chatapp.wasm the way `chatapp --source` + `pkg build` do, natively (debug
+# The Tech Village repository's package (docs/TECH_VILLAGE_NETWORK.md "Apps"): Discord packed
+# from the staged discord.wasm the way `discord --source` + `pkg build` do, natively (debug
 # profile: a native release link of ecm-host-abi misses the host imports).
-if [ -f wasm-bin/chatapp.wasm ]; then
-    (cd rust && cargo run --quiet -p chatapp --example village_repo -- ../wasm-bin/chatapp.wasm ../wasm-bin/repo) ||
+if [ -f wasm-bin/discord.wasm ]; then
+    (cd rust && cargo run --quiet -p discord --example village_repo -- ../wasm-bin/discord.wasm ../wasm-bin/repo) ||
         { echo "error: the Tech Village repository package failed to build"; exit 1; }
 fi
 echo "Staged kernel + $ok programs into wasm-bin/ ($missing missing); manifest updated."

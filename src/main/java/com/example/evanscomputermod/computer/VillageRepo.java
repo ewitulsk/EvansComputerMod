@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 /**
  * The Tech Village package repository (docs/TECH_VILLAGE_NETWORK.md "Apps"): a computer in the
  * chat village's Data Center runs {@code pkg serve /srv/repo 8080} over a real repository, the
- * Chat app's package (built with the mod by {@code scripts/stage-wasm.sh}: {@code chatapp
+ * Discord app's package (built with the mod by {@code scripts/stage-wasm.sh}: {@code discord
  * --source} + {@code pkg build}, run natively) signed with this world's repository key, an
  * ed25519 key derived from the seed. Every generated village computer and every Phone Store
  * phone has the repository in {@code /etc/pkg/repos} with that key pinned, so the App Store

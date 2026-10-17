@@ -419,7 +419,7 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
     /**
      * Public system configuration every app may read (never write), like world-readable files in a
      * Unix /etc: nothing secret, only what a computer tells its programs about the place it is in.
-     * {@code /etc/chat.conf}: the Tech Village chat server, which prefills Chat's connect form.
+     * {@code /etc/chat.conf}: the Tech Village Discord backend, which Discord connects to as it opens.
      */
     public static final Set<String> PUBLIC_CONFIG = Set.of("/etc/chat.conf");
 

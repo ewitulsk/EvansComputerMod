@@ -367,6 +367,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bluetoothctl"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "bstr"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,27 +543,6 @@ dependencies = [
 
 [[package]]
 name = "chat"
-version = "0.1.0"
-dependencies = [
- "ecm-chat",
- "ecm-disco",
- "ecm-host-abi",
-]
-
-[[package]]
-name = "chatapp"
-version = "0.1.0"
-dependencies = [
- "ecm-chat",
- "ecm-disco",
- "ecm-host-abi",
- "ecm-ui",
- "ecm-ui-proto",
- "pkg",
-]
-
-[[package]]
-name = "chatd"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
@@ -1126,6 +1112,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "discord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-chat",
+ "ecm-disco",
+ "ecm-discord",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "pkg",
+]
+
+[[package]]
+name = "discordd"
+version = "0.1.0"
+dependencies = [
+ "ecm-disco",
+ "ecm-discord",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "domain"
 version = "0.1.0"
 dependencies = [
@@ -1221,6 +1230,14 @@ name = "ecm-disco"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "ecm-discord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-chat",
 ]
 
 [[package]]

@@ -45,6 +45,8 @@ public class UiGoldenTest {
             "settings_apps", "settings_apps_compact", "settings_apps_wide",
             // Cellular v2 phase 3: Settings -> Cellular with celld's status at medium and compact.
             "settings_cellular", "settings_cellular_compact",
+            // Bluetooth: Settings -> Bluetooth with AirPods connected and another pair in pairing mode.
+            "settings_bluetooth",
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
             // P4: the App Store at compact / medium / wide (record_store_sessions in ecm-apps-ui), picker, chooser.
@@ -53,8 +55,9 @@ public class UiGoldenTest {
             "visual_program",
             // The GBA app (record_gba_sessions in gba-app): ROM list, key settings (phone-shaped), a game with GAMES (Terminal).
             "gba_games", "gba_playing",
-            // Chat (dev.ecm.chat, record_chat_sessions in chatapp): compact on a phone display, medium, wide.
-            "chat_compact", "chat_medium", "chat_wide",
+            // Discord (dev.ecm.discord, record_discord_sessions in discord): the phone's server list and
+            // #general, then medium and wide with the rail, channels, voice talkers and members.
+            "discord_compact", "discord_medium", "discord_wide",
             // Cellular v2 operator apps (record_cell_sessions in ecm-cell-ui): Cell Site and Carrier Console at three sizes.
             "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");

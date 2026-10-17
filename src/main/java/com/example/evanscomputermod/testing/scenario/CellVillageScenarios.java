@@ -422,7 +422,7 @@ public final class CellVillageScenarios {
      */
     /** Chat's "On the network" entry for the ring's chat server: what the ISP routers answer (VillageDiscovery.ispConf). */
     static String foundChat(ScenarioRun r) {
-        return com.example.evanscomputermod.computer.VillageDiscovery.CHAT_NAME + " · " + WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage()) + ":" + WorldNetwork.CHAT_PORT;
+        return com.example.evanscomputermod.computer.VillageDiscovery.DISCORD_NAME + " · " + WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage()) + ":" + WorldNetwork.CHAT_PORT;
     }
 
     static void appStoreChat(Scenario.Builder b) {

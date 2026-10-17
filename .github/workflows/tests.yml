@@ -41,10 +41,10 @@ jobs:
           cargo build --release --target wasm32-unknown-unknown -p terminal-os
           cargo build --release --target wasm32-wasip1 --workspace --exclude terminal-os --exclude terminal-simulator --exclude ecm-net --exclude ecm-bridge --exclude ecm-host-abi || true
 
-      # The Tech Village repository's Chat package, built the way scripts/stage-wasm.sh
+      # The Tech Village repository's Discord package, built the way scripts/stage-wasm.sh
       # does (VillageRepoTest and the jar read it from wasm-bin/repo/).
       - name: Tech Village app repository
-        run: cargo run --quiet -p chatapp --example village_repo -- target/wasm32-wasip1/release/chatapp.wasm ../wasm-bin/repo
+        run: cargo run --quiet -p discord --example village_repo -- target/wasm32-wasip1/release/discord.wasm ../wasm-bin/repo
 
       - name: Kernel ABI matches abi/host-abi.toml
         working-directory: .

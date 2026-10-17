@@ -164,6 +164,40 @@ pub struct SoundDevice {
     pub volume: i64,
 }
 
+/// A Bluetooth device: paired with this computer, or heard advertising nearby.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BtDevice {
+    /// `AC:DE:48:00:11:22`.
+    pub address: String,
+    pub name: String,
+    pub paired: bool,
+    pub connected: bool,
+    /// A connection is being made.
+    pub connecting: bool,
+    /// In pairing mode (an AirPods case with its lid open).
+    pub pairable: bool,
+    pub rssi_dbm: Option<i64>,
+    pub battery: Option<i64>,
+}
+
+/// The computer's Bluetooth radio (an ePhone's `bluetooth` peripheral).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BtState {
+    /// There is a Bluetooth radio at all.
+    pub present: bool,
+    pub powered: bool,
+    pub name: String,
+    pub address: String,
+    /// Where the sound goes: `headphones` or `speaker`.
+    pub audio: String,
+    /// How the last pair / connect went.
+    pub last: String,
+    /// Paired devices.
+    pub devices: Vec<BtDevice>,
+    /// Devices nearby that can be paired (not paired yet).
+    pub nearby: Vec<BtDevice>,
+}
+
 /// Everything an app needs from the computer.
 pub trait Sys {
     /// Where `/` is (the computer's disk; a temp dir in tests).
@@ -205,6 +239,14 @@ pub trait Sys {
     }
     /// Stop reading microphones for [`mic_level`](Self::mic_level).
     fn mic_level_stop(&mut self) {}
+    /// The Bluetooth radio, its paired devices and what is nearby (`present: false` without one).
+    fn bluetooth(&mut self) -> BtState {
+        BtState::default()
+    }
+    /// `pair`, `connect`, `forget` (with an address), `disconnect`, `power on`, `power off`.
+    fn bt_command(&mut self, _cmd: &str, _address: &str) -> Result<(), String> {
+        Err("This computer has no Bluetooth radio.".into())
+    }
 }
 
 // ------------------------------------------------------------------ files
@@ -622,6 +664,68 @@ mod host {
         fn mic_level_stop(&mut self) {
             METERS.with(|m| m.borrow_mut().clear());
         }
+
+        fn bluetooth(&mut self) -> BtState {
+            let Ok(st) = peripheral::call("bluetooth", "status", &[]) else { return BtState::default() };
+            let int = |m: &Value, k: &str| match get(m, k) {
+                Some(Value::Int(i)) => Some(*i),
+                Some(Value::Float(f)) => Some(*f as i64),
+                _ => None,
+            };
+            let flag = |m: &Value, k: &str| matches!(get(m, k), Some(Value::Bool(true)));
+            let mut out = BtState {
+                present: true,
+                powered: flag(&st, "powered"),
+                name: text(&st, "name"),
+                address: text(&st, "address"),
+                audio: text(&st, "audio"),
+                last: text(&st, "last"),
+                ..Default::default()
+            };
+            if let Ok(Value::List(devs)) = peripheral::call("bluetooth", "devices", &[]) {
+                for d in &devs {
+                    out.devices.push(BtDevice {
+                        address: text(d, "address"),
+                        name: text(d, "name"),
+                        paired: true,
+                        connected: flag(d, "connected"),
+                        connecting: flag(d, "connecting"),
+                        battery: int(d, "battery"),
+                        ..Default::default()
+                    });
+                }
+            }
+            if let Ok(Value::List(seen)) = peripheral::call("bluetooth", "scan", &[]) {
+                for d in &seen {
+                    if flag(d, "paired") {
+                        continue;
+                    }
+                    out.nearby.push(BtDevice {
+                        address: text(d, "address"),
+                        name: text(d, "name"),
+                        pairable: flag(d, "pairable"),
+                        rssi_dbm: int(d, "rssi_dbm"),
+                        battery: int(d, "battery"),
+                        ..Default::default()
+                    });
+                }
+            }
+            out
+        }
+
+        fn bt_command(&mut self, cmd: &str, address: &str) -> Result<(), String> {
+            let (method, args) = match cmd {
+                "power on" => ("set_powered", vec![Value::Bool(true)]),
+                "power off" => ("set_powered", vec![Value::Bool(false)]),
+                "disconnect" => ("disconnect", vec![]),
+                m => (m, vec![Value::Str(address.to_string())]),
+            };
+            peripheral::call("bluetooth", method, &args).map(|_| ()).map_err(|e| match e {
+                peripheral::Error::Peripheral(m) => m,
+                peripheral::Error::Unavailable => "This computer has no Bluetooth radio.".into(),
+                peripheral::Error::Malformed(m) => m.to_string(),
+            })
+        }
     }
 }
 
@@ -650,6 +754,8 @@ pub struct MockState {
     pub sound: Vec<SoundDevice>,
     /// What each microphone hears (dBFS) for the level meter.
     pub mic_levels: Vec<(String, i32)>,
+    /// The Bluetooth radio.
+    pub bluetooth: BtState,
 }
 
 #[derive(Clone, Default)]
@@ -781,6 +887,46 @@ impl Sys for MockSys {
     }
     fn mic_level(&mut self, name: &str) -> Option<i32> {
         self.state.borrow().mic_levels.iter().find(|(n, _)| n == name).map(|(_, l)| *l)
+    }
+    fn bluetooth(&mut self) -> BtState {
+        self.state.borrow().bluetooth.clone()
+    }
+    fn bt_command(&mut self, cmd: &str, address: &str) -> Result<(), String> {
+        let mut s = self.state.borrow_mut();
+        s.log.push(format!("bt {cmd} {address}").trim_end().to_string());
+        if !s.bluetooth.present {
+            return Err("This computer has no Bluetooth radio.".into());
+        }
+        let bt = &mut s.bluetooth;
+        match cmd {
+            "power on" | "power off" => bt.powered = cmd == "power on",
+            "pair" => {
+                let i = bt.nearby.iter().position(|d| d.address == address).ok_or("not in range: open its case lid next to the phone")?;
+                let mut d = bt.nearby.remove(i);
+                if !d.pairable {
+                    bt.nearby.insert(i, d);
+                    return Err("it isn't in pairing mode: open its case lid".into());
+                }
+                d.paired = true;
+                d.connected = true;
+                bt.devices.push(d);
+                bt.audio = "headphones".into();
+                bt.last = "connected".into();
+            }
+            "connect" => {
+                let d = bt.devices.iter_mut().find(|d| d.address == address).ok_or("not paired")?;
+                d.connected = true;
+            }
+            "disconnect" => {
+                for d in bt.devices.iter_mut() {
+                    d.connected = false;
+                }
+                bt.audio = "speaker".into();
+            }
+            "forget" => bt.devices.retain(|d| d.address != address),
+            _ => return Err(format!("unknown command {cmd}")),
+        }
+        Ok(())
     }
 }
 
