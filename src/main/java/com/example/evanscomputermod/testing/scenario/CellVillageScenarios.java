@@ -477,11 +477,19 @@ public final class CellVillageScenarios {
             return why;
         }, "Discord connects to the ring's backend it found (over LTE through the core and the ISP): the Tech Village server", 30_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "# general"), "tap # general", 10_000);
+        b.await(r -> CellPhoneScenarios.chatShows(r, "Message #general"), "#general is open", 10_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
         b.mutate(r -> PhoneGuiScenarios.type(r, "/nick " + CHAT_NICK), "type /nick " + CHAT_NICK);
+        b.await(r -> CellPhoneScenarios.chatShows(r, "/nick " + CHAT_NICK), "the composer shows it", 5_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Send"), "tap Send", 5_000);
+        b.await(r -> {
+            int k = WorldNetwork.get(r.level()).chatVillage();
+            String scr = infraScreen(r, k, WorldNetwork.CHAT);
+            return scr.contains("is now " + CHAT_NICK) ? null : "Discord backend (village " + k + "):\n" + scr;
+        }, "the backend: the phone is " + CHAT_NICK + " now", 15_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
         b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_HELLO), "type \"" + CHAT_HELLO + "\"");
+        b.await(r -> CellPhoneScenarios.chatShows(r, CHAT_HELLO), "the composer shows it", 5_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Send"), "tap Send", 5_000);
         b.await(r -> {
             int k = WorldNetwork.get(r.level()).chatVillage();
