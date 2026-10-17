@@ -558,6 +558,7 @@ fn dhcp_over_packet_socket_leases_to_the_kernel_client() {
         prefix: 24,
         router: Some(server),
         dns: Some(Ipv4Addr::new(10, 0, 0, 53)),
+        domain: Some("lab.test".into()),
         lease_secs: 3600,
     };
     let mut db = LeaseDb::new();

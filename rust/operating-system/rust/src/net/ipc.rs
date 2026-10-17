@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use ecm_net::types::{Ipv4Addr, NetError, SocketAddr};
-use ecm_net::{DnsHandle, DnsStatus, SocketHandle, Stack, TcpState};
+use ecm_net::{resolv, DnsHandle, DnsRequest, DnsStatus, SocketHandle, Stack, TcpState};
 
 pub const IPC_PENDING: i32 = -11;
 
@@ -41,6 +41,14 @@ const SOCK_GETSOCKNAME: i32 = 12;
 const SOCK_GETPEERNAME: i32 = 13;
 const SOCK_SHUTDOWN: i32 = 14;
 const SOCK_POLL: i32 = 15;
+
+/// `getaddrinfo` failures (`ecm_host_abi::socket::GaiError`): the name does not exist,
+/// no DNS server answered, the servers answered with failures (SERVFAIL/REFUSED), no
+/// DNS server is configured.
+pub const GAI_NONAME: i32 = -2;
+pub const GAI_AGAIN: i32 = -3;
+pub const GAI_FAIL: i32 = -4;
+pub const GAI_NO_SERVER: i32 = -5;
 pub const SOCK_DESTROY_SESSION: i32 = 99;
 
 const AF_INET: i32 = 2;
@@ -881,9 +889,6 @@ fn op_getaddrinfo(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now
     if let Some(ip) = Ipv4Addr::parse(name) {
         return answer(ip, out);
     }
-    if name.eq_ignore_ascii_case("localhost") {
-        return answer(Ipv4Addr::new(127, 0, 0, 1), out);
-    }
     // Continue an in-flight query, or start one.
     let existing = match &sess.pending {
         Some(p) if p.syscall == SOCK_GETADDRINFO => p.dns,
@@ -891,7 +896,30 @@ fn op_getaddrinfo(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now
     };
     let q = match existing {
         Some(q) => q,
-        None => match stack.dns_query(name, now) {
+        None => {
+            // /etc/hosts first (it has localhost), then the servers of /etc/resolv.conf
+            // (or the configured server and DHCP domain when there is no such file).
+            let hosts = crate::fs::read_to_string(resolv::HOSTS).unwrap_or_else(|| resolv::DEFAULT_HOSTS.into());
+            if let Some(ip) = resolv::hosts_lookup(&hosts, name) {
+                return answer(ip, out);
+            }
+            if name.eq_ignore_ascii_case("localhost") {
+                return answer(Ipv4Addr::new(127, 0, 0, 1), out);
+            }
+            let conf = match crate::fs::read_to_string(resolv::RESOLV_CONF) {
+                Some(t) => resolv::ResolvConf::parse(&t),
+                None => resolv::ResolvConf {
+                    nameservers: Vec::new(),
+                    search: [stack.dns_domain()].iter().filter(|d| !d.is_empty()).map(|d| d.to_string()).collect(),
+                    ndots: 1,
+                },
+            };
+            let mut servers = conf.nameservers.clone();
+            if servers.is_empty() && !stack.dns_server().is_unspecified() {
+                servers.push(stack.dns_server());
+            }
+            let req = DnsRequest { name: name.to_string(), candidates: conf.candidates(name), servers };
+            match stack.dns_query_with(req, now) {
             Ok(q) => {
                 sess.pending = Some(Pending {
                     syscall: SOCK_GETADDRINFO,
@@ -902,12 +930,17 @@ fn op_getaddrinfo(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now
                 });
                 q
             }
+            Err(NetError::NotConfigured) => return out.status(GAI_NO_SERVER),
             Err(_) => return out.status(-1),
-        },
+            }
+        }
     };
     match stack.dns_poll(q) {
         DnsStatus::Pending => IPC_PENDING,
         DnsStatus::Resolved(ip) => answer(ip, out),
+        DnsStatus::Failed(NetError::NotFound) => out.status(GAI_NONAME),
+        DnsStatus::Failed(NetError::TimedOut | NetError::HostUnreachable | NetError::NoRoute) => out.status(GAI_AGAIN),
+        DnsStatus::Failed(NetError::ConnectionRefused) => out.status(GAI_FAIL),
         DnsStatus::Failed(_) => out.status(-1),
     }
 }

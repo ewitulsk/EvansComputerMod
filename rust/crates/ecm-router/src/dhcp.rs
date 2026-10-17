@@ -15,6 +15,8 @@ pub struct Pool {
     pub end: Ipv4Addr,
     pub router: Ipv4Addr,
     pub dns: Ipv4Addr,
+    /// `domain-name`: the search domain clients get ("" = none).
+    pub domain: String,
     pub lease_secs: u32,
     pub enabled: bool,
 }
@@ -25,6 +27,7 @@ impl Default for Pool {
             end: Ipv4Addr::ZERO,
             router: Ipv4Addr::ZERO,
             dns: Ipv4Addr::ZERO,
+            domain: String::new(),
             lease_secs: 86400,
             enabled: false,
         }
@@ -80,6 +83,7 @@ impl Server {
             prefix: ROUTER_POOL_PREFIX,
             router: Some(p.router),
             dns: Some(p.dns),
+            domain: (!p.domain.is_empty()).then(|| p.domain.clone()),
             lease_secs: p.lease_secs,
         };
         self.with_db(|db| db.handle(&spec, &[], m, server, now))

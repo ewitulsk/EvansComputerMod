@@ -47,9 +47,12 @@ fn main() {
 
     // Resolve target to IP
     let mut addr = SockAddrIn::default();
-    if socket::getaddrinfo(target, &mut addr) != 0 {
-        eprintln!("ping: unknown host {}", target);
-        std::process::exit(1);
+    match socket::resolve(target) {
+        Ok(ip) => addr.sin_addr = ip,
+        Err(e) => {
+            eprintln!("ping: {}: {}", target, e.describe());
+            std::process::exit(1);
+        }
     }
 
     let ip_str = format!(
