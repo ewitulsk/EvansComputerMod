@@ -300,10 +300,13 @@ public class KernelHostIntegrationTest {
     void vimEditsAFileOnTheRealHost() throws Exception {
         assumeTrue(Files.exists(binDir.resolve("vim.wasm")),
                 "vim not built (WASI_SDK_PATH=... cargo build --release --target wasm32-wasip1 -p vim)");
-        computer.sendInput("vim -u NONE -i NONE notes.txt\n");
+        // ttimeout as defaults.vim sets it: without it Vim waits 'timeoutlen' (1 s)
+        // after Esc, and a Ctrl+C in that second only leaves Insert mode.
+        computer.sendInput("vim -u NONE -i NONE --cmd \"set ttimeout ttimeoutlen=100\" notes.txt\n");
         waitForScreen(s -> s.contains("\"notes.txt\" [New"), 60_000, "vim open");
         computer.sendInput("ihello world\nsecond line\u001b");
         waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("second line")), 30_000, "typed lines");
+        Thread.sleep(500); // the Esc timeout passes, as before a player's next key
         computer.sendInput("\u0003");
         waitForScreen(s -> s.contains("Type  :qa!  and press <Enter>"), 30_000, "Vim's Ctrl+C message");
         computer.requestConsoleResize(80, 25);
