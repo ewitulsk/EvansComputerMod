@@ -83,6 +83,10 @@ pub struct CellState {
     pub roaming: bool,
     /// Cells heard: (text, serving).
     pub cells: Vec<(String, bool)>,
+    /// The phone's number, written `(214) 555-0142` ("" when the network gave none).
+    pub number: String,
+    /// Calls and texts (the IMS bearer, docs/TELEPHONY.md): `VoLTE ready` or why not.
+    pub ims: String,
 }
 
 impl CellState {
@@ -118,6 +122,14 @@ impl CellState {
                 if s.handovers == 1 { "" } else { "s" }
             ),
             roaming: s.roaming,
+            number: ecm_tel::number::E164::parse(&s.msisdn).map(|n| n.display("1")).unwrap_or_else(|| s.msisdn.clone()),
+            ims: if !s.ims_ip.is_empty() {
+                format!("VoLTE ready ({}){}", if s.ims_domain.is_empty() { "IMS" } else { &s.ims_domain }, if s.bearers > 0 { ", in a call" } else { "" })
+            } else if s.on_cell() {
+                "no IMS from this carrier (data only)".into()
+            } else {
+                "-".into()
+            },
             cells: cells
                 .iter()
                 .map(|c| {

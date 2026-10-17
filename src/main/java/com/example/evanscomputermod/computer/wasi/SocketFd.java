@@ -13,6 +13,9 @@ import java.nio.ByteOrder;
  */
 public class SocketFd implements WasiFileDescriptor {
 
+    /** Connected to one of telephonyd's control ports (calls and texts an app sends get confirmed). */
+    public volatile boolean telephony;
+
     // Syscall IDs matching the kernel's net/ipc.rs (and rust/simulator/src/child.rs)
     public static final int SOCK_SOCKET = 0;
     public static final int SOCK_BIND = 1;

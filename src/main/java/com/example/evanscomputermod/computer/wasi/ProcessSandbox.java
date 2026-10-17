@@ -29,6 +29,25 @@ public interface ProcessSandbox {
      */
     boolean checkPath(int pid, String vpath, boolean write);
 
+    /**
+     * A confined app (not a system app) is about to place a call or send a text
+     * through telephonyd: ask the player this once ({@code what} is {@code call:<number>},
+     * {@code sms:<number>} or {@code mms:<numbers>}; docs/TELEPHONY.md). Unconfined pids
+     * and system apps: true. May prompt and block.
+     */
+    default boolean confirm(int pid, String what) {
+        return true;
+    }
+
+    /** telephonyd's control ports (127.0.0.1) and the permission each needs: calls, texts. */
+    static String telephonyPermission(int port) {
+        return switch (port) {
+            case 7720 -> "phone";
+            case 7726 -> "sms";
+            default -> null;
+        };
+    }
+
     /** The permission guarding a peripheral type (UI_PROTOCOL.md §10). */
     static String peripheralPermission(String type) {
         if (type == null) return "peripherals:unknown";

@@ -365,7 +365,7 @@ public final class UiManager implements CompositorHost {
     }
 
     /** {@code %XX} escapes (ecm_tel::ctl's encoding); {@code -} alone is empty. */
-    static String pctDecode(String s) {
+    public static String pctDecode(String s) {
         if (s == null || s.equals("-")) return "";
         java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);

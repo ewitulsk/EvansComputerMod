@@ -1201,6 +1201,15 @@ public class WasiFunctions {
         addEnv(sink, "sock_connect", I32_I32_I32, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             byte[] addr = state.mem().readBytes((int) args[1], Math.min((int) args[2], 16));
+            // telephonyd's control sockets (docs/TELEPHONY.md): calls need "phone", texts "sms"
+            if (addr.length >= 8 && (addr[4] & 0xff) == 127 && (addr[5] & 0xff) == 0 && (addr[6] & 0xff) == 0 && (addr[7] & 0xff) == 1) {
+                int port = (addr[2] & 0xff) << 8 | addr[3] & 0xff;
+                String perm = ProcessSandbox.telephonyPermission(port);
+                if (perm != null) {
+                    if (!allowed(state, perm)) return retI32(EACCES);
+                    sock.telephony = true;
+                }
+            }
             return retI32(bridge.call(sessionId, SocketFd.SOCK_CONNECT, sockArgs(sock, addr)).status);
         });
 
@@ -1231,6 +1240,11 @@ public class WasiFunctions {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             int len = Math.max(0, Math.min((int) args[2], MAX_SEND));
             byte[] data = state.mem().readBytes((int) args[1], len);
+            // a call placed or a text sent through telephonyd by an app: the player confirms it
+            if (sock.telephony && state.sandbox != null) {
+                String what = telephonyAction(data);
+                if (what != null && !state.sandbox.confirm(state.pid, what)) return retI32(EACCES);
+            }
             return retI32(bridge.call(sessionId, SocketFd.SOCK_SEND, SocketFd.sendArgs(sock.getKernelSocketId(), data)).status);
         });
 
@@ -1842,6 +1856,23 @@ public class WasiFunctions {
 
     /** Socket domain of the kernel's radio tunnel (ecm-host-abi tun.rs). */
     private static final int AF_ECM_TUN = 1024;
+
+    /** {@code call:<n>} / {@code sms:<n>} / {@code mms:<n,n>} for a telephonyd request that places a call or sends a message, else null. */
+    static String telephonyAction(byte[] data) {
+        String s = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+        for (String line : s.split("\n")) {
+            String[] w = line.trim().split("\\s+");
+            if (w.length < 2) continue;
+            String to = com.example.evanscomputermod.computer.ui.UiManager.pctDecode(w[1]);
+            switch (w[0]) {
+                case "dial" -> { return "call:" + to; }
+                case "sms" -> { return "sms:" + to; }
+                case "mms" -> { return "mms:" + to; }
+                default -> {}
+            }
+        }
+        return null;
+    }
 
     private static boolean allowed(WasiState state, String permission) {
         return state.sandbox == null || state.sandbox.check(state.pid, permission);

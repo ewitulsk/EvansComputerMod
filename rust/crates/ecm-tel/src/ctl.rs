@@ -34,7 +34,21 @@
 //! `mms id=<id> from=<number> thread=<key> text=<text> files=<a,b>`, `sent id=<id>`, `delivered id=<id>`,
 //! `failed id=<id> why=<text>`, `dtmf call=<id> digit=<d>`, `voicemail waiting=<n>`, `registration state=<s> msisdn=<n>`.
 
+/// Everything (an app needs the `phone` permission to connect).
 pub const PORT: u16 = 7720;
+/// Texts only (`sms`): `status`, `sms`, `mms`, `threads`, `messages`, `read`, `delete`,
+/// `delete-thread`, and `watch` with the message events.
+pub const SMS_PORT: u16 = 7726;
+
+/// Requests the texts-only port takes.
+pub fn sms_port_allows(line: &str) -> bool {
+    matches!(line.split_whitespace().next().unwrap_or(""), "status" | "sms" | "mms" | "threads" | "messages" | "read" | "delete" | "delete-thread" | "watch")
+}
+
+/// Events the texts-only port's watchers get.
+pub fn sms_event(name: &str) -> bool {
+    matches!(name, "sms" | "mms" | "sent" | "delivered" | "failed" | "registration")
+}
 
 /// Percent-encode a text field (space, `%`, controls and non-ASCII).
 pub fn enc(s: &str) -> String {
