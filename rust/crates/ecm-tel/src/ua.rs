@@ -47,11 +47,13 @@ pub struct UaConfig {
     /// Seconds a call rings before the phone gives up on its side (the network sends voicemail first).
     pub ring_timeout_ms: u64,
     pub cc: String,
+    /// This phone downloads MMS (tells the network with `+ecm.mms` on its Contact).
+    pub mms: bool,
 }
 
 impl UaConfig {
     pub fn new(imsi: &str) -> UaConfig {
-        UaConfig { imsi: imsi.into(), sip_port: SIP_PORT, rtp_base: RTP_BASE, wideband: true, expires: 3600, ring_timeout_ms: 60_000, cc: "1".into() }
+        UaConfig { imsi: imsi.into(), sip_port: SIP_PORT, rtp_base: RTP_BASE, wideband: true, expires: 3600, ring_timeout_ms: 60_000, cc: "1".into(), mms: true }
     }
 }
 
@@ -141,6 +143,8 @@ pub enum UaEvent {
     Sms { from: String, text: String, timestamp_ms: u64 },
     /// An MMS is waiting at the MMSC (fetch `location` over HTTP).
     MmsNotice { from: String, location: String, transaction: String, size: u64, subject: String },
+    /// The MMSC says a recipient fetched (or refused) an MMS this phone sent.
+    MmsDelivered { message_id: String, to: String, status: String },
     /// A WAP-push / binary SMS for another port (passed up).
     BinarySms { from: String, port: u16, data: Vec<u8> },
     Voicemail { waiting: u32 },
@@ -173,6 +177,9 @@ struct Media {
     dtmf_tx: Vec<(u64, Vec<u8>)>,
     rx_packets: u64,
     tx_packets: u64,
+    /// The sender's SSRC: a new one (the network switched the far end, e.g. to a
+    /// conference mixer) starts the jitter buffer over.
+    rx_ssrc: Option<u32>,
 }
 
 struct UaCall {
@@ -355,7 +362,8 @@ impl Ua {
         let host = Addr::new(b.ip, 0).host();
         let mut m = d.request(&mut self.rng, Method::Register, &host, self.cfg.sip_port);
         let h = m.headers_mut();
-        h.push("Contact", format!("<sip:{}@{}:{}>;expires={}", self.cfg.imsi, host, self.cfg.sip_port, self.cfg.expires));
+        let caps = if self.cfg.mms { ";+g.3gpp.smsip;+ecm.mms" } else { ";+g.3gpp.smsip" };
+        h.push("Contact", format!("<sip:{}@{}:{}>;expires={}{}", self.cfg.imsi, host, self.cfg.sip_port, self.cfg.expires, caps));
         h.push("Expires", self.cfg.expires.to_string());
         h.push("Supported", "path, gruu");
         h.push("User-Agent", "ECM-telephonyd/1");
@@ -541,6 +549,7 @@ impl Ua {
             dtmf_tx: Vec::new(),
             rx_packets: 0,
             tx_packets: 0,
+            rx_ssrc: None,
         }
     }
 
@@ -990,6 +999,12 @@ impl Ua {
         let Some(p) = RtpPacket::decode(data) else { return };
         let Some(neg) = c.media.neg.clone() else { return };
         c.media.rx_packets += 1;
+        if c.media.rx_ssrc != Some(p.ssrc) {
+            if c.media.rx_ssrc.is_some() {
+                c.media.jitter.reset();
+            }
+            c.media.rx_ssrc = Some(p.ssrc);
+        }
         if Some(p.payload_type) == neg.dtmf_pt {
             if let Some(d) = c.media.dtmf_rx.push(p.timestamp, &p.payload) {
                 let id = c.id;
@@ -1204,6 +1219,19 @@ impl Ua {
                 if let Ok((ct, body)) = crate::mms::wap_push_decode(&data) {
                     if ct.contains("mms-message") {
                         if let Ok(p) = crate::mms::Pdu::decode(&body) {
+                            if p.message_type == crate::mms::MessageType::DeliveryInd {
+                                let to = p.to.first().map(|a| crate::mms::parse_address(a).0.to_string()).unwrap_or_default();
+                                let status = match p.status {
+                                    Some(crate::mms::Status::Retrieved) => "delivered",
+                                    Some(crate::mms::Status::Rejected) => "rejected",
+                                    Some(crate::mms::Status::Expired) => "expired",
+                                    Some(crate::mms::Status::Unreachable) => "unreachable",
+                                    Some(crate::mms::Status::Forwarded) => "forwarded",
+                                    _ => "unknown",
+                                };
+                                self.ev(UaEvent::MmsDelivered { message_id: p.message_id.clone().unwrap_or_default(), to, status: status.into() });
+                                return;
+                            }
                             if p.message_type == crate::mms::MessageType::NotificationInd {
                                 self.ev(UaEvent::MmsNotice {
                                     from: p.from_address().map(|a| crate::mms::parse_address(a).0.to_string()).unwrap_or_else(|| from.clone()),

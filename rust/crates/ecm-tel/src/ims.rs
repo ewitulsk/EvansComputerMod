@@ -126,6 +126,9 @@ pub struct Registration {
     pub imsi: String,
     pub msisdn: String,
     pub contact: Addr,
+    /// The phone fetches MMS itself (`+ecm.mms` on its Contact); without it the
+    /// MMSC sends a text with a link instead.
+    pub mms: bool,
     pub expires_ms: u64,
     /// Calls this phone is in (for busy and call waiting).
     pub calls: usize,
@@ -566,21 +569,25 @@ impl Ims {
             self.log(format!("{} deregistered", msisdn));
             return;
         }
+        let mms = req.headers().get("Contact").is_some_and(|c| c.contains("+ecm.mms"));
         let fresh = !self.regs.contains_key(&msisdn);
         let calls = self.regs.get(&msisdn).map(|r| r.calls).unwrap_or(0);
-        self.regs.insert(msisdn.clone(), Registration { imsi: profile.imsi.clone(), msisdn: msisdn.clone(), contact: c_addr, expires_ms: now + expires as u64 * 1000, calls });
+        self.regs.insert(msisdn.clone(), Registration { imsi: profile.imsi.clone(), msisdn: msisdn.clone(), contact: c_addr, mms, expires_ms: now + expires as u64 * 1000, calls });
         self.log(format!("{} registered at {} ({} s){}", msisdn, c_addr, expires, if fresh { "" } else { ", refreshed" }));
         // stored texts, MMS notifications and voicemail indications go out now
         let mut targets = vec![self.cfg.smsc, self.cfg.mrf];
         if let Some(m) = self.cfg.mmsc {
             targets.push(m);
         }
+        let line = format!("registered {} {} {}", msisdn, c_addr.host(), if mms { "mms" } else { "nomms" });
         for t in targets {
-            self.notify_reg(t, &msisdn, now);
+            self.notify_reg(t, &msisdn, &line, now);
         }
     }
 
-    fn notify_reg(&mut self, to: Addr, msisdn: &str, now: u64) {
+    /// `NOTIFY Event: reg` to smscd / mmscd / mrfd; the body is
+    /// `registered <number> <IMS address> mms|nomms`.
+    fn notify_reg(&mut self, to: Addr, msisdn: &str, line: &str, now: u64) {
         let mut m = Message::request(Method::Notify, Uri::sip(Some("reg"), &to.host(), Some(to.port)));
         let host = self.host();
         let branch = new_branch(self.rng.next());
@@ -594,7 +601,7 @@ impl Ims {
         h.push("CSeq", "1 NOTIFY");
         h.push("Event", "reg");
         h.push("Subscription-State", "active");
-        m.set_body("text/plain", format!("registered {}\r\n", msisdn).into_bytes());
+        m.set_body("text/plain", format!("{}\r\n", line).into_bytes());
         self.tx.request(0, to, &m, now);
     }
 
@@ -1531,7 +1538,7 @@ impl Ims {
                     let b = c.b.take();
                     let host = self.host();
                     let c = self.calls.get_mut(&call).expect("live");
-                    if c.a.answered || c.st == CallSt::Active {
+                    if c.a.answered {
                         let bye = c.a.dialog.request(&mut self.rng, Method::Bye, &host, self.cfg.sip_port);
                         let hop = c.a.dialog.next_hop;
                         c.a.answered = true;

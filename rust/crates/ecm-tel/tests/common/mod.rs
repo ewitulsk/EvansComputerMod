@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use ecm_cell::simauth::ims_aka;
 use ecm_tel::ims::{EnumAnswer, Ims, ImsConfig, ImsOut, Peer};
+use ecm_tel::mmsc::{HttpResult, Mmsc, MmscConfig, MmscOut};
+use ecm_tel::mmsua;
+use ecm_tel::mrf::{Mrf, MrfConfig, MrfOut};
 use ecm_tel::smsc::{Smsc, SmscConfig, SmscOut};
 use ecm_tel::txn::Addr;
 use ecm_tel::ua::{Bearer, Ua, UaConfig, UaEvent, UaOut};
@@ -20,6 +23,8 @@ pub struct Sub {
     pub msisdn: String,
     pub key: [u8; 16],
     pub ims_ip: [u8; 4],
+    /// The default bearer's address (MMS goes over it).
+    pub data_ip: [u8; 4],
     pub attached: bool,
     pub fields: BTreeMap<String, String>,
 }
@@ -102,6 +107,10 @@ impl Hss {
                 let s = self.subs.iter().find(|s| s.attached && Addr::new(s.ims_ip, 0).host() == *ip).ok_or("no IMS session at that address")?;
                 Ok(format!("imsi {}\nmsisdn {}\n", s.imsi, s.msisdn))
             }
+            ["IPD", ip] => {
+                let s = self.subs.iter().find(|s| s.attached && Addr::new(s.data_ip, 0).host() == *ip).ok_or("no data session at that address")?;
+                Ok(format!("imsi {}\nmsisdn {}\n", s.imsi, s.msisdn))
+            }
             ["AAR", ue, up, r, rp] => {
                 self.bearers.push((ue.to_string(), up.parse().unwrap_or(0), r.to_string(), rp.parse().unwrap_or(0)));
                 Ok(format!("bearer {}\nsent 1\n", self.bearers.len()))
@@ -126,12 +135,21 @@ pub struct Phone {
     /// A tone the microphone hears (amplitude; 0 = silence).
     pub mic_level: i16,
     pub on: bool,
+    pub data_ip: [u8; 4],
+    /// MMS fetched by this phone.
+    pub mms: Vec<mmsua::Received>,
+    /// Message ids the MMSC gave our sends (or the error).
+    pub mms_sent: Vec<Result<String, String>>,
 }
 
 pub struct Carrier {
     pub hss: Hss,
     pub ims: Ims,
     pub smsc: Smsc,
+    pub mrf: Mrf,
+    pub mmsc: Mmsc,
+    /// Files mrfd wrote (path -> bytes).
+    pub files: BTreeMap<String, Vec<u8>>,
     pub cdrs: Vec<String>,
     pub logs: Vec<String>,
     pub saved_queue: String,
@@ -149,11 +167,13 @@ pub struct Net {
     /// Drop datagrams to this address (a phone switched off).
     pub dead: Vec<[u8; 4]>,
     pub delivered: u64,
+    /// Answers mmscd gave later (request id, reply).
+    pub http_replies: Vec<(u64, ecm_tel::mmsc::HttpReply)>,
 }
 
 impl Net {
     pub fn new() -> Net {
-        Net { now: 1_000, carriers: Vec::new(), phones: Vec::new(), wire: VecDeque::new(), enum_db: Vec::new(), dead: Vec::new(), delivered: 0 }
+        Net { now: 1_000, carriers: Vec::new(), phones: Vec::new(), wire: VecDeque::new(), enum_db: Vec::new(), dead: Vec::new(), delivered: 0, http_replies: Vec::new() }
     }
 
     /// A carrier whose IMS computer is `ip` (imsd 5060, smscd 5062, mmscd 5063, mrfd 5064).
@@ -165,8 +185,10 @@ impl Net {
         let mut scfg = SmscConfig::new(domain, "test", ip);
         scfg.ims = Addr::new(ip, 5060);
         let smsc = Smsc::new(scfg, 99);
+        let mrf = Mrf::new(MrfConfig::new(domain, "test", ip), 1234);
+        let mmsc = Mmsc::new(MmscConfig::new(domain, "test", ip), 4321 + self.carriers.len() as u64);
         let hss = Hss { domain: domain.into(), blocks: blocks.iter().map(|s| s.to_string()).collect(), ..Default::default() };
-        self.carriers.push(Carrier { hss, ims, smsc, cdrs: Vec::new(), logs: Vec::new(), saved_queue: String::new(), short_codes: Vec::new() });
+        self.carriers.push(Carrier { hss, ims, smsc, mrf, mmsc, files: BTreeMap::new(), cdrs: Vec::new(), logs: Vec::new(), saved_queue: String::new(), short_codes: Vec::new() });
         self.carriers.len() - 1
     }
 
@@ -174,15 +196,19 @@ impl Net {
         let (da, ia) = (self.carriers[a].ims.cfg.domain.clone(), self.carriers[a].ims.cfg.public_ip);
         let (db, ib) = (self.carriers[b].ims.cfg.domain.clone(), self.carriers[b].ims.cfg.public_ip);
         self.carriers[a].ims.cfg.peers.push(Peer { domain: db, addr: Some(Addr::new(ib, 5060)), secret: secret.into() });
-        self.carriers[b].ims.cfg.peers.push(Peer { domain: da, addr: Some(Addr::new(ia, 5060)), secret: secret.into() });
+        self.carriers[b].ims.cfg.peers.push(Peer { domain: da.clone(), addr: Some(Addr::new(ia, 5060)), secret: secret.into() });
+        let db2 = self.carriers[a].ims.cfg.peers.last().map(|p| p.domain.clone()).unwrap_or_default();
+        self.carriers[a].mmsc.cfg.peers.push((db2, secret.into()));
+        self.carriers[b].mmsc.cfg.peers.push((da, secret.into()));
     }
 
     /// A phone on carrier `c` with number `msisdn`, IMS address `ip`; returns its index.
     pub fn add_phone(&mut self, c: usize, imsi: &str, msisdn: &str, ip: [u8; 4]) -> usize {
         let key = [imsi.len() as u8 ^ ip[3]; 16];
-        self.carriers[c].hss.subs.push(Sub { imsi: imsi.into(), msisdn: msisdn.into(), key, ims_ip: ip, attached: true, fields: BTreeMap::new() });
+        let data_ip = [100, 80 + c as u8, 0, ip[3]];
+        self.carriers[c].hss.subs.push(Sub { imsi: imsi.into(), msisdn: msisdn.into(), key, ims_ip: ip, data_ip, attached: true, fields: BTreeMap::new() });
         let ua = Ua::new(UaConfig::new(imsi), ip[3] as u64 * 31 + 5);
-        self.phones.push(Phone { ua, ip, key, events: Vec::new(), heard: 0, mic_level: 0, on: false });
+        self.phones.push(Phone { ua, ip, key, events: Vec::new(), heard: 0, mic_level: 0, on: false, data_ip, mms: Vec::new(), mms_sent: Vec::new() });
         self.phones.len() - 1
     }
 
@@ -282,6 +308,54 @@ impl Net {
                         ImsOut::OpenRelay(_) | ImsOut::CloseRelay(_) => {}
                     }
                 }
+                let outs = self.carriers[ci].mrf.take_out();
+                for o in outs {
+                    busy = true;
+                    match o {
+                        MrfOut::Sip { to, data } => self.wire.push_back((Addr::new(ip, 5064), to, data)),
+                        MrfOut::Rtp { port, to, data } => self.wire.push_back((Addr::new(ip, port), to, data)),
+                        MrfOut::Save { path, data } => {
+                            self.carriers[ci].files.insert(path, data);
+                        }
+                        MrfOut::Delete { path } => {
+                            self.carriers[ci].files.remove(&path);
+                        }
+                        MrfOut::Hss { id, line } => {
+                            let r = self.carriers[ci].hss.answer(&line);
+                            self.carriers[ci].mrf.on_hss(id, r, now);
+                        }
+                        MrfOut::Log(l) => self.carriers[ci].logs.push(format!("mrf: {}", l)),
+                        MrfOut::OpenRtp(_) | MrfOut::CloseRtp(_) => {}
+                    }
+                }
+                let outs = self.carriers[ci].mmsc.take_out();
+                for o in outs {
+                    busy = true;
+                    match o {
+                        MmscOut::Sip { to, data } => self.wire.push_back((Addr::new(ip, 5063), to, data)),
+                        MmscOut::Hss { id, line } => {
+                            let r = self.carriers[ci].hss.answer(&line);
+                            self.carriers[ci].mmsc.on_hss(id, r, now);
+                        }
+                        MmscOut::Enum { id, number } => {
+                            let d = self.enum_db.iter().find(|(p, _, _)| number.starts_with(p.as_str())).map(|(_, d, _)| d.clone());
+                            self.carriers[ci].mmsc.on_enum(id, d, now);
+                        }
+                        MmscOut::Mm4 { id, domain, message, .. } => {
+                            // SMTP to the other carrier's MMSC (its MX)
+                            let target = self.carriers.iter().position(|c| c.mmsc.cfg.domain == domain);
+                            let ok = match target {
+                                Some(t) => self.carriers[t].mmsc.on_mm4(&message, now).is_ok(),
+                                None => false,
+                            };
+                            self.carriers[ci].mmsc.on_mm4_sent(id, ok, now);
+                        }
+                        MmscOut::HttpReply { req, reply } => self.http_replies.push((req, reply)),
+                        MmscOut::Save { .. } | MmscOut::Delete { .. } => {}
+                        MmscOut::Cdr(l) => self.carriers[ci].cdrs.push(l),
+                        MmscOut::Log(l) => self.carriers[ci].logs.push(format!("mmsc: {}", l)),
+                    }
+                }
                 let outs = self.carriers[ci].smsc.take_out();
                 for o in outs {
                     busy = true;
@@ -347,6 +421,9 @@ impl Net {
             match to.port {
                 5060 => car.ims.on_sip(from, data, now),
                 5062 => car.smsc.on_sip(from, data, now),
+                5064 => car.mrf.on_sip(from, data, now),
+                5063 => car.mmsc.on_sip(from, data, now),
+                p if (31000..32000).contains(&p) => car.mrf.on_rtp(p, from, data, now),
                 p if (30000..31000).contains(&p) => car.ims.on_relay(p, from, data, now),
                 _ => {}
             }
@@ -372,7 +449,10 @@ impl Net {
             for c in &mut self.carriers {
                 c.ims.tick(now);
                 c.smsc.tick(now);
+                c.mrf.tick(now);
+                c.mmsc.tick(now);
             }
+            self.mms_auto_download();
             self.pump();
         }
     }
@@ -386,6 +466,63 @@ impl Net {
             self.run(20);
         }
         f(self)
+    }
+
+    /// HTTP from phone `p`'s data bearer to its carrier's MMSC (as telephonyd does).
+    pub fn mms_http(&mut self, p: usize, method: &str, path: &str, body: &[u8]) -> ecm_tel::mmsc::HttpReply {
+        let ip = self.phones[p].ip;
+        let c = self.carriers.iter().position(|c| c.hss.subs.iter().any(|s| s.ims_ip == ip)).expect("carrier");
+        let now = self.now;
+        let data_ip = self.phones[p].data_ip;
+        match self.carriers[c].mmsc.http(method, path, data_ip, body, now) {
+            HttpResult::Now(r) => r,
+            HttpResult::Later(id) => {
+                for _ in 0..50 {
+                    self.pump();
+                    if let Some(i) = self.http_replies.iter().position(|(r, _)| *r == id) {
+                        return self.http_replies.remove(i).1;
+                    }
+                }
+                panic!("the MMSC never answered");
+            }
+        }
+    }
+
+    /// Phone `p` sends an MMS (to one number, or several: a group).
+    pub fn send_mms(&mut self, p: usize, to: &[&str], text: Option<&str>, files: Vec<(&str, &str, Vec<u8>)>) {
+        let o = mmsua::Outgoing { to: to.iter().map(|s| s.to_string()).collect(), subject: None, text: text.map(String::from), files: files.into_iter().map(|(a, b, c)| (a.to_string(), b.to_string(), c)).collect() };
+        let tid = format!("t{}", self.now);
+        let pdu = mmsua::send_req(&tid, &o).encode();
+        let r = self.mms_http(p, "POST", "/mms", &pdu);
+        let res = mmsua::send_conf(&r.body);
+        self.phones[p].mms_sent.push(res);
+        self.pump();
+    }
+
+    /// What telephonyd does on an MMS notification: fetch it, then say so.
+    fn mms_auto_download(&mut self) {
+        for p in 0..self.phones.len() {
+            let notices: Vec<(String, String)> = self.phones[p]
+                .events
+                .iter()
+                .filter_map(|e| if let UaEvent::MmsNotice { location, transaction, .. } = e { Some((location.clone(), transaction.clone())) } else { None })
+                .collect();
+            if notices.is_empty() || !self.phones[p].on {
+                continue;
+            }
+            self.phones[p].events.retain(|e| !matches!(e, UaEvent::MmsNotice { .. }));
+            for (loc, tid) in notices {
+                let path = loc.split_once("8002").map(|(_, r)| r.to_string()).unwrap_or(loc.clone());
+                let r = self.mms_http(p, "GET", &path, &[]);
+                if r.status == 200 {
+                    if let Ok(m) = mmsua::retrieved(&r.body) {
+                        self.phones[p].mms.push(m);
+                        let ack = mmsua::notify_resp(&tid, true).encode();
+                        self.mms_http(p, "POST", "/mms", &ack);
+                    }
+                }
+            }
+        }
     }
 
     pub fn registered(&self, p: usize) -> bool {

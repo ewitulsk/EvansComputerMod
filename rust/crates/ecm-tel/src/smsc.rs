@@ -255,8 +255,8 @@ impl Smsc {
                 self.respond(&m, from, 200, now);
                 let body = String::from_utf8_lossy(m.body()).to_string();
                 for l in body.lines() {
-                    if let Some(n) = l.trim().strip_prefix("registered ") {
-                        self.retry_for(n.trim(), now);
+                    if let Some(n) = l.trim().strip_prefix("registered ").and_then(|r| r.split_whitespace().next()) {
+                        self.retry_for(n, now);
                     }
                 }
             }
@@ -278,6 +278,16 @@ impl Smsc {
             for ud in parts {
                 self.store(Stored { id: 0, from: "MMS".into(), to: to.clone(), ud, report_mr: None, submitted_ms: now, attempts: 0, next_try_ms: now, inflight: None }, now);
             }
+            return;
+        }
+        // a service on the carrier's network (the media server's support line) sends a text
+        if user == "service-text" {
+            let to = m.headers().to().ok().and_then(|t| uri_number(&t.uri));
+            let code = m.headers().get("X-Service-From").unwrap_or("CARRIER").trim().to_string();
+            let Some(to) = to else { return self.respond(&m, from, 400, now) };
+            self.respond(&m, from, 202, now);
+            let text = String::from_utf8_lossy(m.body()).to_string();
+            self.send_text(&code, &to, &text, now);
             return;
         }
         let ct = m.headers().content_type().ok().flatten().map(|c| c.value.to_ascii_lowercase()).unwrap_or_default();

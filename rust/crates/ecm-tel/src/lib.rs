@@ -11,11 +11,17 @@
 //! | [`txn`], [`dialog`] | SIP transactions over UDP, dialogs and request builders |
 //! | [`ua`] | `telephonyd`: the phone's IMS client (registration, calls with media, SMS) |
 //! | [`smsc`] | `smscd`: SMSC / IP-SM-GW, store and forward, reports, short codes, WAP push |
+//! | [`mmsc`] | `mmscd`: MMS store, notifications by WAP push, group texts, MM4, the Browser fallback |
+//! | [`mmsua`] | the phone side of MMS: M-Send.req, M-NotifyResp.ind, reading M-Retrieve.conf, group thread keys |
+//! | [`mrf`] | `mrfd`: voicemail, announcements, the 611 line, conference mixing |
 //! | [`ims`] | `imsd`: P/S/I-CSCF, registrar with IMS AKA, TAS, border and media relay |
 
 pub mod dialog;
 pub mod ims;
 pub mod mms;
+pub mod mmsc;
+pub mod mmsua;
+pub mod mrf;
 pub mod number;
 pub mod sdp;
 pub mod sip;

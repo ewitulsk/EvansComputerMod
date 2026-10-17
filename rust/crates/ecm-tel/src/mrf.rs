@@ -668,6 +668,11 @@ impl Mrf {
         }
     }
 
+    /// Conference participants: (conference, RTP port, loudness of the last 20 ms, RTP packets in).
+    pub fn conference_levels(&self) -> Vec<(u64, u16, u64)> {
+        self.sessions.values().filter(|s| s.service == Service::Conference).map(|s| (s.conf, s.port, s.last.iter().map(|x| x.unsigned_abs() as u64).sum())).collect()
+    }
+
     pub fn sessions(&self) -> usize {
         self.sessions.len()
     }
