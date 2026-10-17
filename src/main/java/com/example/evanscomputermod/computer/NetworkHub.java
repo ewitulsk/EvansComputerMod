@@ -16,14 +16,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * whether to accept it -- its own MAC, broadcast, any multicast, or
  * everything when promiscuous. A NIC whose link is administratively
  * disabled neither sends nor receives. Unicast frames for a MAC that is not
- * on the segment go to the TAP bridge if the segment reaches the Internet
- * Gateway.
+ * on the segment go to the internet uplink (the internet sidecar) if the
+ * segment reaches the Internet Gateway.
  *
  * <p>Bridge ports (the Wi-Fi Access Point, microwave radios) are promiscuous
  * members that receive through a callback and send frames with other source
  * MACs via {@link #transmitFromPort}. MACs learned behind a port (the forwarding
  * table) count as on-segment, so unicast to a wireless client reaches the port
- * and never leaks to the TAP bridge.
+ * and never leaks to the internet uplink.
  */
 public class NetworkHub {
     private static NetworkHub INSTANCE;
@@ -41,10 +41,30 @@ public class NetworkHub {
         }
     }
 
-    // TAP bridge (optional, for real internet access)
-    private TapBridge tapBridge;
-    private InternetProxy internetProxy;
-    public void enableInternetProxy() {if(internetProxy==null) internetProxy=new InternetProxy(this::injectFromTap);}
+    /** The Internet Gateway's link to the real network, from the internet sidecar; null = offline. */
+    private com.example.evanscomputermod.api.internet.InternetUplink uplink;
+
+    /**
+     * Open the Internet Gateway's uplink when an internet sidecar is installed
+     * ({@link com.example.evanscomputermod.api.internet.InternetUplinks}). Without
+     * one the gateway stays offline: the main mod opens no host sockets.
+     */
+    public void openUplink() {
+        if (uplink != null) return;
+        var provider = com.example.evanscomputermod.api.internet.InternetUplinks.get();
+        if (provider == null) return;
+        try {
+            uplink = provider.open(this::injectFromUplink);
+        } catch (Throwable t) {
+            EvansComputerMod.LOGGER.warn("Internet uplink '{}' failed to open: {}", provider.name(), t.toString());
+        }
+        if (uplink == null) EvansComputerMod.LOGGER.info("Internet uplink '{}' is turned off: the Internet Gateway is offline", provider.name());
+    }
+
+    /** Whether the Internet Gateway has a link to the real network on this server. */
+    public boolean uplinkOpen() {
+        return uplink != null;
+    }
 
     /** Per-NIC receive queue depth (drop-oldest). */
     private static final int MAX_QUEUE_SIZE = 256;
@@ -150,11 +170,14 @@ public class NetworkHub {
 
     public static void shutdown() {
         if (INSTANCE != null) {
-            if (INSTANCE.tapBridge != null) {
-                INSTANCE.tapBridge.close();
-                INSTANCE.tapBridge = null;
+            if (INSTANCE.uplink != null) {
+                try {
+                    INSTANCE.uplink.close();
+                } catch (Throwable t) {
+                    EvansComputerMod.LOGGER.warn("Closing the internet uplink failed: {}", t.toString());
+                }
+                INSTANCE.uplink = null;
             }
-            if(INSTANCE.internetProxy!=null) INSTANCE.internetProxy.close();
             INSTANCE.nics.clear();
             INSTANCE = null;
             EvansComputerMod.LOGGER.info("NetworkHub shut down");
@@ -280,11 +303,11 @@ public class NetworkHub {
             }
         }
 
-        if (tapBridge != null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment)) {
-            tapBridge.sendFrame(frame);
+        // Logical ISP/lab segments include the gateway MAC without a NIC mailbox.
+        if (uplink != null && cableMgr.hasInternetAccess(srcMac)
+                && (groupAddr || !dstOnSegment || matchesDst(com.example.evanscomputermod.api.internet.InternetUplinks.GATEWAY_MAC, frame))) {
+            uplink.sendFrame(frame);
         }
-        // Logical ISP/lab segments include the proxy MAC without a NIC mailbox.
-        if(internetProxy!=null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment || matchesDst(InternetProxy.MAC,frame))) internetProxy.sendFrame(frame);
     }
 
     /** True if the frame's destination was learned behind the bridge port {@code portMac}. */
@@ -302,10 +325,10 @@ public class NetworkHub {
     }
 
     /**
-     * Inject a frame from the TAP device: it appears on every segment that
+     * Inject a frame from the internet uplink: it appears on every segment that
      * reaches the Internet Gateway.
      */
-    public void injectFromTap(byte[] frame) {
+    public void injectFromUplink(byte[] frame) {
         if (frame.length < 14) return;
         CableNetworkManager cableMgr = CableNetworkManager.getInstance();
         if (cableMgr == null) return;
@@ -375,16 +398,6 @@ public class NetworkHub {
         NicMailbox mailbox = nics.get(new MacAddress(mac));
         if (mailbox == null) return null;
         return mailbox.pcapQueue.poll();
-    }
-
-    // ===== TAP Bridge =====
-
-    public void setTapBridge(TapBridge bridge) {
-        this.tapBridge = bridge;
-    }
-
-    public TapBridge getTapBridge() {
-        return tapBridge;
     }
 
     // ===== Utilities =====

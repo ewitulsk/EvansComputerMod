@@ -48,6 +48,14 @@ Handlers receive an event table with .kind, .value and .widget.
 ui.load("app.ui.json", {add_note = add}) opens a window from a Visual
 Programmer layout file.
 
+Pixels: app:canvas(w, h, format) ("rgba8888" by default) makes a Canvas
+widget with its own pixels. canvas:put(pixels, damage) shows new pixels at
+the next loop turn; canvas:commit_at(pts_us) shows the ones put since the
+last commit at a time on ui.now_us()'s clock instead (smooth video: queue
+frames a little ahead), canvas:queue_flush() drops the queued ones (seek,
+pause) and canvas.content = "motion" lets them travel lossy ("auto",
+"exact").
+
 JSON: a table with keys 1..n is a list; an empty table is an object unless
 made with ui.array() (lists read from JSON stay lists).
 ]]
@@ -507,12 +515,53 @@ widget_class("Image", {
   fields = function(self) return { resource = self.resource } end,
 })
 
+local CONTENT = { auto = 0, exact = 1, motion = 2 }
+
+local function canvas_owner(self)
+  local app = rawget(self, "_canvas_app")
+  if app == nil then error("this Canvas has no pixels of its own (make it with app:canvas(w, h))", 3) end
+  return app
+end
+
+--- Shows a canvas resource. Made with app:canvas(w, h), it has its own
+--- pixels: put(), commit_at(), queue_flush() and the content hint.
 widget_class("Canvas", {
   kind = "canvas", positional = { "resource", "width", "height", "scale" }, props = { "resource", "scale" },
   events = { "click" },
   init = sized_init({ "resource", "scale" }),
   fields = function(self) return { resource = self.resource, scale = self.scale } end,
+  get = { content = function(t) return rawget(t, "_content") or "auto" end },
+  set = {
+    content = function(t, v)
+      if CONTENT[v] == nil then error("content is 'auto', 'exact' or 'motion'", 3) end
+      rawset(t, "_content", v)
+      native.set_content(canvas_owner(t)._h, t.resource, CONTENT[v])
+    end,
+  },
 })
+
+--- New pixels for a Canvas from app:canvas: a string of bytes in the canvas
+--- format, the whole canvas; damage = the changed rects {{x, y, w, h}, ...}
+--- (nil: all). They show at the next loop turn, or at commit_at's time.
+function Widget:put(pixels, damage)
+  local app = canvas_owner(self)
+  native.put_canvas(app._h, self.resource, pixels, damage)
+end
+
+--- Show the pixels put since the last commit at pts_us on ui.now_us()'s
+--- clock (not at the next loop turn). Frames queue in time order, a little
+--- ahead (about half a second at most).
+function Widget:commit_at(pts_us)
+  native.commit_at(canvas_owner(self)._h, math.floor(pts_us))
+end
+
+--- Drop the frames queued with commit_at that aren't shown yet (seek, pause).
+function Widget:queue_flush()
+  native.queue_flush(canvas_owner(self)._h)
+end
+
+--- The monotonic clock in microseconds: the clock commit_at times are on.
+function M.now_us() return native.now_us() end
 
 -- One hex digit per texel (indices 0-15), the compact wire form.
 local function hex_texels(values)
@@ -808,6 +857,15 @@ function App:window(title, root)
 end
 
 function App:set_root(win, root) self._windows[win] = root end
+
+--- A Canvas widget w x h lu with its own w x h pixels in format ("rgba8888"
+--- (default), "rgb565" or "indexed8"); fill it with canvas:put().
+function App:canvas(w, h, format)
+  local res = native.canvas(self._h, math.floor(w), math.floor(h), format or "rgba8888")
+  local c = M.Canvas(res, math.floor(w), math.floor(h), 1)
+  rawset(c, "_canvas_app", self)
+  return c
+end
 
 function App:_first()
   local first

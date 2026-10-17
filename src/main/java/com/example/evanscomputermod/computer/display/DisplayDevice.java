@@ -1,6 +1,8 @@
 package com.example.evanscomputermod.computer.display;
 
 import com.example.evanscomputermod.computer.TerminalDisplay;
+import com.example.evanscomputermod.computer.pipeline.DisplayClock;
+import com.example.evanscomputermod.computer.pipeline.DisplayPump;
 import com.example.evanscomputermod.computer.video.Rgb332Palette;
 
 import java.util.Arrays;
@@ -53,6 +55,17 @@ public final class DisplayDevice {
     public static final int E_NO_DEVICE = -4;
     public static final int E_INTERRUPTED = -5;
 
+    /** {@code gfx_present_at}: the queue is full (and the caller didn't ask to wait). */
+    public static final int E_AGAIN = -11;
+    /** {@code gfx_present_at} on a single-buffered display (a blit is visible at once, nothing can wait). */
+    public static final int E_SINGLE_BUFFERED = -22;
+
+    /** {@code gfx_present_at} flag: wait for room in the queue instead of failing with {@link #E_AGAIN}. */
+    public static final int PRESENT_AT_WAIT = 1;
+
+    /** {@code gfx_set_hint}: how the frames may travel (DISPLAY_PIPELINE_SPEC.md Part D1). */
+    public static final int HINT_AUTO = 0, HINT_EXACT = 1, HINT_MOTION = 2;
+
     /** Largest dimension accepted. */
     public static final int MAX_DIM = 4096;
 
@@ -81,6 +94,9 @@ public final class DisplayDevice {
     private int refreshHz;
     private long presented;
     private final long epochNanos = System.nanoTime();
+    /** Frames queued with {@code gfx_present_at} (Part C4). */
+    private final PresentQueue queue = new PresentQueue();
+    private int hint = HINT_AUTO;
 
     /** Refresh-rate policy (server config). */
     public interface RefreshLimits {
@@ -149,6 +165,7 @@ public final class DisplayDevice {
             long bytes = (long) w * h * TerminalDisplay.bytesPerPixel(format);
             if (bytes > maxPixelBytes.getAsInt()) return E_INVALID;
             if (scanout.get() == null) return E_NO_DEVICE;
+            flushLocked();
             ownerPid = pid;
             this.width = w;
             this.height = h;
@@ -194,6 +211,7 @@ public final class DisplayDevice {
             if (ownerPid != pid) return E_NOT_OWNER;
             long bytes = (long) width * height * TerminalDisplay.bytesPerPixel(newFormat);
             if (bytes > maxPixelBytes.getAsInt()) return E_INVALID;
+            flushLocked();
             format = newFormat;
             back = new byte[(int) bytes];
             if (width > 0 && height > 0) scanOutLocked();
@@ -302,6 +320,7 @@ public final class DisplayDevice {
                 paletteChanged = true;
             }
             if (mode == 0) mode = 1;
+            flushLocked(); // a decoded frame shown at once ends any queued ones
             if (w != width || h != height || fmt != format || back.length != bytes) {
                 width = w;
                 height = h;
@@ -331,11 +350,161 @@ public final class DisplayDevice {
         synchronized (this) {
             if (ownerPid != pid) return E_NOT_OWNER;
             if (width <= 0 || height <= 0) return E_INVALID;
-            scanOutLocked();
+            if (!queue.isEmpty() && (flags & FLAG_DOUBLE_BUFFER) != 0) {
+                // Frames are waiting: this one goes after them (presentation order is queue order).
+                enqueueLocked(DisplayClock.nowUs());
+            } else {
+                scanOutLocked();
+            }
             n = presented;
         }
         onFrame.run();
         return n;
+    }
+
+    // ------------------------------------------------------------------
+    // Timed presentation (gfx_present_at, gfx_queue_flush, gfx_set_hint)
+    // ------------------------------------------------------------------
+
+    /**
+     * Queue the back buffer to be shown at {@code ptsUs} (the display clock,
+     * {@link DisplayClock}). Double-buffered displays only. A time at or
+     * before now with nothing queued is {@link #present} (shown at once).
+     * At most {@code display.queueFrames} frames and {@code display.queueMs}
+     * ahead: past that, {@link #PRESENT_AT_WAIT} waits for room, otherwise
+     * {@link #E_AGAIN}. Returns the frames queued (0 = shown at once), or a
+     * negative error.
+     */
+    public long presentAt(int pid, int presentFlags, long ptsUs) {
+        int maxFrames = Math.max(1, com.example.evanscomputermod.EcmConfig.displayQueueFrames());
+        long maxAheadUs = Math.max(1, com.example.evanscomputermod.EcmConfig.displayQueueMs()) * 1000L;
+        long n;
+        synchronized (this) {
+            while (true) {
+                if (ownerPid != pid) return E_NOT_OWNER;
+                if ((flags & FLAG_DOUBLE_BUFFER) == 0) return E_SINGLE_BUFFERED;
+                if (width <= 0 || height <= 0) return E_INVALID;
+                long now = DisplayClock.nowUs();
+                if (ptsUs <= now && queue.isEmpty()) {
+                    scanOutLocked();
+                    n = 0;
+                    break;
+                }
+                if (queue.size() < maxFrames && ptsUs - now <= maxAheadUs) {
+                    enqueueLocked(ptsUs);
+                    n = queue.size();
+                    break;
+                }
+                if ((presentFlags & PRESENT_AT_WAIT) == 0) return E_AGAIN;
+                long waitUs = queue.size() >= maxFrames ? queue.nextPtsUs() - now : ptsUs - now - maxAheadUs;
+                try {
+                    wait(Math.max(1, Math.min(50, waitUs / 1000)));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return E_INTERRUPTED;
+                }
+            }
+        }
+        onFrame.run();
+        return n;
+    }
+
+    /** Caller holds the monitor: copy the back buffer into the queue and set a timer for its time. */
+    private void enqueueLocked(long ptsUs) {
+        TerminalDisplay out = scanout.get();
+        if (out == null) return;
+        PresentQueue.Frame f = queue.add(ptsUs, mode, width, height, format, palette, back, out);
+        DisplayPump.schedule(this::applyDue, DisplayClock.toNanoTime(f.ptsUs()) - System.nanoTime());
+    }
+
+    /**
+     * Pump timer: show the newest frame whose time has come (any others due
+     * with it were never on screen), so the server's scanout always holds
+     * what is on screen now.
+     */
+    public void applyDue() {
+        boolean shown = false;
+        synchronized (this) {
+            TerminalDisplay out = scanout.get();
+            if (out == null) return;
+            long now = DisplayClock.nowUs();
+            synchronized (out) {
+                java.util.List<PresentQueue.Frame> due = queue.takeDue(now);
+                if (!due.isEmpty()) {
+                    PresentQueue.Frame f = due.get(due.size() - 1);
+                    out.setGfxFrame(f.mode(), f.width(), f.height(), f.format(), f.palette(), f.pixels());
+                    queue.markApplied(f, now - f.ptsUs(), due.size() - 1);
+                    for (PresentQueue.Frame d : due) queue.recycle(d);
+                    presented++;
+                    shown = true;
+                }
+            }
+            notifyAll();
+        }
+        if (shown) onFrame.run();
+    }
+
+    /** Drop every queued frame not shown yet (seek, pause, stop). Returns how many. */
+    public int queueFlush(int pid) {
+        int n;
+        synchronized (this) {
+            if (ownerPid != pid) return E_NOT_OWNER;
+            n = flushLocked();
+            notifyAll();
+        }
+        onFrame.run();
+        return n;
+    }
+
+    /** Caller holds the monitor. The display's monitor is taken too, so no hub is reading a frame being recycled. */
+    private int flushLocked() {
+        if (queue.isEmpty()) return 0;
+        TerminalDisplay out = scanout.get();
+        if (out == null) return queue.flush();
+        synchronized (out) {
+            return queue.flush(out);
+        }
+    }
+
+    /** {@code gfx_set_hint}: 0 auto, 1 exact (never lossy), 2 motion (lossy allowed). */
+    public int setHint(int pid, int newHint) {
+        synchronized (this) {
+            if (ownerPid != pid) return E_NOT_OWNER;
+            if (newHint < HINT_AUTO || newHint > HINT_MOTION) return E_INVALID;
+            hint = newHint;
+            return OK;
+        }
+    }
+
+    public synchronized int hint() {
+        return hint;
+    }
+
+    /** The presentation queue (sync hubs read it; diagnostics). */
+    public PresentQueue queue() {
+        return queue;
+    }
+
+    /** {@code gfx_queue_state}: frames queued and how far ahead the last one is, {@code frames << 32 | ms}. */
+    public long queueState() {
+        return ((long) queue.size() << 32) | (queue.aheadMs(DisplayClock.nowUs()) & 0xFFFFFFFFL);
+    }
+
+    /**
+     * {@code video_decode_to_back}: replace the back buffer with a decoded
+     * frame without showing it (a following {@link #presentAt} queues it).
+     * The display must be double-buffered, at the frame's size and format.
+     */
+    public int loadBack(int pid, int w, int h, int fmt, byte[] pixels) {
+        synchronized (this) {
+            if (ownerPid != pid) return E_NOT_OWNER;
+            if ((flags & FLAG_DOUBLE_BUFFER) == 0) return E_SINGLE_BUFFERED;
+            if (w != width || h != height || fmt != format) return E_INVALID;
+            int bytes = w * h * TerminalDisplay.bytesPerPixel(fmt);
+            if (pixels == null || pixels.length < bytes || back.length != bytes) return E_INVALID;
+            System.arraycopy(pixels, 0, back, 0, bytes);
+            return OK;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -440,6 +609,8 @@ public final class DisplayDevice {
     }
 
     private void resetLocked() {
+        flushLocked();
+        hint = HINT_AUTO;
         ownerPid = KERNEL;
         width = height = 0;
         mode = 0;

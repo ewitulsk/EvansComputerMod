@@ -39,3 +39,9 @@ include 'evanscomputermod-ffmpeg'
 // from their real computers into computers (the `upload` command, Files'
 // Upload button).
 include 'evanscomputermod-upload'
+
+// Optional internet sidecar, built the same way (-PmcVersion=1.21.1 or 26.1).
+// Server-side only: it links the Internet Gateway to the real internet (a host
+// TCP/UDP socket proxy, optional Linux TAP), so the main mod opens no host
+// sockets and starts no processes.
+include 'evanscomputermod-internet'

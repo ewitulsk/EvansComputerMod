@@ -871,6 +871,13 @@ public class WasiFunctions {
             return retI64(childBridge.videoDecodeToGfx((int) args[0], (int) args[1]));
         });
 
+        // (handle, target) -> pts ms: the next frame into the double-buffered display's back buffer,
+        // not shown (gfx_present_at shows it), -1 end, -2 error.
+        addEnv(sink, "video_decode_to_back", I32_I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-2L);
+            return retI64(childBridge.videoDecodeToBack((int) args[0], (int) args[1]));
+        });
+
         // Frames into the program's own memory (for apps that show video in a UI canvas):
         // (handle, buf, cap) -> pts ms, -1 end, -2 error (cap smaller than a frame included).
         addEnv(sink, "video_decode_frame", I32_I32_I32, RET_I64, (inst, args) -> {
@@ -1043,6 +1050,33 @@ public class WasiFunctions {
             long rc = childBridge.gfxPresent((int) args[0], (int) args[1]);
             throwIfInterrupted(rc);
             return retI64(rc);
+        });
+
+        // Timed presentation (DISPLAY_PIPELINE_SPEC.md Part C2): (target, flags, pts_us) -> frames queued.
+        // pts_us is on the program's monotonic clock; it is converted to the display clock right here.
+        addEnv(sink, "gfx_present_at", List.of(WasmValType.I32, WasmValType.I32, WasmValType.I64), RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            long now = monotonicNowUs();
+            long pts = com.example.evanscomputermod.computer.pipeline.DisplayClock.fromMonotonicUs(args[2], now);
+            long rc = childBridge.gfxPresentAt((int) args[0], (int) args[1], pts);
+            throwIfInterrupted(rc);
+            return retI64(rc);
+        });
+
+        addEnv(sink, "gfx_queue_flush", I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxQueueFlush((int) args[0]));
+        });
+
+        addEnv(sink, "gfx_set_hint", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxSetHint((int) args[0], (int) args[1]));
+        });
+
+        // (target) -> frames queued << 32 | ms the last one is ahead of now; -1 for an unknown target.
+        addEnv(sink, "gfx_queue_state", I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            return retI64(childBridge.gfxQueueState((int) args[0]));
         });
 
         addEnv(sink, "gfx_wait_vblank", I32, RET_I64, (inst, args) -> {
@@ -1803,6 +1837,14 @@ public class WasiFunctions {
                     System.nanoTime() - MONOTONIC_ORIGIN - PauseGate.currentPausedNanos();
             default -> -1;
         };
+    }
+
+    /**
+     * What the calling program's monotonic clock reads now, in microseconds
+     * (the clock of {@code gfx_present_at} and {@code CommitAt} times).
+     */
+    public static long monotonicNowUs() {
+        return clockNow(CLOCK_MONOTONIC) / 1000L;
     }
 
     /**

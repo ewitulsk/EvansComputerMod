@@ -124,6 +124,9 @@ public final class GuiScenarios {
     static String drawing(ScenarioRun r, String app) {
         Compositor.WindowInfo w = mapped(r).stream().filter(x -> x.appId().equals(app)).findFirst().orElse(null);
         if (w == null) return app + " has no window";
+        // A headless check reads the server's frame: the compositor composites what it held back
+        // while only scene viewers watched (docs/gui/DISPLAY_PIPELINE.md, server-side compositing).
+        ui(r).notePixelDemand();
         TerminalDisplay d = r.terminal("pc").getDisplay();
         byte[] px;
         synchronized (d) {
@@ -343,6 +346,7 @@ public final class GuiScenarios {
 
     /** The composited colour (0xRRGGBB) at a device pixel. */
     static int pixel(ScenarioRun r, int x, int y) {
+        ui(r).notePixelDemand();
         Compositor c = comp(r);
         byte[] f = c.frameRgba();
         int i = (y * c.display().deviceW() + x) * 4;

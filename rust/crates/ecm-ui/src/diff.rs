@@ -14,6 +14,10 @@
 //! Props a node no longer sets are reset to the protocol default. Node ids
 //! are handed out in order of first appearance and never reused, so two
 //! front ends that build the same scenes produce identical bytes.
+//!
+//! A node may name another node of the same scene by key
+//! ([`SceneNode::caret_of`]): the engine fills in that node's id as the
+//! v2 `CaretOf` prop (a text field's caret rect points at its text node).
 
 use ecm_ui_proto::{NodeKind, Prop, Rect, TreeOp, ROOT_NODE};
 use std::collections::{HashMap, HashSet};
@@ -25,13 +29,26 @@ pub struct SceneNode {
     pub kind: NodeKind,
     pub props: Vec<Prop>,
     pub children: Vec<SceneNode>,
+    /// The key of a node earlier in the scene (pre-order) whose id this node
+    /// carries as `CaretOf` (filled in by the diff engine).
+    pub caret_of: Option<String>,
 }
 
 impl SceneNode {
     pub fn new(key: impl Into<String>, kind: NodeKind, mut props: Vec<Prop>) -> SceneNode {
         props.sort_by_key(|p| p.tag());
         props.dedup_by_key(|p| p.tag());
-        SceneNode { key: key.into(), kind, props, children: Vec::new() }
+        SceneNode { key: key.into(), kind, props, children: Vec::new(), caret_of: None }
+    }
+
+    /// Add props (an existing prop with the same tag is replaced).
+    pub fn with(mut self, props: impl IntoIterator<Item = Prop>) -> SceneNode {
+        for p in props {
+            self.props.retain(|q| q.tag() != p.tag());
+            self.props.push(p);
+        }
+        self.props.sort_by_key(|p| p.tag());
+        self
     }
 }
 
@@ -60,6 +77,20 @@ pub fn default_prop(tag: u8) -> Prop {
         20 => Prop::Tint(0xffff_ffff),
         21 => Prop::Points(Vec::new()),
         22 => Prop::Width(1),
+        23 => Prop::HoverFill(0),
+        24 => Prop::HoverBorderColor(0),
+        25 => Prop::HoverColor(0),
+        26 => Prop::PressedFill(0),
+        27 => Prop::PressedBorderColor(0),
+        28 => Prop::PressedColor(0),
+        29 => Prop::Scroll(0),
+        30 => Prop::ContentW(0),
+        31 => Prop::ContentH(0),
+        32 => Prop::ScrollX(0),
+        33 => Prop::ScrollY(0),
+        34 => Prop::DragWindow(0),
+        35 => Prop::Caret(0),
+        36 => Prop::CaretOf(0),
         _ => Prop::X(0),
     }
 }
@@ -220,6 +251,18 @@ impl TreeState {
     }
 
     fn visit(&mut self, n: &SceneNode, parent: u32, parent_key: &str, index: usize, plan: &Plan, ops: &mut Vec<TreeOp>) {
+        // A node naming another one (CaretOf): that node was visited before it.
+        let resolved;
+        let n = match n.caret_of.as_deref().and_then(|k| self.nodes.get(k)) {
+            Some(target) => {
+                let mut c = SceneNode { key: n.key.clone(), kind: n.kind, props: n.props.clone(), children: Vec::new(), caret_of: None };
+                c = c.with([Prop::CaretOf(target.id)]);
+                c.children = n.children.clone();
+                resolved = c;
+                &resolved
+            }
+            None => n,
+        };
         let id = match self.nodes.get(&n.key) {
             Some(c) if c.kind == n.kind => {
                 let id = c.id;
@@ -347,6 +390,19 @@ mod tests {
         let ops = t.update(&[group("g2", vec![SceneNode::new("a", NodeKind::Rect, vec![Prop::W(5)])])]);
         assert_eq!(ops[0], TreeOp::Remove { id: 2 });
         assert!(matches!(ops[1], TreeOp::Create { id: 4, kind: NodeKind::Rect, .. }));
+    }
+
+    #[test]
+    fn caret_of_names_an_earlier_node_by_id() {
+        let mut t = TreeState::new();
+        let mut caret = SceneNode::new("c", NodeKind::Rect, vec![Prop::W(1)]);
+        caret.caret_of = Some("t".into());
+        let ops = t.update(&[group("g", vec![text("t", "A", 0), caret.clone()])]);
+        assert!(matches!(&ops[2], TreeOp::Create { id: 3, props, .. } if props.contains(&Prop::CaretOf(2))));
+        // Unchanged: no ops; the text node replaced (new id): the caret follows it.
+        assert!(t.update(&[group("g", vec![text("t", "A", 0), caret.clone()])]).is_empty());
+        let ops = t.update(&[group("g", vec![SceneNode::new("t", NodeKind::Rect, vec![]), caret])]);
+        assert!(ops.contains(&TreeOp::Set { id: 3, props: vec![Prop::CaretOf(4)] }), "{ops:?}");
     }
 
     #[test]

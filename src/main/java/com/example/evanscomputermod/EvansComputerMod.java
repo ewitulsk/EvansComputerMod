@@ -9,7 +9,6 @@ import com.example.evanscomputermod.item.ModItems;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
-import com.example.evanscomputermod.computer.TapBridge;
 import com.example.evanscomputermod.api.wasm.WasmRuntime;
 import com.example.evanscomputermod.api.wasm.WasmRuntimeRegistry;
 import com.example.evanscomputermod.wasm.WasmManager;
@@ -40,6 +39,13 @@ public class EvansComputerMod {
         LOGGER.info("Initializing Evans Computer Mod");
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, com.example.evanscomputermod.network.DisplayClientConfig.SPEC,
+                "evanscomputermod-display-client.toml");
+        modEventBus.addListener((net.neoforged.fml.event.config.ModConfigEvent e) -> {
+            if (e.getConfig().getSpec() == com.example.evanscomputermod.network.DisplayClientConfig.SPEC) {
+                com.example.evanscomputermod.network.DisplayClientConfig.apply();
+            }
+        });
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.computer.DnsConfig.SPEC,
                 "evanscomputermod-dns-server.toml");
@@ -110,6 +116,16 @@ public class EvansComputerMod {
         // GUI client rendering: a player who leaves no longer holds scene capabilities or images.
         NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
                 com.example.evanscomputermod.computer.ui.UiClients.forget(e.getEntity().getUUID()));
+        // Display pipeline: a joining client learns the server's playout cap; a leaving one frees its stream budget.
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent e) -> {
+            if (e.getEntity() instanceof net.minecraft.server.level.ServerPlayer p
+                    && !(p instanceof net.neoforged.neoforge.common.util.FakePlayer)) {
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p,
+                        new com.example.evanscomputermod.network.DisplayCapsPacket(EcmConfig.displayMaxPlayoutMs()));
+            }
+        });
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
+                com.example.evanscomputermod.computer.pipeline.StreamBudget.forget(e.getEntity().getUUID()));
 
         // Common setup: bind the WASM runtime
         modEventBus.addListener(this::onCommonSetup);
@@ -183,24 +199,12 @@ public class EvansComputerMod {
         CableNetworkManager.init(event.getServer());
         LOGGER.info("Cable network manager started");
 
-        // Try to open TAP bridge for real internet access
-        String tapDevice = System.getProperty("evanscomputermod.tap", "tap0");
-        if (!"none".equals(tapDevice)) {
-            try {
-                TapBridge tap = new TapBridge(tapDevice, NetworkHub.getInstance());
-                NetworkHub.getInstance().setTapBridge(tap);
-                LOGGER.info("TAP bridge connected: {}", tapDevice);
-            } catch (Exception e) {
-                LOGGER.warn("TAP bridge unavailable ({}): {} — internet access disabled, LAN networking still works",
-                    tapDevice, e.getMessage());
-            }
-        }
+        // The Internet Gateway's link to the real network comes from the optional
+        // evanscomputermod-internet sidecar (it decides what to open); without it
+        // the gateway is offline.
+        NetworkHub.getInstance().openUplink();
 
         // Generate Internet Gateway and cable column at (0, 0, 0) if not already present
-        if(System.getProperty("os.name","").toLowerCase(java.util.Locale.ROOT).contains("windows")
-                && Boolean.parseBoolean(System.getProperty("evanscomputermod.internetProxy","true"))) {
-            NetworkHub.getInstance().enableInternetProxy();LOGGER.info("Windows socket internet gateway enabled at 10.0.0.1");
-        }
         generateInternetGateway(event.getServer());
         //? if <=1.21.1 {
         com.example.evanscomputermod.computer.WorldNetwork.start(event.getServer().overworld());

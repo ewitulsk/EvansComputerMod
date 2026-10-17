@@ -1,0 +1,90 @@
+NAME
+    ui - windows, widgets and canvases for Python and Lua programs
+
+SYNOPSIS
+    import ui                      (Python)
+    local ui = require("ui")       (Lua; ui is also a global)
+
+DESCRIPTION
+    The ui module makes graphical apps: windows with buttons, text
+    fields, lists and pictures, on the desktop (gui) and on the ePhone.
+    It is the same toolkit the built-in apps use, so they look and
+    behave the same. Python and Lua have the same functions; Lua calls
+    methods with a colon (app:window) and takes options in a table
+    (ui.Button("Add", {on_click = add})).
+
+    A program makes an App, opens windows with a tree of widgets and
+    runs the event loop. Widgets keep their values: set entry.text = ""
+    or rows.items = [...] in a handler and the window updates on the
+    next loop turn. A ui program needs the GUI (start it with gui);
+    on the console ui.App fails with an error.
+
+APP
+      ui.App(app_id)             connect; app_id like "dev.me.notes"
+      app.window(title, root)    open a window; returns its id
+      app.run()                  the event loop, until the window closes
+      app.step(timeout_ms)       one loop turn (False once closed)
+      app.notify(title, body)    a notification
+      app.hotkey(slot, label, fn)   an ePhone hotkey (1-6)
+      app.on_suspend(fn)         a dict to keep; app.restore() gives it
+      app.on_frame(fn) app.request_frame()   animation frames
+      app.pick_file() app.copy(text) app.paste() app.open(path)
+      app.canvas(w, h, format)   a canvas with its own pixels (below)
+      ui.load(file.ui.json, handlers)   a Visual Programmer layout
+      ui.now_us()                the monotonic clock in microseconds
+
+WIDGETS
+      Label Button TextField TextArea List Checkbox Toggle Slider
+      Tabs Menu Dialog Image Canvas PixelGrid ColorPicker ScrollView
+      Row Column Stack Grid Spacer Responsive    layout
+
+    Common options: id, width, height, grow, align, padding, gap,
+    enabled, style, font, size, color. Handlers (on_click, on_change,
+    on_submit, on_select) get an event with kind, value and widget.
+
+CANVASES
+    app.canvas(w, h, format) makes a Canvas widget w x h lu with w x h
+    pixels of its own; format is "rgba8888" (the default, 4 bytes a
+    pixel), "rgb565" (2 bytes) or "indexed8" (1 byte). Put it in a
+    window like any widget.
+
+      canvas.put(pixels, damage)
+        New pixels: bytes in the canvas format for the whole canvas.
+        damage is a list of changed rects (x, y, w, h), or None/nil for
+        all of it. They show at the next loop turn.
+
+      canvas.commit_at(pts_us)
+        Show the pixels put since the last commit at time pts_us on the
+        ui.now_us() clock instead of at the next loop turn. Frames
+        queue in time order; the compositor keeps at most about half a
+        second (12 frames) ahead. A video decodes a little ahead and
+        commits each frame for its own time, so it plays smoothly even
+        when the server or the network hitch.
+
+      canvas.queue_flush()
+        Drop the frames queued with commit_at that aren't shown yet
+        (on a seek or a pause).
+
+      canvas.content
+        How the frames may travel to players: "auto" (the default),
+        "exact" (never lossy) or "motion" (video: lossy allowed).
+
+EXAMPLES
+      import ui
+      app = ui.App("dev.me.bars")
+      cv = app.canvas(64, 32)
+      def play(e):
+          t = ui.now_us() + 100000
+          for i in range(10):
+              cv.put(bytes([i * 25, 0, 0, 255]) * (64 * 32))
+              cv.commit_at(t + i * 40000)
+      app.window("Bars", ui.Column(children=[cv,
+          ui.Button("Play", on_click=play)]))
+      cv.content = "motion"
+      app.run()
+
+    In Lua: local cv = app:canvas(64, 32); cv:put(string.rep(
+    string.char(255, 0, 0, 255), 64 * 32)); cv:commit_at(ui.now_us()).
+
+SEE ALSO
+    scripting, python, lua, gui, visual, gfx

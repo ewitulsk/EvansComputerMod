@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Protocol version sent in Hello / Welcome.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 /// Largest message body accepted, in bytes.
 pub const MAX_MESSAGE: u32 = 1048576;
 
@@ -25,6 +25,10 @@ pub mod opcode {
     pub const COMMIT: u16 = 0x0107;
     pub const REQUEST_FRAME: u16 = 0x0108;
     pub const FRAME: u16 = 0x0109;
+    pub const COMMIT_AT: u16 = 0x010c;
+    pub const QUEUE_FLUSH: u16 = 0x010d;
+    pub const SURFACE_SET_CONTENT: u16 = 0x010e;
+    pub const QUEUE_LIMITS: u16 = 0x010f;
     pub const CLOSE_REQUESTED: u16 = 0x010a;
     pub const POPUP_DONE: u16 = 0x010b;
     pub const TREE_OPS: u16 = 0x0200;
@@ -38,6 +42,7 @@ pub mod opcode {
     pub const CHORD: u16 = 0x0305;
     pub const HOTKEY_CLAIM: u16 = 0x0310;
     pub const POINTER_LOCK: u16 = 0x0311;
+    pub const SCROLLED: u16 = 0x0313;
     pub const POINTER_LOCK_CHANGED: u16 = 0x0312;
     pub const WINDOW_OPENED: u16 = 0x0400;
     pub const WINDOW_CHANGED: u16 = 0x0401;
@@ -957,6 +962,34 @@ pub enum Prop {
     Points(Vec<Point>),
     /// line width in lu
     Width(u16),
+    /// v2: fill while the pointer is over the node's hit id (the client applies it at once; the app's own state replaces it)
+    HoverFill(u32),
+    /// v2: border colour while hovered
+    HoverBorderColor(u32),
+    /// v2: text colour while hovered
+    HoverColor(u32),
+    /// v2: fill while the left button is down on the node's hit id
+    PressedFill(u32),
+    /// v2: border colour while pressed
+    PressedBorderColor(u32),
+    /// v2: text colour while pressed
+    PressedColor(u32),
+    /// v2: a scroll container (1 x, 2 y, 3 both): the client scrolls it at once on the wheel and reports Scrolled; the app's children are already laid out at ScrollX/ScrollY
+    Scroll(u8),
+    /// v2: a scroll container's content width (lu)
+    ContentW(i32),
+    /// v2: a scroll container's content height (lu)
+    ContentH(i32),
+    /// v2: the offset the app laid the content out at (lu)
+    ScrollX(i32),
+    /// v2: the offset the app laid the content out at (lu)
+    ScrollY(i32),
+    /// v2: dragging this node moves its window and window <value> (a shell's title bar and the app window it frames); the client moves them at once, the shell's Place confirms
+    DragWindow(u32),
+    /// v2: a text field's text node with the caret at this character index; the client shows typed text in it at once
+    Caret(u32),
+    /// v2: this rect is the caret of text node <value>; the client moves it with the text it predicts
+    CaretOf(u32),
 }
 
 impl Prop {
@@ -984,6 +1017,20 @@ impl Prop {
             Prop::Tint(..) => 20,
             Prop::Points(..) => 21,
             Prop::Width(..) => 22,
+            Prop::HoverFill(..) => 23,
+            Prop::HoverBorderColor(..) => 24,
+            Prop::HoverColor(..) => 25,
+            Prop::PressedFill(..) => 26,
+            Prop::PressedBorderColor(..) => 27,
+            Prop::PressedColor(..) => 28,
+            Prop::Scroll(..) => 29,
+            Prop::ContentW(..) => 30,
+            Prop::ContentH(..) => 31,
+            Prop::ScrollX(..) => 32,
+            Prop::ScrollY(..) => 33,
+            Prop::DragWindow(..) => 34,
+            Prop::Caret(..) => 35,
+            Prop::CaretOf(..) => 36,
         }
     }
     pub fn name(&self) -> &'static str {
@@ -1010,6 +1057,20 @@ impl Prop {
             Prop::Tint(..) => "Tint",
             Prop::Points(..) => "Points",
             Prop::Width(..) => "Width",
+            Prop::HoverFill(..) => "HoverFill",
+            Prop::HoverBorderColor(..) => "HoverBorderColor",
+            Prop::HoverColor(..) => "HoverColor",
+            Prop::PressedFill(..) => "PressedFill",
+            Prop::PressedBorderColor(..) => "PressedBorderColor",
+            Prop::PressedColor(..) => "PressedColor",
+            Prop::Scroll(..) => "Scroll",
+            Prop::ContentW(..) => "ContentW",
+            Prop::ContentH(..) => "ContentH",
+            Prop::ScrollX(..) => "ScrollX",
+            Prop::ScrollY(..) => "ScrollY",
+            Prop::DragWindow(..) => "DragWindow",
+            Prop::Caret(..) => "Caret",
+            Prop::CaretOf(..) => "CaretOf",
         }
     }
     pub fn enc(&self, w: &mut Writer) {
@@ -1083,6 +1144,48 @@ impl Prop {
             }
             Prop::Width(value) => {
                 w.u16(*value);
+            }
+            Prop::HoverFill(value) => {
+                w.u32(*value);
+            }
+            Prop::HoverBorderColor(value) => {
+                w.u32(*value);
+            }
+            Prop::HoverColor(value) => {
+                w.u32(*value);
+            }
+            Prop::PressedFill(value) => {
+                w.u32(*value);
+            }
+            Prop::PressedBorderColor(value) => {
+                w.u32(*value);
+            }
+            Prop::PressedColor(value) => {
+                w.u32(*value);
+            }
+            Prop::Scroll(value) => {
+                w.u8(*value);
+            }
+            Prop::ContentW(value) => {
+                w.i32(*value);
+            }
+            Prop::ContentH(value) => {
+                w.i32(*value);
+            }
+            Prop::ScrollX(value) => {
+                w.i32(*value);
+            }
+            Prop::ScrollY(value) => {
+                w.i32(*value);
+            }
+            Prop::DragWindow(value) => {
+                w.u32(*value);
+            }
+            Prop::Caret(value) => {
+                w.u32(*value);
+            }
+            Prop::CaretOf(value) => {
+                w.u32(*value);
             }
         }
     }
@@ -1175,6 +1278,62 @@ impl Prop {
             22 => {
                 let value = r.u16()?;
                 Prop::Width(value)
+            }
+            23 => {
+                let value = r.u32()?;
+                Prop::HoverFill(value)
+            }
+            24 => {
+                let value = r.u32()?;
+                Prop::HoverBorderColor(value)
+            }
+            25 => {
+                let value = r.u32()?;
+                Prop::HoverColor(value)
+            }
+            26 => {
+                let value = r.u32()?;
+                Prop::PressedFill(value)
+            }
+            27 => {
+                let value = r.u32()?;
+                Prop::PressedBorderColor(value)
+            }
+            28 => {
+                let value = r.u32()?;
+                Prop::PressedColor(value)
+            }
+            29 => {
+                let value = { let v = r.u8()?; if v < 0 || v > 3 { return Err(DecodeError::OutOfRange("Prop.Scroll.value")); } v };
+                Prop::Scroll(value)
+            }
+            30 => {
+                let value = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Prop.ContentW.value")); } v };
+                Prop::ContentW(value)
+            }
+            31 => {
+                let value = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Prop.ContentH.value")); } v };
+                Prop::ContentH(value)
+            }
+            32 => {
+                let value = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Prop.ScrollX.value")); } v };
+                Prop::ScrollX(value)
+            }
+            33 => {
+                let value = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Prop.ScrollY.value")); } v };
+                Prop::ScrollY(value)
+            }
+            34 => {
+                let value = r.u32()?;
+                Prop::DragWindow(value)
+            }
+            35 => {
+                let value = r.u32()?;
+                Prop::Caret(value)
+            }
+            36 => {
+                let value = r.u32()?;
+                Prop::CaretOf(value)
             }
             _ => return Err(DecodeError::BadEnum("Prop")),
         })
@@ -1314,6 +1473,90 @@ impl Prop {
             }
             Prop::Width(value) => {
                 o.push_str("{\"type\":\"Width\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::HoverFill(value) => {
+                o.push_str("{\"type\":\"HoverFill\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::HoverBorderColor(value) => {
+                o.push_str("{\"type\":\"HoverBorderColor\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::HoverColor(value) => {
+                o.push_str("{\"type\":\"HoverColor\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::PressedFill(value) => {
+                o.push_str("{\"type\":\"PressedFill\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::PressedBorderColor(value) => {
+                o.push_str("{\"type\":\"PressedBorderColor\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::PressedColor(value) => {
+                o.push_str("{\"type\":\"PressedColor\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::Scroll(value) => {
+                o.push_str("{\"type\":\"Scroll\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::ContentW(value) => {
+                o.push_str("{\"type\":\"ContentW\"");
+                o.push_str(",\"value\":");
+                json_i(o, *value as i64);
+                o.push('}');
+            }
+            Prop::ContentH(value) => {
+                o.push_str("{\"type\":\"ContentH\"");
+                o.push_str(",\"value\":");
+                json_i(o, *value as i64);
+                o.push('}');
+            }
+            Prop::ScrollX(value) => {
+                o.push_str("{\"type\":\"ScrollX\"");
+                o.push_str(",\"value\":");
+                json_i(o, *value as i64);
+                o.push('}');
+            }
+            Prop::ScrollY(value) => {
+                o.push_str("{\"type\":\"ScrollY\"");
+                o.push_str(",\"value\":");
+                json_i(o, *value as i64);
+                o.push('}');
+            }
+            Prop::DragWindow(value) => {
+                o.push_str("{\"type\":\"DragWindow\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::Caret(value) => {
+                o.push_str("{\"type\":\"Caret\"");
+                o.push_str(",\"value\":");
+                json_u(o, *value as u64);
+                o.push('}');
+            }
+            Prop::CaretOf(value) => {
+                o.push_str("{\"type\":\"CaretOf\"");
                 o.push_str(",\"value\":");
                 json_u(o, *value as u64);
                 o.push('}');
@@ -1470,9 +1713,9 @@ impl TreeOp {
 /// Whether a node of `kind` accepts the prop with tag `tag` (§6 table).
 pub fn node_allows(kind: NodeKind, tag: u8) -> bool {
     match kind {
-        NodeKind::Group => matches!(tag, 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8),
-        NodeKind::Rect => matches!(tag, 1 | 2 | 3 | 4 | 9 | 10 | 11 | 12 | 8),
-        NodeKind::Text => matches!(tag, 1 | 2 | 13 | 14 | 15 | 16 | 8),
+        NodeKind::Group => matches!(tag, 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 29 | 30 | 31 | 32 | 33 | 34),
+        NodeKind::Rect => matches!(tag, 1 | 2 | 3 | 4 | 9 | 10 | 11 | 12 | 8 | 23 | 24 | 26 | 27 | 34 | 36),
+        NodeKind::Text => matches!(tag, 1 | 2 | 13 | 14 | 15 | 16 | 8 | 25 | 28 | 35),
         NodeKind::Image => matches!(tag, 1 | 2 | 3 | 4 | 17 | 18 | 19 | 20 | 8),
         NodeKind::Canvas => matches!(tag, 1 | 2 | 3 | 4 | 17 | 7 | 8),
         NodeKind::Line => matches!(tag, 21 | 22 | 16 | 8),
@@ -1481,7 +1724,7 @@ pub fn node_allows(kind: NodeKind, tag: u8) -> bool {
 
 /// `Hello` · opcode 0x0001 · a>c
 /// 
-/// First message from a client. version = protocol version (1).
+/// First message from a client. version = protocol version (1 or 2).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Hello {
     pub version: u16,
@@ -2024,6 +2267,138 @@ impl From<Frame> for Message {
     fn from(m: Frame) -> Message { Message::Frame(m) }
 }
 
+/// `CommitAt` · opcode 0x010c · a>c
+/// 
+/// v2: like Commit, but the pixel changes in it (canvases, a pixel surface) are shown at pts_us on the program's monotonic clock (WASI clock_time_get MONOTONIC). Tree changes in it are an error; layout stays immediate. Frames queue in pts order, at most max_queue_frames and max_queue_ms ahead (QueueLimits).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct CommitAt {
+    pub surface: u32,
+    pub pts_us: u64,
+}
+
+impl CommitAt {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.surface);
+        w.u64(*&self.pts_us);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let surface = r.u32()?;
+        let pts_us = r.u64()?;
+        Ok(CommitAt { surface, pts_us })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"CommitAt\"");
+        o.push_str(",\"surface\":");
+        json_u(o, *&self.surface as u64);
+        o.push_str(",\"pts_us\":");
+        json_u(o, *&self.pts_us as u64);
+        o.push('}');
+    }
+}
+
+impl From<CommitAt> for Message {
+    fn from(m: CommitAt) -> Message { Message::CommitAt(m) }
+}
+
+/// `QueueFlush` · opcode 0x010d · a>c
+/// 
+/// v2: drop the queued frames of this surface and of the connection's canvases (seek, pause, stop).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct QueueFlush {
+    pub surface: u32,
+}
+
+impl QueueFlush {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.surface);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let surface = r.u32()?;
+        Ok(QueueFlush { surface })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"QueueFlush\"");
+        o.push_str(",\"surface\":");
+        json_u(o, *&self.surface as u64);
+        o.push('}');
+    }
+}
+
+impl From<QueueFlush> for Message {
+    fn from(m: QueueFlush) -> Message { Message::QueueFlush(m) }
+}
+
+/// `SurfaceSetContent` · opcode 0x010e · a>c
+/// 
+/// v2: how a pixel surface (resource 0) or a canvas (resource id) may travel: 0 auto, 1 exact (never lossy), 2 motion (video: lossy allowed), as gfx_set_hint.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct SurfaceSetContent {
+    pub surface: u32,
+    pub resource: u32,
+    pub hint: u8,
+}
+
+impl SurfaceSetContent {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.surface);
+        w.u32(*&self.resource);
+        w.u8(*&self.hint);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let surface = r.u32()?;
+        let resource = r.u32()?;
+        let hint = { let v = r.u8()?; if v < 0 || v > 2 { return Err(DecodeError::OutOfRange("SurfaceSetContent.hint")); } v };
+        Ok(SurfaceSetContent { surface, resource, hint })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"SurfaceSetContent\"");
+        o.push_str(",\"surface\":");
+        json_u(o, *&self.surface as u64);
+        o.push_str(",\"resource\":");
+        json_u(o, *&self.resource as u64);
+        o.push_str(",\"hint\":");
+        json_u(o, *&self.hint as u64);
+        o.push('}');
+    }
+}
+
+impl From<SurfaceSetContent> for Message {
+    fn from(m: SurfaceSetContent) -> Message { Message::SurfaceSetContent(m) }
+}
+
+/// `QueueLimits` · opcode 0x010f · c>a
+/// 
+/// v2: sent right after Welcome to version 2 clients: how many frames and ms CommitAt may queue ahead.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct QueueLimits {
+    pub max_queue_frames: u16,
+    pub max_queue_ms: u32,
+}
+
+impl QueueLimits {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u16(*&self.max_queue_frames);
+        w.u32(*&self.max_queue_ms);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let max_queue_frames = r.u16()?;
+        let max_queue_ms = r.u32()?;
+        Ok(QueueLimits { max_queue_frames, max_queue_ms })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"QueueLimits\"");
+        o.push_str(",\"max_queue_frames\":");
+        json_u(o, *&self.max_queue_frames as u64);
+        o.push_str(",\"max_queue_ms\":");
+        json_u(o, *&self.max_queue_ms as u64);
+        o.push('}');
+    }
+}
+
+impl From<QueueLimits> for Message {
+    fn from(m: QueueLimits) -> Message { Message::QueueLimits(m) }
+}
+
 /// `CloseRequested` · opcode 0x010a · c>a
 /// 
 /// The player (or shell) asked to close this window. The app decides.
@@ -2490,6 +2865,49 @@ impl PointerLock {
 
 impl From<PointerLock> for Message {
     fn from(m: PointerLock) -> Message { Message::PointerLock(m) }
+}
+
+/// `Scrolled` · opcode 0x0313 · c>a
+/// 
+/// v2: the player scrolled scroll container node (Scroll prop) to (x, y) lu; the client shows it already. The app lays the content out there and commits ScrollX/ScrollY to confirm.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Scrolled {
+    pub surface: u32,
+    pub node: u32,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl Scrolled {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.surface);
+        w.u32(*&self.node);
+        w.i32(*&self.x);
+        w.i32(*&self.y);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let surface = r.u32()?;
+        let node = r.u32()?;
+        let x = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Scrolled.x")); } v };
+        let y = { let v = r.i32()?; if v < 0 { return Err(DecodeError::OutOfRange("Scrolled.y")); } v };
+        Ok(Scrolled { surface, node, x, y })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"Scrolled\"");
+        o.push_str(",\"surface\":");
+        json_u(o, *&self.surface as u64);
+        o.push_str(",\"node\":");
+        json_u(o, *&self.node as u64);
+        o.push_str(",\"x\":");
+        json_i(o, *&self.x as i64);
+        o.push_str(",\"y\":");
+        json_i(o, *&self.y as i64);
+        o.push('}');
+    }
+}
+
+impl From<Scrolled> for Message {
+    fn from(m: Scrolled) -> Message { Message::Scrolled(m) }
 }
 
 /// `PointerLockChanged` · opcode 0x0312 · c>a
@@ -3689,6 +4107,10 @@ pub enum Message {
     Commit(Commit),
     RequestFrame(RequestFrame),
     Frame(Frame),
+    CommitAt(CommitAt),
+    QueueFlush(QueueFlush),
+    SurfaceSetContent(SurfaceSetContent),
+    QueueLimits(QueueLimits),
     CloseRequested(CloseRequested),
     PopupDone(PopupDone),
     TreeOps(TreeOps),
@@ -3702,6 +4124,7 @@ pub enum Message {
     Chord(Chord),
     HotkeyClaim(HotkeyClaim),
     PointerLock(PointerLock),
+    Scrolled(Scrolled),
     PointerLockChanged(PointerLockChanged),
     WindowOpened(WindowOpened),
     WindowChanged(WindowChanged),
@@ -3753,6 +4176,10 @@ impl Message {
             Message::Commit(_) => 0x0107,
             Message::RequestFrame(_) => 0x0108,
             Message::Frame(_) => 0x0109,
+            Message::CommitAt(_) => 0x010c,
+            Message::QueueFlush(_) => 0x010d,
+            Message::SurfaceSetContent(_) => 0x010e,
+            Message::QueueLimits(_) => 0x010f,
             Message::CloseRequested(_) => 0x010a,
             Message::PopupDone(_) => 0x010b,
             Message::TreeOps(_) => 0x0200,
@@ -3766,6 +4193,7 @@ impl Message {
             Message::Chord(_) => 0x0305,
             Message::HotkeyClaim(_) => 0x0310,
             Message::PointerLock(_) => 0x0311,
+            Message::Scrolled(_) => 0x0313,
             Message::PointerLockChanged(_) => 0x0312,
             Message::WindowOpened(_) => 0x0400,
             Message::WindowChanged(_) => 0x0401,
@@ -3816,6 +4244,10 @@ impl Message {
             Message::Commit(_) => "Commit",
             Message::RequestFrame(_) => "RequestFrame",
             Message::Frame(_) => "Frame",
+            Message::CommitAt(_) => "CommitAt",
+            Message::QueueFlush(_) => "QueueFlush",
+            Message::SurfaceSetContent(_) => "SurfaceSetContent",
+            Message::QueueLimits(_) => "QueueLimits",
             Message::CloseRequested(_) => "CloseRequested",
             Message::PopupDone(_) => "PopupDone",
             Message::TreeOps(_) => "TreeOps",
@@ -3829,6 +4261,7 @@ impl Message {
             Message::Chord(_) => "Chord",
             Message::HotkeyClaim(_) => "HotkeyClaim",
             Message::PointerLock(_) => "PointerLock",
+            Message::Scrolled(_) => "Scrolled",
             Message::PointerLockChanged(_) => "PointerLockChanged",
             Message::WindowOpened(_) => "WindowOpened",
             Message::WindowChanged(_) => "WindowChanged",
@@ -3879,6 +4312,10 @@ impl Message {
             Message::Commit(m) => m.enc(w),
             Message::RequestFrame(m) => m.enc(w),
             Message::Frame(m) => m.enc(w),
+            Message::CommitAt(m) => m.enc(w),
+            Message::QueueFlush(m) => m.enc(w),
+            Message::SurfaceSetContent(m) => m.enc(w),
+            Message::QueueLimits(m) => m.enc(w),
             Message::CloseRequested(m) => m.enc(w),
             Message::PopupDone(m) => m.enc(w),
             Message::TreeOps(m) => m.enc(w),
@@ -3892,6 +4329,7 @@ impl Message {
             Message::Chord(m) => m.enc(w),
             Message::HotkeyClaim(m) => m.enc(w),
             Message::PointerLock(m) => m.enc(w),
+            Message::Scrolled(m) => m.enc(w),
             Message::PointerLockChanged(m) => m.enc(w),
             Message::WindowOpened(m) => m.enc(w),
             Message::WindowChanged(m) => m.enc(w),
@@ -3942,6 +4380,10 @@ impl Message {
             0x0107 => Message::Commit(Commit::dec(r)?),
             0x0108 => Message::RequestFrame(RequestFrame::dec(r)?),
             0x0109 => Message::Frame(Frame::dec(r)?),
+            0x010c => Message::CommitAt(CommitAt::dec(r)?),
+            0x010d => Message::QueueFlush(QueueFlush::dec(r)?),
+            0x010e => Message::SurfaceSetContent(SurfaceSetContent::dec(r)?),
+            0x010f => Message::QueueLimits(QueueLimits::dec(r)?),
             0x010a => Message::CloseRequested(CloseRequested::dec(r)?),
             0x010b => Message::PopupDone(PopupDone::dec(r)?),
             0x0200 => Message::TreeOps(TreeOps::dec(r)?),
@@ -3955,6 +4397,7 @@ impl Message {
             0x0305 => Message::Chord(Chord::dec(r)?),
             0x0310 => Message::HotkeyClaim(HotkeyClaim::dec(r)?),
             0x0311 => Message::PointerLock(PointerLock::dec(r)?),
+            0x0313 => Message::Scrolled(Scrolled::dec(r)?),
             0x0312 => Message::PointerLockChanged(PointerLockChanged::dec(r)?),
             0x0400 => Message::WindowOpened(WindowOpened::dec(r)?),
             0x0401 => Message::WindowChanged(WindowChanged::dec(r)?),
@@ -3993,7 +4436,7 @@ impl Message {
     }
     /// Whether `opcode` names a message of this protocol version.
     pub fn is_known(opcode: u16) -> bool {
-        matches!(opcode, 0x0001 | 0x0002 | 0x0003 | 0x0100 | 0x0101 | 0x0102 | 0x0103 | 0x0104 | 0x0105 | 0x0106 | 0x0107 | 0x0108 | 0x0109 | 0x010a | 0x010b | 0x0200 | 0x0210 | 0x0211 | 0x0300 | 0x0301 | 0x0302 | 0x0303 | 0x0304 | 0x0305 | 0x0310 | 0x0311 | 0x0312 | 0x0400 | 0x0401 | 0x0402 | 0x0403 | 0x0404 | 0x0410 | 0x0411 | 0x0412 | 0x0413 | 0x0414 | 0x0415 | 0x0416 | 0x0417 | 0x0418 | 0x0419 | 0x0500 | 0x0501 | 0x0510 | 0x0511 | 0x0512 | 0x0520 | 0x0521 | 0x0522 | 0x0523 | 0x0530 | 0x0531 | 0x0532 | 0x0533 | 0x0600 | 0x0601 | 0x0602 | 0x0603)
+        matches!(opcode, 0x0001 | 0x0002 | 0x0003 | 0x0100 | 0x0101 | 0x0102 | 0x0103 | 0x0104 | 0x0105 | 0x0106 | 0x0107 | 0x0108 | 0x0109 | 0x010c | 0x010d | 0x010e | 0x010f | 0x010a | 0x010b | 0x0200 | 0x0210 | 0x0211 | 0x0300 | 0x0301 | 0x0302 | 0x0303 | 0x0304 | 0x0305 | 0x0310 | 0x0311 | 0x0313 | 0x0312 | 0x0400 | 0x0401 | 0x0402 | 0x0403 | 0x0404 | 0x0410 | 0x0411 | 0x0412 | 0x0413 | 0x0414 | 0x0415 | 0x0416 | 0x0417 | 0x0418 | 0x0419 | 0x0500 | 0x0501 | 0x0510 | 0x0511 | 0x0512 | 0x0520 | 0x0521 | 0x0522 | 0x0523 | 0x0530 | 0x0531 | 0x0532 | 0x0533 | 0x0600 | 0x0601 | 0x0602 | 0x0603)
     }
     pub(crate) fn json_into(&self, o: &mut String) {
         match self {
@@ -4010,6 +4453,10 @@ impl Message {
             Message::Commit(m) => m.json(o),
             Message::RequestFrame(m) => m.json(o),
             Message::Frame(m) => m.json(o),
+            Message::CommitAt(m) => m.json(o),
+            Message::QueueFlush(m) => m.json(o),
+            Message::SurfaceSetContent(m) => m.json(o),
+            Message::QueueLimits(m) => m.json(o),
             Message::CloseRequested(m) => m.json(o),
             Message::PopupDone(m) => m.json(o),
             Message::TreeOps(m) => m.json(o),
@@ -4023,6 +4470,7 @@ impl Message {
             Message::Chord(m) => m.json(o),
             Message::HotkeyClaim(m) => m.json(o),
             Message::PointerLock(m) => m.json(o),
+            Message::Scrolled(m) => m.json(o),
             Message::PointerLockChanged(m) => m.json(o),
             Message::WindowOpened(m) => m.json(o),
             Message::WindowChanged(m) => m.json(o),

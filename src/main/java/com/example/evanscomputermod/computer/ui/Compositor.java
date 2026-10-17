@@ -346,7 +346,8 @@ public final class Compositor {
             Opcode.SURFACE_SET_TITLE, Opcode.SURFACE_SET_HINTS, Opcode.SURFACE_RESIZE, Opcode.ACK_CONFIGURE, Opcode.COMMIT,
             Opcode.REQUEST_FRAME, Opcode.TREE_OPS, Opcode.RESOURCE_CREATE, Opcode.RESOURCE_DESTROY, Opcode.HOTKEY_CLAIM,
             Opcode.POINTER_LOCK, Opcode.LAUNCH, Opcode.CLIPBOARD_SET, Opcode.CLIPBOARD_REQUEST, Opcode.NOTIFY,
-            Opcode.PICK_FILE, Opcode.OPEN, Opcode.SAVE_STATE, Opcode.BACKGROUND_DONE);
+            Opcode.PICK_FILE, Opcode.OPEN, Opcode.SAVE_STATE, Opcode.BACKGROUND_DONE,
+            Opcode.COMMIT_AT, Opcode.QUEUE_FLUSH, Opcode.SURFACE_SET_CONTENT);
     private static final Set<Integer> SHELL_TO_COMP = Set.of(Opcode.PLACE, Opcode.STACK, Opcode.FOCUS_WINDOW,
             Opcode.SET_VISIBLE, Opcode.SET_OPACITY, Opcode.BIND_CHORD, Opcode.CLOSE_WINDOW, Opcode.SET_THEME,
             Opcode.ANSWER_PERMISSION, Opcode.NOTIFICATION_INVOKE);
@@ -391,9 +392,33 @@ public final class Compositor {
                 sf.acked = cfg;
             }
             case UiProto.Commit cm -> commit(surface(c, cm.surface()));
+            case UiProto.CommitAt cm -> {
+                needVersion2(c, m);
+                commitAt(c, surface(c, cm.surface()), cm.ptsUs());
+            }
+            case UiProto.QueueFlush q -> {
+                needVersion2(c, m);
+                queueFlush(c, surface(c, q.surface()));
+            }
+            case UiProto.SurfaceSetContent sc -> {
+                needVersion2(c, m);
+                Surface sf = surface(c, sc.surface());
+                if (sc.resource() == 0) {
+                    if (!sf.isPixels()) throw UiError.badState("SurfaceSetContent on a tree surface needs a canvas");
+                    sf.hint = sc.hint();
+                } else {
+                    UiResource r = c.resources.get(sc.resource());
+                    if (r == null || r.kind != UiProto.ResourceKind.CANVAS) throw UiError.unknown("no canvas " + sc.resource());
+                    r.hint = sc.hint();
+                }
+            }
             case UiProto.RequestFrame rf -> {
-                surface(c, rf.surface()).frameRequested = true;
-                requestTick(periodMs());
+                Surface sf = surface(c, rf.surface());
+                sf.frameRequested = true;
+                // A timed producer runs as far ahead as its queue allows: Frame comes when there is room,
+                // not on the refresh tick (DISPLAY_PIPELINE_SPEC.md Part C4).
+                if (timedActive(c, sf, DisplayClockNow()) && timedRoom(c, sf)) requestTick(0);
+                else requestTick(periodMs());
             }
             case UiProto.TreeOps t -> {
                 Surface sf = surface(c, t.surface());
@@ -641,21 +666,28 @@ public final class Compositor {
     }
 
     private void hello(UiConnection c, UiProto.Hello h) throws UiError {
-        if (h.version() != UiProto.VERSION) {
-            throw new UiError(UiProto.ErrorCode.VERSION, "protocol version " + h.version() + " not supported (have " + UiProto.VERSION + ")");
+        // Version 1 apps keep working: their messages mean what they did, and they never get v2 events.
+        if (h.version() < 1 || h.version() > UiProto.VERSION) {
+            throw new UiError(UiProto.ErrorCode.VERSION, "protocol version " + h.version() + " not supported (have 1-" + UiProto.VERSION + ")");
         }
         if (h.role() != c.role) throw UiError.badState("Hello role differs from ui_open");
         c.hello = true;
+        c.version = h.version();
         c.appId = host.appId(c.pid);
         // An app's saved state comes back right after Welcome (§11 Restore; P4/P5 wiring).
         byte[] restore = c.isShell() ? null : host.restoreFor(c.pid);
-        c.queue(new UiProto.Welcome(UiProto.VERSION, c.appId == null ? "" : c.appId, display.info(), theme,
+        c.queue(new UiProto.Welcome(c.version, c.appId == null ? "" : c.appId, display.info(), theme,
                 UiFonts.METRICS_VERSION, List.of(), restore != null));
         if (restore != null) c.queue(new UiProto.Restore(restore));
         List<UiProto.NotificationAction> waiting = c.isShell() ? null : pendingActions.remove(c.appId);
         if (waiting != null) for (UiProto.NotificationAction a : waiting) c.queue(a);
         List<String> files = c.isShell() ? null : pendingOpenFiles.remove(c.pid);
         if (files != null) for (String f : files) c.queue(new UiProto.OpenFile(f));
+        // Version 2: the queue limits for CommitAt, after what has to come right after Welcome.
+        if (c.version >= 2) {
+            c.queue(new UiProto.QueueLimits(com.example.evanscomputermod.EcmConfig.displayQueueFrames(),
+                    com.example.evanscomputermod.EcmConfig.displayQueueMs()));
+        }
         if (c.isShell()) {
             shell = c;
             shellConnectedMs = host.nowMs();
@@ -884,6 +916,175 @@ public final class Compositor {
             }
         }
         requestTick(0);
+    }
+
+    /**
+     * A client scrolled a scroll container it draws itself (Part F): the app
+     * that owns scene surface {@code sceneSurface} gets {@code Scrolled} (if
+     * it speaks version 2) and confirms with its next commit.
+     */
+    public synchronized void scrolled(int sceneSurface, int node, int x, int y) {
+        SceneExporter ex = exporter;
+        Surface s = ex == null ? null : ex.surfaceOf(sceneSurface);
+        if (s == null || s.conn.closed || s.conn.version < 2 || s.tree == null) return;
+        NodeTree.Node n = s.tree.get(node);
+        if (n == null || n.scroll == 0) return;
+        int cx = Math.max(0, Math.min(Math.max(0, n.contentW - n.w), x));
+        int cy = Math.max(0, Math.min(Math.max(0, n.contentH - n.h), y));
+        s.conn.queue(new UiProto.Scrolled(s.id, node, cx, cy));
+        drainFails();
+    }
+
+    // =================================================================== timed commits (protocol v2)
+
+    private static long DisplayClockNow() {
+        return com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+    }
+
+    private void needVersion2(UiConnection c, UiProto.Message m) throws UiError {
+        if (c.version < 2) throw UiError.badState(name(m) + " needs protocol version 2");
+    }
+
+    /** A timed stream runs on this surface (or on the connection's canvases) when frames were queued or shown in the last second. */
+    private boolean timedActive(UiConnection c, Surface s, long nowUs) {
+        if (s.timed != null && s.timed.active(nowUs, 1_000_000)) return true;
+        for (UiResource r : c.resources.values()) if (r.timed != null && r.timed.active(nowUs, 1_000_000)) return true;
+        return false;
+    }
+
+    /** Is there room for one more frame in every queue the surface's next CommitAt fills? */
+    private boolean timedRoom(UiConnection c, Surface s) {
+        int max = Math.max(1, com.example.evanscomputermod.EcmConfig.displayQueueFrames());
+        if (s.timed != null && s.timed.size() >= max) return false;
+        for (UiResource r : c.resources.values()) if (r.timed != null && r.timed.size() >= max) return false;
+        return true;
+    }
+
+    /**
+     * {@code CommitAt}: the pixel changes of this commit (the surface's own if
+     * it is a pixel surface, and every canvas of the connection with new rows)
+     * are queued for {@code ptsMono} (the app's monotonic clock), not shown.
+     * Tree changes in it are an error: layout stays immediate.
+     */
+    private void commitAt(UiConnection c, Surface s, long ptsMono) throws UiError {
+        if (s.tree != null && !s.pendingOps.isEmpty()) throw UiError.badState("tree changes in a CommitAt (send them with Commit)");
+        if (s.isPixels() && s.resizePending) throw UiError.badState("a resize in a CommitAt (send it with Commit)");
+        long now = DisplayClockNow();
+        long pts = com.example.evanscomputermod.computer.pipeline.DisplayClock.fromMonotonicUs(ptsMono,
+                com.example.evanscomputermod.computer.wasi.WasiFunctions.monotonicNowUs());
+        long maxAhead = Math.max(1, com.example.evanscomputermod.EcmConfig.displayQueueMs()) * 1000L;
+        if (pts > now + maxAhead) pts = now + maxAhead;
+        int max = Math.max(1, com.example.evanscomputermod.EcmConfig.displayQueueFrames());
+        boolean any = false;
+        if (s.isPixels() && !s.pendingPixels.isEmpty()) {
+            TimedQueue q = s.timed();
+            int[] base = q.latest() != null ? q.latest() : s.argb;
+            int[] frame = base.clone();
+            for (Box b : s.pendingPixels.boxes()) {
+                Px.convert(s.pendingRaw, s.format, s.palette, s.bw, s.bh, b.x0(), b.y0(), b.w(), b.h(), frame);
+            }
+            s.pendingPixels.clear();
+            if (q.size() >= max) showTimed(c, s, null, q.takeOldest(now));
+            TimedQueue.Frame f = q.add(pts, frame, now);
+            if (exporter != null) exporter.timedFrame(s, null, null, f, s.hint);
+            any = true;
+        }
+        for (UiResource r : c.resources.values()) {
+            if (r.kind != UiProto.ResourceKind.CANVAS || r.pendingRaw == null || r.pendingDamage.isEmpty()) continue;
+            TimedQueue q = r.timed();
+            int[] frame = (q.latest() != null ? q.latest() : r.argb).clone();
+            for (Box b : r.pendingDamage.boxes()) {
+                Px.convert(r.pendingRaw, r.format, null, r.w, r.h, b.x0(), b.y0(), b.w(), b.h(), frame);
+            }
+            r.pendingDamage.clear();
+            if (q.size() >= max) showTimed(c, null, r, q.takeOldest(now));
+            TimedQueue.Frame f = q.add(pts, frame, now);
+            if (exporter != null) exporter.timedFrame(null, c, r, f, r.hint);
+            any = true;
+        }
+        if (s.acked != null || !s.mapped) commit(s); // a configure answered with CommitAt still maps the surface
+        if (any) {
+            long delayNs = com.example.evanscomputermod.computer.pipeline.DisplayClock.toNanoTime(pts) - System.nanoTime();
+            com.example.evanscomputermod.computer.pipeline.DisplayPump.schedule(this::applyTimed, delayNs);
+            host.timedQueued();
+        }
+    }
+
+    /** Make {@code f} what the surface or canvas shows (compositor lock held). */
+    private void showTimed(UiConnection c, Surface s, UiResource r, TimedQueue.Frame f) {
+        if (f == null) return;
+        if (s != null) {
+            System.arraycopy(f.argb(), 0, s.argb, 0, Math.min(f.argb().length, s.argb.length));
+            s.pixelVersion++;
+            if (s.mapped) damageSurface(s);
+            if (exporter != null) exporter.timedShown(s, null, null, f.seq());
+        } else {
+            System.arraycopy(f.argb(), 0, r.argb, 0, Math.min(f.argb().length, r.argb.length));
+            r.version++;
+            damageResourceUsers(c, r.id);
+            if (exporter != null) exporter.timedShown(null, c, r, f.seq());
+        }
+    }
+
+    /**
+     * Pump timer: every queue shows the newest frame that is due (so this
+     * server's frame, the Java rasterizer, tile viewers and screenshots see
+     * what is on screen now), then the composite and the Frame events follow
+     * in a tick.
+     */
+    public synchronized void applyTimed() {
+        if (closedForGood) return;
+        long now = DisplayClockNow();
+        boolean shown = false;
+        for (UiConnection c : conns.values()) {
+            for (Surface s : c.surfaces.values()) {
+                if (s.timed == null || s.timed.isEmpty()) continue;
+                List<TimedQueue.Frame> due = s.timed.takeDue(now);
+                if (!due.isEmpty()) {
+                    showTimed(c, s, null, due.get(due.size() - 1));
+                    shown = true;
+                }
+            }
+            for (UiResource r : c.resources.values()) {
+                if (r.timed == null || r.timed.isEmpty()) continue;
+                List<TimedQueue.Frame> due = r.timed.takeDue(now);
+                if (!due.isEmpty()) {
+                    showTimed(c, null, r, due.get(due.size() - 1));
+                    shown = true;
+                }
+            }
+        }
+        if (shown) requestTick(0);
+    }
+
+    /** {@code QueueFlush}: drop the surface's queued frames and the connection's canvases'. */
+    private void queueFlush(UiConnection c, Surface s) {
+        if (s.timed != null && s.timed.flush() > 0 && exporter != null) exporter.timedFlushed(s, null, null, s.timed.appliedSeq);
+        for (UiResource r : c.resources.values()) {
+            if (r.timed != null && r.timed.flush() > 0 && exporter != null) {
+                exporter.timedFlushed(null, c, r, r.timed.appliedSeq);
+            }
+        }
+        host.timedQueued();
+        requestTick(0);
+    }
+
+    /** Timed-frame counters of a connection's canvases and surfaces: {queued, shown, dropped, flushed} (diagnostics). */
+    public synchronized long[] timedCounters() {
+        long[] t = new long[4];
+        for (UiConnection c : conns.values()) {
+            for (Surface s : c.surfaces.values()) add(t, s.timed);
+            for (UiResource r : c.resources.values()) add(t, r.timed);
+        }
+        return t;
+    }
+
+    private static void add(long[] t, TimedQueue q) {
+        if (q == null) return;
+        t[0] += q.queued;
+        t[1] += q.shown;
+        t[2] += q.dropped;
+        t[3] += q.flushed;
     }
 
     private void damageResourceUsers(UiConnection c, int resource) {
@@ -1487,13 +1688,18 @@ public final class Compositor {
                 damage.add(displayBox());
             }
         }
-        // Frame pacing: only visible surfaces get Frame (§5).
+        // Frame pacing: only visible surfaces get Frame (§5). A timed producer gets it when its queue has room.
         boolean framesWaiting = false;
+        long nowUs = DisplayClockNow();
         if (visible) {
             List<Item> order = drawOrder(now);
             for (UiConnection c : conns.values()) {
                 for (Surface s : c.surfaces.values()) {
                     if (!s.frameRequested) continue;
+                    if (timedActive(c, s, nowUs) && !timedRoom(c, s)) {
+                        framesWaiting = true;
+                        continue;
+                    }
                     if (frameVisible(s, order)) {
                         s.frameRequested = false;
                         c.queue(new UiProto.Frame(s.id, now));
@@ -1522,7 +1728,11 @@ public final class Compositor {
             if (now >= restartAtMs) startShell();
             else next = Math.min(next, restartAtMs - now);
         }
-        if (visible && !damage.isEmpty()) composite(now);
+        // Part A6: when every viewer draws the scene itself, the damage waits until someone needs pixels.
+        if (visible && !damage.isEmpty()) {
+            if (host.pixelsWanted()) composite(now);
+            else compositesSkipped++;
+        }
         if (exporter != null) exporter.afterTick(now);
         if (animating || deferred) next = Math.min(next, periodMs());
         if (next != Long.MAX_VALUE) requestTick(next);
@@ -1868,7 +2078,24 @@ public final class Compositor {
 
     /** A copy of the composited frame as straight RGBA bytes. */
     public synchronized byte[] frameRgba() {
+        compositePending();
         return rgba.clone();
+    }
+
+    /** Ticks whose composite waited because nobody needed the pixels (Part A6; diagnostics). */
+    private long compositesSkipped;
+
+    public synchronized long compositesSkipped() {
+        return compositesSkipped;
+    }
+
+    /**
+     * Composite damage left over from ticks that skipped it (nobody needed
+     * the pixels then). Something needs them now: a tile viewer appeared, a
+     * screenshot or a check reads the frame.
+     */
+    public synchronized void compositePending() {
+        if (visible && !damage.isEmpty()) composite(host.nowMs());
     }
 
     /** Composite everything now (tests): the whole display is damaged first. */

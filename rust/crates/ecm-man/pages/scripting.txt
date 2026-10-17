@@ -123,10 +123,15 @@ UI
       app.on_suspend(fn) app.restore()   keep state on a phone
       app.pick_file() app.copy(text) app.paste() app.open(path)
       load(file.ui.json, handlers)   a Visual Programmer layout
+      app.canvas(w, h, format)   a Canvas with its own pixels:
+                                 put(pixels, damage), commit_at(pts_us),
+                                 queue_flush(), content = "motion"
+      now_us()                   the clock commit_at times are on
 
     Widgets keep their values: set entry.text = "" or rows.items =
     [...] and the window updates on the next turn. Handlers get an
     event with kind, value and widget. A ui program needs the GUI.
+    See ui.
 
 CARDS
       cards.Reader.find()        the card reader; reader.card()
@@ -162,4 +167,4 @@ EXAMPLE
     hi", {on_click = hi}), app:window(...), app:run().
 
 SEE ALSO
-    python, lua, peripheral, editor, visual, store, pkg, radio
+    python, lua, ui, peripheral, editor, visual, store, pkg, radio

@@ -40,6 +40,49 @@ public final class ComputerTargets {
         return host;
     }
 
+    /**
+     * Handle a display packet from {@code player} (ack or input) on the
+     * network thread (DISPLAY_PIPELINE_SPEC.md Part A3): when the host keeps
+     * a {@link com.example.evanscomputermod.computer.pipeline.ViewerSnapshot},
+     * the player is checked against it (the range rule at the last tick) and
+     * {@code fast} runs right here; a host without one gets {@code slow} on
+     * the server thread, as before. Packets from players the snapshot refuses
+     * are dropped.
+     */
+    public static void offThread(ServerPlayer player, UUID computerId, int displayId, boolean input,
+                                 java.util.function.Consumer<IComputerHost> fast, Runnable slow) {
+        IComputerHost host = ComputerRegistry.get(computerId);
+        var snap = host == null ? null : host.viewerSnapshot();
+        if (snap == null) {
+            var server = player.level().getServer();
+            if (server != null) server.execute(slow);
+            return;
+        }
+        boolean ok = input ? snap.mayInput(player.getUUID(), displayId) : snap.mayInteract(player.getUUID(), displayId);
+        if (ok) fast.accept(host);
+    }
+
+    /**
+     * Input from {@code player} to a computer display, handled on the network
+     * thread when the host allows it (Part A3): the compositor and the kernel
+     * input queue are thread-safe. The upload port's "who uses this computer"
+     * note still happens on the server thread, only when the player changes.
+     * {@code slow} is the server-thread path for hosts without a snapshot.
+     */
+    public static void input(ServerPlayer player, UUID computerId, int displayId,
+                             java.util.function.Consumer<ComputerInstance> action, Runnable slow) {
+        offThread(player, computerId, displayId, true, host -> {
+            ComputerInstance computer = instance(host);
+            if (computer == null) return;
+            if (!computer.uploadPort().isOperator(player, host)) {
+                var server = host.getServer();
+                if (server != null) server.execute(() -> computer.uploadPort().noteOperator(player, host));
+            }
+            action.accept(computer);
+            host.markDirtyLater();
+        }, slow);
+    }
+
     /** The live computer behind {@code host}, or null while it is off or booting. */
     @Nullable
     public static ComputerInstance instance(IComputerHost host) {

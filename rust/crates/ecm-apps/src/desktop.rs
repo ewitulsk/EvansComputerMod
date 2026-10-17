@@ -46,6 +46,8 @@ pub const TASKBAR_H: i32 = 24;
 pub const TITLE_H: i32 = 18;
 /// Border around a window (lu): the resize grip.
 pub const BORDER: i32 = 3;
+/// Width of the frame's minimize / maximize / close buttons at the title bar's right end.
+pub const TITLE_BUTTONS_W: i32 = 3 * 20 + 2 * 1 + 2 * 1;
 /// How long a toast stays (ms).
 pub const TOAST_MS: u64 = 6000;
 /// Alt+Tab commits the selection after this long without another press (ms).
@@ -907,8 +909,18 @@ fn frame_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef, wid: u32) -> Ele
     let bar = if focused { t.titlebar } else { t.titlebar_inactive };
     let fg = if focused { t.titlebar_text } else { t.text };
     let title: String = w.title.chars().take(80).collect();
+    // The title bar between the resize edges and the buttons: dragging it moves
+    // the frame and the app window (DragWindow, protocol v2), which the client
+    // shows at once; the Place this desktop sends after the drag confirms it.
+    // Maximized windows don't move. Invisible: it only carries the prop.
+    let grip = BORDER + 2;
+    let mut drag = vec![Prop::X(grip), Prop::Y(2), Prop::W((fw - TITLE_BUTTONS_W - grip).max(0)), Prop::H(TITLE_H - 2), Prop::Fill(0)];
+    if !w.maximized {
+        drag.push(Prop::DragWindow(wid));
+    }
     let nodes = vec![
         SceneNode::new("edge", NodeKind::Rect, vec![Prop::X(0), Prop::Y(0), Prop::W(fw), Prop::H(fh), Prop::Fill(bar)]),
+        SceneNode::new("drag", NodeKind::Rect, drag),
         SceneNode::new("icon", NodeKind::Image, {
             let mut p = vec![Prop::X(4), Prop::Y(1), Prop::W(16), Prop::H(16)];
             if let Some(r) = s.icons.get(icon_for(&w.app_id)) {

@@ -141,6 +141,33 @@ public interface IComputerHost {
      */
     default void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {}
 
+    /**
+     * Who watches and may use this host's displays as of its last tick
+     * (DISPLAY_PIPELINE_SPEC.md Part A2), or null if the host keeps none. With
+     * a snapshot, acks and input are handled on the network thread (checked
+     * against it) and the {@code UUID} variants below are called; without
+     * one they hop to the server thread as before.
+     */
+    default com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot() {
+        return null;
+    }
+
+    /** The tile sync hubs of this host's displays, by display id (stats). */
+    default java.util.Map<Integer, com.example.evanscomputermod.computer.DisplaySyncHub> syncHubs() {
+        return java.util.Map.of();
+    }
+
+    /** {@link #markDirty()} from any thread: the host saves at its next tick. */
+    default void markDirtyLater() {
+        markDirty();
+    }
+
+    /** {@link #onDisplayAck(ServerPlayer, int, long)} from any thread, with the client's receive time (µs, 0 = unknown). */
+    default void onDisplayAck(java.util.UUID player, int displayId, long generation, long clientRecvUs) {}
+
+    /** {@link #onSceneAck(ServerPlayer, int, int, long, long[])} from any thread, with the client's receive time. */
+    default void onSceneAck(java.util.UUID player, int displayId, int epoch, long generation, long[] missing, long clientRecvUs) {}
+
     /** The kernel switched network interface {@code index}'s link (block hosts show it on their faces). */
     default void onLinkStateChanged(int index, boolean up) {}
 

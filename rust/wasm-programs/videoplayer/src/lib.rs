@@ -3,6 +3,11 @@
 //!
 //! * [`Clock`]: the playback position, which the picture and the sound follow
 //!   (wall-clock master: pause, play and seek move it).
+//! * Timed frames ([`lookahead_ms`], [`frame_timing_ahead`], [`Clock::now_at`]):
+//!   while playing, frames are decoded a little ahead of the clock and sent
+//!   with `CommitAt` for the moment the clock reaches them, so the compositor
+//!   and the players' clients show them on time through server and network
+//!   hitches (the clock is only the producer side then).
 //! * [`AudioPump`]: keeps the speaker a little ahead of the clock with the
 //!   video's own PCM, and skips sound that fell behind.
 //! * [`fit`] and [`decode_size`]: where the picture goes and at which size the
@@ -151,6 +156,60 @@ impl Clock {
         self.anchor_pos = pos.max(0);
         self.anchor_now = now;
     }
+
+    /// When (`now`, same time base) the playing clock reaches media time
+    /// `pts`; None while paused.
+    pub fn now_at(&self, pts: i64) -> Option<i64> {
+        if self.playing {
+            Some(self.anchor_now + (pts - self.anchor_pos))
+        } else {
+            None
+        }
+    }
+}
+
+/// How far ahead of the clock frames are decoded and queued.
+pub const LOOKAHEAD_MS: i64 = 300;
+
+/// How far ahead to queue frames: [`LOOKAHEAD_MS`], kept inside the
+/// compositor's queue (`QueueLimits`: frames and ms, with a little room).
+/// 0 without limits (a version 1 compositor: no `CommitAt`, frames are
+/// committed when they are due).
+pub fn lookahead_ms(limits: Option<(u16, u32)>, frame_ms: i64) -> i64 {
+    match limits {
+        None => 0,
+        Some((frames, ms)) => {
+            let by_frames = (frames as i64 - 2).max(0) * frame_ms.max(1);
+            LOOKAHEAD_MS.min(ms as i64 - 50).min(by_frames).max(0)
+        }
+    }
+}
+
+/// [`frame_timing`] when frames are queued `ahead_ms` early: a frame is sent
+/// (`Show`: committed for its own time) once it is within `ahead_ms` of the
+/// clock, and still dropped when it is already late.
+pub fn frame_timing_ahead(pts: i64, pos: i64, frame_ms: i64, ahead_ms: i64) -> FrameTiming {
+    match frame_timing(pts, pos + ahead_ms.max(0), frame_ms) {
+        FrameTiming::Wait(ms) => FrameTiming::Wait(ms),
+        _ => frame_timing(pts, pos, frame_ms).not_waiting(),
+    }
+}
+
+impl FrameTiming {
+    fn not_waiting(self) -> FrameTiming {
+        match self {
+            FrameTiming::Wait(_) => FrameTiming::Show,
+            t => t,
+        }
+    }
+}
+
+/// The monotonic time in µs a frame at media time `pts` is shown at: the
+/// clock's `now` base (ms since `t0_us` on the monotonic clock) mapped onto
+/// it. None while paused.
+pub fn present_time_us(clock: &Clock, pts: i64, t0_us: u64) -> Option<u64> {
+    let at = clock.now_at(pts)?;
+    Some((t0_us as i64 + at * 1000).max(0) as u64)
 }
 
 // ---------------------------------------------------------------- frame pacing
@@ -663,6 +722,33 @@ mod tests {
         assert_eq!(c.pos(9300), 0, "never before the start");
         let p = Clock::new(0, 400, false);
         assert_eq!(p.pos(10_000), 400);
+    }
+
+    #[test]
+    fn timed_frames_go_out_ahead_on_the_monotonic_clock() {
+        // 300 ms ahead, inside the compositor's queue: 12 frames / 500 ms.
+        assert_eq!(lookahead_ms(Some((12, 500)), 33), 300);
+        assert_eq!(lookahead_ms(Some((12, 500)), 16), 160, "60 fps: 10 frames fit");
+        assert_eq!(lookahead_ms(Some((12, 200)), 33), 150);
+        assert_eq!(lookahead_ms(None, 33), 0, "v1 compositor: no CommitAt");
+        // A frame 250 ms ahead is sent now (for its own time); 400 ms ahead waits 100 ms.
+        assert_eq!(frame_timing_ahead(1250, 1000, 33, 300), FrameTiming::Show);
+        assert_eq!(frame_timing_ahead(1400, 1000, 33, 300), FrameTiming::Wait(100));
+        // Late frames are still dropped; lookahead 0 is the old timing.
+        assert_eq!(frame_timing_ahead(800, 1000, 33, 300), FrameTiming::Drop);
+        assert_eq!(frame_timing_ahead(1000, 900, 66, 0), FrameTiming::Wait(100));
+        assert_eq!(frame_timing_ahead(990, 1000, 66, 0), FrameTiming::Show);
+        // Media time onto the monotonic clock: playing from 5 s at now = 2000 ms (t0 = 1 s).
+        let mut c = Clock::new(2000, 5000, true);
+        assert_eq!(c.now_at(5300), Some(2300));
+        assert_eq!(present_time_us(&c, 5300, 1_000_000), Some(1_000_000 + 2_300_000));
+        // After a seek the mapping moves with the clock; paused there is none.
+        c.seek(3000, 60_000);
+        assert_eq!(present_time_us(&c, 60_100, 0), Some(3_100_000));
+        c.pause(3050);
+        assert_eq!(present_time_us(&c, 60_100, 0), None);
+        c.play(10_000);
+        assert_eq!(c.now_at(60_100), Some(10_050), "resumed at 60.05 s");
     }
 
     #[test]

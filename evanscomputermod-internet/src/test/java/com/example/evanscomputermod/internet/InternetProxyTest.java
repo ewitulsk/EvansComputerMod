@@ -1,4 +1,4 @@
-package com.example.evanscomputermod.computer;
+package com.example.evanscomputermod.internet;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -31,7 +31,7 @@ public class InternetProxyTest {
         var output = new LinkedBlockingQueue<byte[]>();
         int target = address();
         try (var socket = new DatagramSocket(0);
-                var proxy = new InternetProxy(output::offer)) {
+                var proxy = new InternetProxy(output::offer, true)) {
             socket.setSoTimeout(3000);
             byte[] payload = "dns-like-odd-length".getBytes();
             byte[] udp = new byte[8 + payload.length];
@@ -63,7 +63,7 @@ public class InternetProxyTest {
     @Test
     void gatewayIgnoresDhcpDiscover() throws Exception {
         var output = new LinkedBlockingQueue<byte[]>();
-        try (var proxy = new InternetProxy(output::offer)) {
+        try (var proxy = new InternetProxy(output::offer, false)) {
             byte[] bootp = new byte[244];
             bootp[0] = 1; // BOOTREQUEST
             bootp[1] = 1;
@@ -105,7 +105,7 @@ public class InternetProxyTest {
         var output = new LinkedBlockingQueue<byte[]>();
         int target = address();
         try (var server = new ServerSocket(0);
-                var proxy = new InternetProxy(output::offer)) {
+                var proxy = new InternetProxy(output::offer, true)) {
             server.setSoTimeout(3000);
             int port = server.getLocalPort();
             proxy.sendFrame(tcp(target, port, 100, 0, 2, new byte[0]));
@@ -152,6 +152,87 @@ public class InternetProxyTest {
                                 16,
                                 new byte[0]));
             }
+        }
+    }
+
+    @Test
+    void lanDestinationsBlockedByDefault() throws Exception {
+        try (var lan = new InternetProxy(b -> {}, false); var open = new InternetProxy(b -> {}, true)) {
+            int[] blocked = {0x0a000005, 0xac100001, 0xac1fffff, 0xc0a80101, 0x64400001, 0x647fffff};
+            for (int ip : blocked) {
+                assertFalse(lan.routable(ip, 80), Integer.toHexString(ip) + " is a LAN address");
+                assertTrue(open.routable(ip, 80), "allowLan reaches " + Integer.toHexString(ip));
+            }
+            int[] never = {0x7f000001, 0xa9fe0001, 0x00000001, 0xe0000001, 0xffffffff};
+            for (int ip : never) {
+                assertFalse(lan.routable(ip, 80), Integer.toHexString(ip));
+                assertFalse(open.routable(ip, 80), "allowLan never reaches " + Integer.toHexString(ip));
+            }
+            int[] publicIps = {0x08080808, 0x01010101, 0xac200001, 0xab0f0001, 0x64800001, 0xc0a90001};
+            for (int ip : publicIps) assertTrue(lan.routable(ip, 80), Integer.toHexString(ip) + " is public");
+            // A test site's own address and port only.
+            long key = InternetProxy.exemptKey(0xc0a80105, 8080);
+            InternetProxy.EXEMPT.add(key);
+            try {
+                assertTrue(lan.routable(0xc0a80105, 8080));
+                assertFalse(lan.routable(0xc0a80105, 8081));
+            } finally {
+                InternetProxy.EXEMPT.remove(key);
+            }
+            assertFalse(lan.routable(0xc0a80105, 8080));
+        }
+    }
+
+    @Test
+    void lanSynIsRefusedWithReset() throws Exception {
+        var output = new LinkedBlockingQueue<byte[]>();
+        int target = 0xc0a80105;
+        try (var proxy = new InternetProxy(output::offer, false)) {
+            proxy.sendFrame(tcp(target, 80, 500, 0, 2, new byte[0]));
+            byte[] reply = output.poll(3, TimeUnit.SECONDS);
+            assertNotNull(reply, "a blocked SYN gets an answer");
+            assertEquals(20, reply[47] & 255, "RST+ACK");
+            assertEquals(501L, Integer.toUnsignedLong(InternetProxy.i32(reply, 42)), "acknowledges the SYN");
+            assertEquals(SOURCE, InternetProxy.i32(reply, 30));
+        }
+    }
+
+    @Test
+    void tapDeviceNamesAreValidated() {
+        assertTrue(TapBridge.validDeviceName("tap0"));
+        assertTrue(TapBridge.validDeviceName("ecm-tap_1.a"));
+        assertTrue(TapBridge.validDeviceName("abcdefghijklmno"));
+        assertFalse(TapBridge.validDeviceName("abcdefghijklmnop"), "16 characters is too long");
+        assertFalse(TapBridge.validDeviceName(""));
+        assertFalse(TapBridge.validDeviceName(null));
+        assertFalse(TapBridge.validDeviceName("tap0'; import os"));
+        assertFalse(TapBridge.validDeviceName("tap 0"));
+        assertFalse(TapBridge.validDeviceName("tap0\n"));
+        assertThrows(IllegalArgumentException.class, () -> TapBridge.helperScript("x'),os.system('id')#"));
+        assertTrue(TapBridge.helperScript("tap0").contains("b'tap0'"));
+        assertThrows(java.io.IOException.class, () -> new TapBridge("bad name", f -> {}));
+    }
+
+    @Test
+    void tapIsOffUnlessNamed() {
+        String proxy = System.getProperty("evanscomputermod.internetProxy");
+        String tap = System.getProperty("evanscomputermod.tap");
+        try {
+            System.setProperty("evanscomputermod.internetProxy", "false");
+            System.clearProperty("evanscomputermod.tap");
+            assertNull(new SocketUplinkProvider().open(f -> {}), "no proxy and no TAP: nothing opened");
+            System.setProperty("evanscomputermod.tap", "bad;name");
+            assertNull(new SocketUplinkProvider().open(f -> {}), "an invalid TAP name never starts the helper");
+            System.clearProperty("evanscomputermod.tap");
+            System.setProperty("evanscomputermod.internetProxy", "true");
+            var uplink = new SocketUplinkProvider().open(f -> {});
+            assertInstanceOf(InternetProxy.class, uplink, "the proxy alone by default");
+            uplink.close();
+        } finally {
+            if (proxy == null) System.clearProperty("evanscomputermod.internetProxy");
+            else System.setProperty("evanscomputermod.internetProxy", proxy);
+            if (tap == null) System.clearProperty("evanscomputermod.tap");
+            else System.setProperty("evanscomputermod.tap", tap);
         }
     }
 }

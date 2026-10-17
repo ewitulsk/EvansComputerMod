@@ -148,13 +148,8 @@ public class ComputerInstance implements AutoCloseable {
     private final com.example.evanscomputermod.computer.ui.UiManager uiManager;
     private boolean bootedOnce;
 
-    /** Streams program frames to clients at the display refresh rate (shared by all computers). */
-    private static final java.util.concurrent.ScheduledExecutorService DISPLAY_SYNC =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "ECM-Display-Sync");
-                t.setDaemon(true);
-                return t;
-            });
+    // Program frames are streamed at the display refresh rate on the display pump
+    // (computer/pipeline/DisplayPump), which replaced the single ECM-Display-Sync thread.
     private final java.util.concurrent.atomic.AtomicBoolean displaySyncScheduled =
             new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile long lastDisplaySyncNanos = 0;
@@ -280,6 +275,11 @@ public class ComputerInstance implements AutoCloseable {
      * {@link ComputerHost} a terminal hands over, so terminal-only features
      * (Screen cluster, display devices) still find their terminal.
      */
+    /** The host this computer runs in now (a block, an ePhone), or null. */
+    public IComputerHost currentHost() {
+        return attachedHost();
+    }
+
     private IComputerHost attachedHost() {
         IComputerHost h = host;
         return h instanceof ComputerHost owned && owned.attachment() != null ? owned.attachment() : h;
@@ -513,12 +513,10 @@ public class ComputerInstance implements AutoCloseable {
             if (changed) {
                 readFramebufferFromWasm();
                 readScreenFramebufferFromWasm();
-                // Flag only — the server tick's tickSync() picks this up
-                // and schedules exactly one sync task per tick. Directly
-                // calling syncTerminalToClients() here would flood the
-                // server task queue during tight animation loops (every
-                // hostSleepMs chunk would queue another runnable).
-                needsSync = true;
+                // Straight to the display pump (paced to the refresh rate and
+                // coalesced there), not the next server tick: console text no
+                // longer waits for ticks (DISPLAY_PIPELINE_SPEC.md Part A1).
+                requestDisplaySync();
             }
         } catch (Exception e) {
             // Silently ignore — non-critical
@@ -713,7 +711,7 @@ public class ComputerInstance implements AutoCloseable {
         }
         // Read the new grid now, so the next sync carries it.
         readFramebufferFromWasm();
-        needsSync = true;
+        requestDisplaySync();
         return true;
     }
 
@@ -1215,7 +1213,7 @@ public class ComputerInstance implements AutoCloseable {
             if (now - lastFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
                 lastFbSyncMs = now;
                 readFramebufferFromWasm();
-                needsSync = true;
+                requestDisplaySync();
             }
             return null;
         });
@@ -1242,7 +1240,7 @@ public class ComputerInstance implements AutoCloseable {
             if (now - lastScreenFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
                 lastScreenFbSyncMs = now;
                 readScreenFramebufferFromWasm();
-                needsSync = true;
+                requestDisplaySync();
             }
             return null;
         });
@@ -2313,6 +2311,29 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
+     * {@code video_decode_to_back}: the next frame into the double-buffered
+     * display's back buffer, not shown; {@code gfx_present_at} queues it.
+     *
+     * @return presentation timestamp in ms, -1 on EOF, -2 on any error
+     */
+    public long bridgeVideoDecodeToBack(int handle, int target) {
+        if (childAbortRequested) return -2L;
+        var d = videoRegistry.get(handle, callerPid());
+        if (d == null) return -2L;
+        var dev = programDevice(target);
+        if (dev == null) return -2L;
+        try {
+            var frame = d.next();
+            if (frame == null) return -1L;
+            int rc = dev.loadBack(callerPid(), d.targetWidth(), d.targetHeight(), d.outputFormat(), frame.pixels);
+            return rc < 0 ? -2L : frame.ptsMs;
+        } catch (IOException e) {
+            EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToBack failed", e);
+            return -2L;
+        }
+    }
+
+    /**
      * Decode the next video frame into {@code dst} (the decoder's
      * {@code frameBytes()} long, in the format it was opened with), for a
      * program that shows it itself, e.g. in a UI canvas.
@@ -2512,6 +2533,31 @@ public class ComputerInstance implements AutoCloseable {
         return dev == null ? -1 : dev.present(callerPid(), flags);
     }
 
+    /** {@code gfx_present_at}: queue the back buffer for {@code ptsUs} (display clock). */
+    public long bridgeGfxPresentAt(int target, int flags, long ptsUs) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.presentAt(callerPid(), flags, ptsUs);
+    }
+
+    /** {@code gfx_queue_flush}: drop the frames queued and not shown yet. */
+    public int bridgeGfxQueueFlush(int target) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.queueFlush(callerPid());
+    }
+
+    /** {@code gfx_set_hint}: 0 auto, 1 exact, 2 motion. */
+    public int bridgeGfxSetHint(int target, int hint) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.setHint(callerPid(), hint);
+    }
+
+    /** {@code gfx_queue_state}: frames queued {@code << 32} | ms ahead. */
+    public long bridgeGfxQueueState(int target) {
+        var window = target == GFX_TARGET_TERMINAL ? uiManager.existingDevice(callerPid()) : null;
+        var dev = window != null ? window : displayDevice(target);
+        return dev == null ? -1 : dev.queueState();
+    }
+
     /** Sleep until the display's next vertical blank; returns its number. */
     public long bridgeGfxWaitVblank(int target) {
         var dev = programDevice(target);
@@ -2579,7 +2625,7 @@ public class ComputerInstance implements AutoCloseable {
         if (delay <= 0) {
             runDisplaySync();
         } else {
-            DISPLAY_SYNC.schedule(this::runDisplaySync, delay, java.util.concurrent.TimeUnit.NANOSECONDS);
+            com.example.evanscomputermod.computer.pipeline.DisplayPump.schedule(this::runDisplaySync, delay);
         }
     }
 

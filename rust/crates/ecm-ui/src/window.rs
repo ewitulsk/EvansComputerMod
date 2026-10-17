@@ -7,6 +7,21 @@
 //! carry a `hit_id`, so a `Pointer` event names the widget it hit and no
 //! hit-testing happens here (§7).
 //!
+//! Client feedback (protocol v2, DISPLAY_PIPELINE_SPEC.md part F): nodes also
+//! say what the toolkit itself would draw a moment later, so a client can
+//! show it at once. Every node of a widget with a hover or pressed look
+//! carries the widget's hit id and `HoverFill` / `PressedFill` (rects),
+//! `HoverBorderColor` / `PressedBorderColor` (bordered rects) and
+//! `HoverColor` / `PressedColor` (texts): the look while the hit id under the
+//! pointer is the node's own, and while the left button went down on it. They
+//! are always present (equal to the normal look where nothing changes), so a
+//! node never drops them. A scroll view's viewport group carries `Scroll`,
+//! `ContentW` / `ContentH` and `ScrollX` / `ScrollY` (the offset its content
+//! is laid out at) and takes `Scrolled` back ([`Window::scrolled`]). The
+//! focused text field's text node carries `Caret` (key `<field>:typing`, so
+//! the prop goes away with the node) and its caret rect `CaretOf`. None of
+//! this changes what the server draws.
+//!
 //! Text fields and text areas keep a caret and a selection (an anchor and
 //! the caret, in characters). Their clipboard keys (Ctrl+C / X / V, Ctrl+A,
 //! Shift+Insert, …) don't touch the clipboard themselves: they leave an
@@ -980,6 +995,26 @@ impl Window {
         st.scroll = i32::MAX / 2;
         st.follow = false;
         self.dirty = true;
+    }
+
+    /// The client scrolled scroll container `node` (a scroll view's viewport
+    /// group) to `(x, y)` lu (`Scrolled`, protocol v2): lay its content out
+    /// there. False when no scroll view has that node.
+    pub fn scrolled(&mut self, node: u32, _x: i32, y: i32) -> bool {
+        let key = self
+            .info
+            .iter()
+            .filter(|(_, i)| i.kind == Kind::ScrollView)
+            .map(|(k, _)| k)
+            .find(|k| self.tree.id_of(&format!("{k}:vp")) == Some(node))
+            .cloned();
+        match key {
+            Some(k) => {
+                self.set_scroll(&k, y);
+                true
+            }
+            None => false,
+        }
     }
 
     fn set_scroll(&mut self, key: &str, s: i32) {
@@ -2607,7 +2642,9 @@ impl Painter<'_> {
         out.push(self.rect(format!("{k}:track"), Rect::new(r.x + r.w - bar, r.y, bar, view), local, 0, 0, None, track));
         let hit = self.hit(&format!("{k}:bar"), k, Part::Thumb);
         let hovered = self.hovered(k, &Part::Thumb);
-        out.push(self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit));
+        let thumb = self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit);
+        // Hovered it lights up; while dragged (pressed) it is drawn as normal.
+        out.push(thumb.with([Prop::HoverFill(t.text_muted), Prop::PressedFill(t.border)]));
         if let Some(i) = self.info.get_mut(k) {
             i.geom = (view, content, bh, r.y);
         }
@@ -2652,9 +2689,17 @@ impl Painter<'_> {
                     _ => (if hovered { t.hover } else { t.button }, t.text),
                 };
                 let fill = if self.pressed == Some(k.as_str()) { t.surface_alt } else { fill };
+                // The looks the client may show before the app answers: hovered and pressed.
+                let (hover_fill, pressed_fill) = match (enabled, p.style.as_deref()) {
+                    (false, _) => (t.surface, t.surface),
+                    (true, Some("primary")) => (t.accent_hover, t.surface_alt),
+                    (true, Some("danger")) => (t.danger, t.surface_alt),
+                    (true, Some("flat")) => (t.hover, t.surface_alt),
+                    _ => (t.hover, t.surface_alt),
+                };
                 let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
                 let border = self.focus_border(k, None);
-                out.push(self.rect(format!("{k}:bg"), r, o, fill, t.radius, border, hit));
+                out.push(self.rect(format!("{k}:bg"), r, o, fill, t.radius, border, hit).with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                 // Text wider than the whole button (a grown or fixed-width
                 // button in a narrow place) is cut with "..." inside its
                 // padding instead of running out; text that only eats into the
@@ -2664,7 +2709,8 @@ impl Painter<'_> {
                 let s = cut.as_deref().unwrap_or(full);
                 let tx = r.x + (r.w - f.text_width(s)) / 2;
                 let ty = r.y + (r.h - f.line_height()) / 2;
-                out.push(self.text(format!("{k}:text"), tx - o.0, ty - o.1, s, &f, fg));
+                // The label carries the button's hit id, so it keeps the button's look under the pointer.
+                out.push(self.text(format!("{k}:text"), tx - o.0, ty - o.1, s, &f, fg).with([Prop::HitId(hit), Prop::HoverColor(fg), Prop::PressedColor(fg)]));
             }
             Kind::TextField => {
                 let f = self.face(el);
@@ -2701,15 +2747,26 @@ impl Painter<'_> {
                     let sr = Rect::new(r.x + px - sx + x0, r.y + ty, x1 - x0, f.line_height());
                     g.children.push(self.rect(format!("{k}:sel"), sr, local, t.selection, 0, None, 0));
                 }
+                // Typing can be shown by the client at once (Caret / CaretOf) in a
+                // focused field with text, no selection and nothing masked. The
+                // text node then has its own key, so the prop leaves with it.
+                let cursor = self.states.get(k).map_or(0, |s| s.cursor);
+                let typing = focused && self.activated && enabled && !secret && !value.is_empty() && sel.is_none();
+                let text_key = if typing { format!("{k}:typing") } else { format!("{k}:text") };
                 if value.is_empty() {
                     let ph = p.placeholder.as_deref().unwrap_or("");
-                    g.children.push(self.text(format!("{k}:text"), px, ty, ph, &f, t.text_muted));
+                    g.children.push(self.text(text_key.clone(), px, ty, ph, &f, t.text_muted));
                 } else {
-                    g.children.push(self.text(format!("{k}:text"), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted }));
+                    let tn = self.text(text_key.clone(), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted });
+                    g.children.push(if typing { tn.with([Prop::Caret(cursor as u32)]) } else { tn });
                 }
                 if focused && self.activated && self.caret_on {
                     let cr = Rect::new(r.x + px - sx + caret_x, r.y + ty, 1, f.line_height());
-                    g.children.push(self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0));
+                    let mut caret = self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0);
+                    if typing {
+                        caret.caret_of = Some(text_key);
+                    }
+                    g.children.push(caret);
                 }
                 out.push(g);
             }
@@ -2736,7 +2793,10 @@ impl Painter<'_> {
                     let b = Rect::new(r.x, by, lh, lh);
                     let hovered = enabled && self.hovered(k, &Part::Main);
                     let border = self.focus_border(k, Some((t.border_w, if on || hovered { t.accent } else { t.border })));
-                    out.push(self.rect(format!("{k}:box"), b, o, if on { t.accent } else { t.surface }, 2, border, 0));
+                    // Hovered (enabled) the border turns accent; pressed it is drawn unhovered.
+                    let look = |h: bool| if self.focused(k) { t.focus } else if on || (h && enabled) { t.accent } else { t.border };
+                    let bx = self.rect(format!("{k}:box"), b, o, if on { t.accent } else { t.surface }, 2, border, hit);
+                    out.push(bx.with([Prop::HoverBorderColor(look(true)), Prop::PressedBorderColor(look(false))]));
                     if on {
                         let s = lh as f32 / 12.0;
                         let pt = |x: f32, y: f32| Point { x: b.x - o.0 + (x * s) as i32, y: b.y - o.1 + (y * s) as i32 };
@@ -2798,7 +2858,13 @@ impl Painter<'_> {
                     } else {
                         0
                     };
-                    rg.children.push(self.rect(format!("{}:rowbg", c.key), row, (row.x, row.y), fill, t.radius, None, hit));
+                    let (hover_fill, pressed_fill) = match (sel == Some(i), enabled) {
+                        (true, _) => (t.surface_alt, t.surface_alt),
+                        (false, true) => (t.row_hover, 0),
+                        (false, false) => (0, 0),
+                    };
+                    let bg = self.rect(format!("{}:rowbg", c.key), row, (row.x, row.y), fill, t.radius, None, hit);
+                    rg.children.push(bg.with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                     self.paint(c, Some(k), (row.x, row.y), &mut rg.children);
                     g.children.push(rg);
                 }
@@ -2816,7 +2882,9 @@ impl Painter<'_> {
                     let hit = self.hit(&format!("{k}:i{i}"), k, Part::Row(i));
                     let hovered = enabled && self.hovered(k, &Part::Row(i));
                     let fill = if sel == Some(i) || hovered { t.surface_alt } else { 0 };
-                    g.children.push(self.rect(format!("{k}:i{i}"), row, local, fill, 0, None, hit));
+                    let normal = if sel == Some(i) { t.surface_alt } else { 0 };
+                    let bg = self.rect(format!("{k}:i{i}"), row, local, fill, 0, None, hit);
+                    g.children.push(bg.with([Prop::HoverFill(if enabled { t.surface_alt } else { normal }), Prop::PressedFill(normal)]));
                     g.children.push(self.text(format!("{k}:t{i}"), row.x + px - r.x, row.y + py - r.y, item, &f, t.text));
                 }
                 out.push(g);
@@ -2838,9 +2906,12 @@ impl Painter<'_> {
                     } else {
                         0
                     };
-                    g.children.push(self.rect(format!("{k}:tab{i}"), tr, local, fill, 0, border, hit));
+                    let (hover_fill, pressed_fill, pressed_color) = if i == sel { (t.surface, t.surface, t.text) } else { (t.row_hover, 0, t.text_muted) };
+                    let tab = self.rect(format!("{k}:tab{i}"), tr, local, fill, 0, border, hit);
+                    g.children.push(tab.with([Prop::HoverFill(hover_fill), Prop::PressedFill(pressed_fill)]));
                     let color = if i == sel || hovered { t.text } else { t.text_muted };
-                    g.children.push(self.text(format!("{k}:tt{i}"), tr.x + px - r.x, tr.y + py - r.y, title, &f, color));
+                    let tt = self.text(format!("{k}:tt{i}"), tr.x + px - r.x, tr.y + py - r.y, title, &f, color);
+                    g.children.push(tt.with([Prop::HitId(hit), Prop::HoverColor(t.text), Prop::PressedColor(pressed_color)]));
                 }
                 let hh = f.line_height() + 2 * py;
                 g.children.push(self.rect(format!("{k}:div"), Rect::new(r.x, r.y + hh, r.w, 1), local, t.border, 0, None, 0));
@@ -2858,11 +2929,22 @@ impl Painter<'_> {
                 let hit = self.hit(&format!("{k}:hit"), k, Part::Main);
                 g.children.push(self.rect(format!("{k}:hit"), r, local, 0, 0, None, hit));
                 let inner = w.inner;
-                let mut content = self.group(format!("{k}:content"), inner, local, false);
+                // The viewport: a scroll container (v2) the client may scroll at
+                // once; its content is laid out at ScrollY.
+                let s = (r.y - inner.y).max(0);
+                let mut vp = self.group(format!("{k}:vp"), r, local, true).with([
+                    Prop::Scroll(2),
+                    Prop::ContentW(inner.w.max(0)),
+                    Prop::ContentH(inner.h.max(0)),
+                    Prop::ScrollX(0),
+                    Prop::ScrollY(s),
+                ]);
+                let mut content = self.group(format!("{k}:content"), inner, (r.x, r.y), false);
                 for c in &w.children {
                     self.paint(c, Some(k), (inner.x, inner.y), &mut content.children);
                 }
-                g.children.push(content);
+                vp.children.push(content);
+                g.children.push(vp);
                 if inner.h > r.h && r.h > 0 {
                     let s = r.y - inner.y;
                     self.scrollbar(k, r, local, r.h, inner.h, s, &mut g.children);

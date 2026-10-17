@@ -47,7 +47,7 @@ search v1.ring
 | `iana.ring` | IANA: TLD applications |
 | `a.root-servers.ring` ... `e.root-servers.ring` | the root servers |
 | `NAME.ecm` | names players register |
-| `example.com` and every other real name | forwarded to the real internet (see "Real names") |
+| `example.com` and every other real name | forwarded to the real internet, with the internet add-on (see "Real names") |
 
 ### The stub resolver
 
@@ -194,7 +194,9 @@ the mode, so switching it rewrites the infrastructure configuration once at the 
 The resolvers treat the in-game root as the truth. When the root says a top-level domain does
 not exist, the query goes to the `fallback` (real `1.1.1.1` through village 1's uplink, when
 the host gateway is up). So `.ring` and `.ecm` resolve in game and `example.com` still
-resolves for real. Without the uplink the fallback times out (SERVFAIL). Names under the
+resolves for real. The uplink needs the optional server-side internet add-on
+(`evanscomputermod-internet`, docs/ROUTER.md): without it the Internet Gateway is offline and
+the fallback times out (SERVFAIL), while ring and `.ecm` names keep working. Names under the
 special-use TLDs (`test`, `example`, `invalid`, `localhost`, `local`, `internal`, `arpa`)
 and the ring's own TLDs are never forwarded.
 

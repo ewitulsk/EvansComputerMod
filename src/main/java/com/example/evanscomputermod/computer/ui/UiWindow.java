@@ -110,11 +110,18 @@ final class UiWindow {
         return (ms > 0 && nowMs < t0 + ms) || (ams > 0 && nowMs < at0 + ams);
     }
 
+    /**
+     * A client's predicted move of the window while the player drags it (lu;
+     * DISPLAY_PIPELINE_SPEC.md Part F). Only a client mirror sets it; the
+     * server's windows never move this way.
+     */
+    int dragDx, dragDy;
+
     /** Current {x, y, w, h} in lu. */
     int[] rect(long nowMs) {
-        if (ms <= 0 || nowMs >= t0 + ms) return new int[]{x, y, w, h};
+        if (ms <= 0 || nowMs >= t0 + ms) return new int[]{x + dragDx, y + dragDy, w, h};
         int p = ease(easing, (int) ((nowMs - t0) * 1024 / ms));
-        return new int[]{lerp(fx, x, p), lerp(fy, y, p), lerp(fw, w, p), lerp(fh, h, p)};
+        return new int[]{lerp(fx, x, p) + dragDx, lerp(fy, y, p) + dragDy, lerp(fw, w, p), lerp(fh, h, p)};
     }
 
     int alpha(long nowMs) {

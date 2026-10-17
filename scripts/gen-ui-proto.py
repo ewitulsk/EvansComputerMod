@@ -1313,7 +1313,7 @@ def invalid_vectors(spec):
     v.append(("unsorted_theme", msg("SetTheme", s32(b"t") + u32(2) + s32(b"b") + u32(1) + s32(b"a") + u32(2))))
     v.append(("duplicate_theme_key", msg("SetTheme", s32(b"t") + u32(2) + s32(b"a") + u32(1) + s32(b"a") + u32(2))))
     v.append(("unknown_union_tag", msg("TreeOps", u32(1) + u32(1) + b"\x09")))
-    v.append(("unknown_prop_tag", msg("TreeOps", u32(1) + u32(1) + b"\x01" + u32(1) + u32(1) + prop(23, u32(0)))))
+    v.append(("unknown_prop_tag", msg("TreeOps", u32(1) + u32(1) + b"\x01" + u32(1) + u32(1) + prop(99, u32(0)))))
     v.append(("prop_tag_zero", msg("TreeOps", u32(1) + u32(1) + b"\x01" + u32(1) + u32(1) + prop(0, u32(0)))))
     v.append(("unsorted_props", msg("TreeOps", u32(1) + u32(1) + b"\x01" + u32(1) + u32(2) +
                                     prop(2, u32(5)) + prop(1, u32(5)))))

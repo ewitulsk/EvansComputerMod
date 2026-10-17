@@ -17,7 +17,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Getting started", &["intro", "shell", "keys", "terminal", "filesystem", "help", "man", "less", "history"]),
     ("Files", &["ls", "cd", "pwd", "cat", "cp", "mv", "rm", "mkdir", "touch", "echo", "grep", "wc", "edit", "vim", "vi", "upload", "git"]),
     ("Programs and jobs", &["ps", "kill", "jobs", "fg", "bg", "set", "sleep", "clear", "exit", "passwd"]),
-    ("Scripting", &["scripting", "python", "lua", "peripheral", "peripherals"]),
+    ("Scripting", &["scripting", "python", "lua", "ui", "peripheral", "peripherals"]),
     ("Desktop and apps", &["gui", "desktop", "terminal-app", "files", "editor", "notes", "settings", "store", "pkg", "picker", "chooser", "visual"]),
     ("ePhone", &["phone-guide", "phone"]),
     ("Networking", &["networking", "ifconfig", "ip", "ping", "traceroute", "dhclient", "dhcpd", "wifi", "iw", "wpa_cli", "wpa_supplicant", "switch", "router", "tcpdump"]),
@@ -27,7 +27,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
     ("Cards", &["cards", "cardtool"]),
-    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "player", "video", "videoplayer"]),
+    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "player", "video", "videoplayer", "gfx"]),
 ];
 
 /// A built-in page's text.

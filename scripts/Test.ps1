@@ -28,6 +28,7 @@ param(
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [switch]$Ffmpeg,                # JUnit in the FFmpeg video sidecar (26.1); GameTests: load the sidecar (1.21.1 build) in the run
     [switch]$Upload,                # GameTests / -ClientChecks: load the file upload sidecar (1.21.1 build) in the run
+    [switch]$Internet,              # JUnit in the internet sidecar (26.1); GameTests: load the internet sidecar (1.21.1 build) in the run
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
@@ -147,8 +148,8 @@ if ($Rust.Count -gt 0) {
 # ---------------------------------------------------------------- JUnit
 if ($JUnit.Count -gt 0) {
     $filters = ($JUnit | ForEach-Object { "--tests *.$_" }) -join " "
-    $project = if($Wasmtime){"evanscomputermod-wasmtime"}elseif($Ffmpeg){"evanscomputermod-ffmpeg"}else{$McVersion}
-    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}elseif($Ffmpeg){"evanscomputermod-ffmpeg\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
+    $project = if($Wasmtime){"evanscomputermod-wasmtime"}elseif($Ffmpeg){"evanscomputermod-ffmpeg"}elseif($Internet){"evanscomputermod-internet"}else{$McVersion}
+    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}elseif($Ffmpeg){"evanscomputermod-ffmpeg\build-mc26.1\test-results\test"}elseif($Internet){"evanscomputermod-internet\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
     $cmd = ".\gradlew.bat :$project`:test $filters --console=plain"
     $log = Join-Path $out "junit.log"
     $code = Run-Logged $cmd $log
@@ -207,6 +208,14 @@ if ($GameTests.Count -gt 0) {
             $ujar = Get-ChildItem (Join-Path $root "evanscomputermod-upload\build-mc1.21.1\libs") -Filter "evanscomputermod-upload-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
             Add-Step "upload-sidecar" "gradlew :evanscomputermod-upload:jar -PmcVersion=1.21.1" $ulog (($ucode -eq 0) -and [bool]$ujar) $null $null "exit $ucode"
             if ($ujar) { Copy-Item $ujar.FullName $mods }
+        }
+        if ($Internet) {
+            # The internet sidecar (server-side): built for 1.21.1 and dropped in the run's mods/.
+            $ilog = Join-Path $out "internet-sidecar.log"
+            $icode = Run-Logged ".\gradlew.bat :evanscomputermod-internet:jar -PmcVersion=1.21.1 --console=plain" $ilog
+            $ijar = Get-ChildItem (Join-Path $root "evanscomputermod-internet\build-mc1.21.1\libs") -Filter "evanscomputermod-internet-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            Add-Step "internet-sidecar" "gradlew :evanscomputermod-internet:jar -PmcVersion=1.21.1" $ilog (($icode -eq 0) -and [bool]$ijar) $null $null "exit $icode"
+            if ($ijar) { Copy-Item $ijar.FullName $mods }
         }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"

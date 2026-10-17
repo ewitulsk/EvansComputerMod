@@ -372,6 +372,61 @@ pub mod ui_native {
         with_app(h, vm, |c| c.send(m))
     }
 
+    /// A canvas resource of `w x h` pixels in `format` ("rgba8888", "rgb565",
+    /// "indexed8"); returns its id.
+    #[pyfunction]
+    fn canvas(h: i64, w: i32, hh: i32, format: PyObjectRef, vm: &VirtualMachine) -> PyResult<u32> {
+        let format = format.str(vm)?.as_str().to_owned();
+        let f = super::pixel_format(&format).ok_or_else(|| vm.new_value_error(format!("unknown canvas format {format:?} (rgba8888, rgb565, indexed8)")))?;
+        if !(1..=4096).contains(&w) || !(1..=4096).contains(&hh) {
+            return Err(vm.new_value_error("canvas sizes are 1-4096".to_owned()));
+        }
+        with_app(h, vm, |c| c.canvas(w, hh, f))
+    }
+
+    /// New pixels for a canvas (the whole buffer); damage = [(x, y, w, h), ...] or None (all).
+    /// Shown at the next commit (or commit_at). False once closed.
+    #[pyfunction]
+    fn put_canvas(h: i64, id: u32, pixels: PyObjectRef, damage: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
+        let px = bytes_of(&pixels, vm)?;
+        let mut rects = Vec::new();
+        if !vm.is_none(&damage) {
+            let j = to_json(&damage, vm, 0)?;
+            for r in j.as_array().map(|a| a.to_vec()).unwrap_or_default() {
+                let v: Vec<i64> = r.as_array().map(|a| a.iter().filter_map(Json::as_i64).collect()).unwrap_or_default();
+                if v.len() != 4 {
+                    return Err(vm.new_value_error("damage rects are (x, y, w, h)".to_owned()));
+                }
+                rects.push([v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32]);
+            }
+        }
+        with_app(h, vm, |c| c.put_canvas(id, &px, &rects).is_ok())
+    }
+
+    /// Commit the canvas pixels put since the last commit for pts_us (CommitAt).
+    #[pyfunction]
+    fn commit_at(h: i64, pts_us: i64, vm: &VirtualMachine) -> PyResult<bool> {
+        with_app(h, vm, |c| c.commit_at(pts_us.max(0) as u64).is_ok())
+    }
+
+    /// Drop the queued timed frames (QueueFlush).
+    #[pyfunction]
+    fn queue_flush(h: i64, vm: &VirtualMachine) -> PyResult<bool> {
+        with_app(h, vm, |c| c.queue_flush().is_ok())
+    }
+
+    /// A canvas's content hint: 0 auto, 1 exact, 2 motion (SurfaceSetContent).
+    #[pyfunction]
+    fn set_content(h: i64, id: u32, hint: u8, vm: &VirtualMachine) -> PyResult<()> {
+        with_app(h, vm, |c| c.set_content(id, hint))
+    }
+
+    /// The monotonic clock in microseconds (what CommitAt times are on).
+    #[pyfunction]
+    fn now_us() -> u64 {
+        ecm_ui::conn::monotonic_us()
+    }
+
     /// Canonical JSON text of a Python value (what Rust apps write too).
     #[pyfunction]
     fn json_dumps(obj: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
@@ -426,6 +481,16 @@ pub mod ui_native {
             Some(b) => Ok(vm.ctx.new_bytes(b).into()),
             None => Err(err(vm, format!("no mock {h}"))),
         }
+    }
+}
+
+/// A canvas format name as the protocol's pixel format.
+fn pixel_format(name: &str) -> Option<proto::PixelFormat> {
+    match name {
+        "rgba8888" | "rgba" => Some(proto::PixelFormat::Rgba8888),
+        "rgb565" => Some(proto::PixelFormat::Rgb565),
+        "indexed8" => Some(proto::PixelFormat::Indexed8),
+        _ => None,
     }
 }
 

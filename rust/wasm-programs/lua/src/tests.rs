@@ -1272,3 +1272,59 @@ fn web_cgi_requests_and_output() {
     let q: String = l.load(r#"local q = web.parse_query("a=1&b=two+words&c=%C3%A9&a=2") return q.a .. "," .. q.b .. "," .. q.c"#).eval().unwrap();
     assert_eq!(q, "2,two words,\u{e9}");
 }
+
+/// The canvas API (protocol v2 timed frames), as in Python
+/// (`python_canvases_put_commit_at_flush_and_hint`): app:canvas, put,
+/// commit_at, queue_flush, the content hint and ui.now_us.
+#[test]
+fn lua_canvases_put_commit_at_flush_and_hint() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false), Message::QueueLimits(ecm_ui_proto::QueueLimits { max_queue_frames: 12, max_queue_ms: 500 })]);
+    let handle = ui_native::register_mock(mock.clone());
+    let l = lua();
+    set(&l, "MOCK", handle);
+    run(
+        &l,
+        r#"
+_ui = require("_ui")
+_ui.use_mock(MOCK)
+app = ui.App("dev.test.video")
+cv = app:canvas(4, 2, "rgb565")
+assert(cv.resource == 1 and cv.width == 4 and cv.height == 2 and cv.scale == 1)
+assert(cv.content == "auto")
+win = app:window("Video", ui.Column{children = {cv}})
+cv.content = "motion"
+assert(cv.content == "motion")
+assert(not pcall(function() cv.content = "blurry" end), "bad hint accepted")
+assert(not pcall(function() ui.Canvas(5):put("") end), "an unbound canvas has no pixels")
+t0 = ui.now_us()
+assert(type(t0) == "number" and ui.now_us() >= t0)
+"#,
+    );
+    let step = |msgs: Vec<Message>| {
+        mock.push(&msgs);
+        run(&l, "app:step(0)\napp:step(0)");
+    };
+    step(vec![Message::Configure(ecm_ui_proto::Configure { surface: 1, serial: 1, w: 200, h: 100, states: 0 })]);
+    let sent = mock.sent_messages();
+    assert!(sent.iter().any(|m| matches!(m, Message::ResourceCreate(r) if r.id == 1 && r.kind == ecm_ui_proto::ResourceKind::Canvas && r.format == ecm_ui_proto::PixelFormat::Rgb565 && r.w == 4)));
+    assert!(sent.iter().any(|m| matches!(m, Message::SurfaceSetContent(c) if c.surface == 1 && c.resource == 1 && c.hint == 2)));
+    // An untimed put: shown with the next loop turn's Commit.
+    mock.clear_sent();
+    run(&l, "cv:put(string.rep(string.char(0), 16), {{0, 0, 2, 1}})\napp:step(0)");
+    let sent = mock.sent_messages();
+    assert!(sent.iter().any(|m| matches!(m, Message::Commit(_))), "{sent:?}");
+    // A timed one: CommitAt instead, then QueueFlush.
+    mock.clear_sent();
+    run(&l, "cv:put(string.rep(string.char(1), 16))\ncv:commit_at(t0 + 250000)\napp:step(0)\ncv:queue_flush()\n_ui.use_mock(nil)");
+    let sent = mock.sent_messages();
+    let t0: f64 = l.globals().get("t0").unwrap();
+    let names: Vec<&str> = sent.iter().map(|m| m.name()).collect();
+    assert_eq!(names, vec!["CommitAt", "QueueFlush"], "{sent:?}");
+    assert!(matches!(sent[0], Message::CommitAt(ecm_ui_proto::CommitAt { surface: 1, pts_us }) if pts_us == t0 as u64 + 250_000));
+    let px = &mock.state.borrow().pixels;
+    assert_eq!(px.len(), 2);
+    assert_eq!((px[0].0, px[0].1.len(), px[0].2.clone()), (1, 16, vec![[0, 0, 2, 1]]));
+    assert_eq!(px[1].1, vec![1u8; 16]);
+}

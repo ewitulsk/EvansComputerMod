@@ -1,0 +1,51 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "MIT"
+
+[[mods]]
+modId = "evanscomputermod_internet"
+version = "1.0.0"
+displayName = "Evans Computer Mod — Internet"
+description = '''
+Optional, server-side companion mod for EvansComputerMod that connects the
+Internet Gateway block to the real internet, so computers in the game can
+fetch real websites (curl, the browser) and look up real names.
+
+External system interactions: with this mod installed, the server makes
+outbound TCP and UDP connections to the real internet on behalf of in-game
+computers (any player who can cable a computer to an Internet Gateway can make
+the server connect to public addresses). Private and LAN destinations (10/8,
+172.16/12, 192.168/16, 100.64/10, loopback, link-local) are blocked by default;
+-Devanscomputermod.internet.allowLan=true allows them, and
+-Devanscomputermod.internetProxy=false turns the connections off. An optional
+Linux TAP mode, off unless the server sets -Devanscomputermod.tap=<device>,
+starts a python3 helper process that opens /dev/net/tun.
+
+Players don't need it: only the server (or the single-player game) does.
+Without it, the rest of EvansComputerMod works and the Internet Gateway is
+offline.
+'''
+authors = "Example"
+# Server-side only: a client without it can join a server with it, and the other way round.
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.evanscomputermod_internet]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_internet]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_internet]]
+modId = "evanscomputermod"
+type = "required"
+versionRange = "[1.0.0,)"
+ordering = "BEFORE"
+side = "BOTH"

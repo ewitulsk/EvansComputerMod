@@ -134,6 +134,11 @@ public class ChildHostBridge {
         return parent.bridgeVideoDecodeToGfx(handle, target);
     }
 
+    /** Decode the next frame into the display's back buffer (not shown). Returns pts_ms, -1 EOF, -2 error. */
+    public long videoDecodeToBack(int handle, int target) {
+        return parent.bridgeVideoDecodeToBack(handle, target);
+    }
+
     /** Decode the next frame into {@code dst}. Returns pts_ms, -1 EOF, -2 error. */
     public long videoDecodeFrame(int handle, byte[] dst) {
         return parent.bridgeVideoDecodeFrame(handle, dst);
@@ -256,6 +261,23 @@ public class ChildHostBridge {
 
     public long gfxPresent(int target, int flags) {
         return parent.bridgeGfxPresent(target, flags);
+    }
+
+    /** Queue the back buffer for {@code ptsUs} (display clock). */
+    public long gfxPresentAt(int target, int flags, long ptsUs) {
+        return parent.bridgeGfxPresentAt(target, flags, ptsUs);
+    }
+
+    public int gfxQueueFlush(int target) {
+        return parent.bridgeGfxQueueFlush(target);
+    }
+
+    public int gfxSetHint(int target, int hint) {
+        return parent.bridgeGfxSetHint(target, hint);
+    }
+
+    public long gfxQueueState(int target) {
+        return parent.bridgeGfxQueueState(target);
     }
 
     public long gfxWaitVblank(int target) {
