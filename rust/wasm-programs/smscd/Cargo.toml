@@ -1,0 +1,18 @@
+[package]
+name = "smscd"
+version = "0.1.0"
+edition = "2021"
+description = "smscd: the carrier's SMSC / IP-SM-GW (store and forward, delivery reports, short codes, WAP push for MMS). The machine is ecm_tel::smsc; this is the computer's loop."
+
+[[bin]]
+name = "smscd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel-net = { workspace = true }
+ecm-cell = { workspace = true }
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }

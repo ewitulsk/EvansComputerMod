@@ -11,7 +11,8 @@
 //! | [`backhaul`] | site <-> core control (TCP) and tunnels (UDP) |
 //! | [`simauth`], [`crypto`] | SimAuth v1, key derivation, ChaCha20-Poly1305 air protection |
 //! | [`phy`] | the framed PHY record API the machines drive, [`phy::FramedPhy`] |
-//! | [`db`] | the core's subscriber database file |
+//! | [`db`] | the core's subscriber database file (the HSS data: numbers, IMS profiles) |
+//! | [`hss`] | the HSS/PCRF query protocol `imsd`, `smscd` and `mmscd` use (TCP 3868) |
 //! | [`sched`] | the site's batched uplink scheduler |
 //! | [`seg`], [`ip`] | segmentation, dedup, tun/ARP helpers |
 //! | [`medium`] | (std) a simulated framed radio medium for tests and the simulator |
@@ -32,6 +33,7 @@ pub mod codec;
 pub mod core;
 pub mod crypto;
 pub mod db;
+pub mod hss;
 pub mod ip;
 #[cfg(feature = "std")]
 pub mod medium;

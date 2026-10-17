@@ -67,6 +67,9 @@ screen_fb_sync           = { params = [],                               results 
 screen_set_power         = { params = ["i32"],                          results = [] }
 screen_set_pixel_format  = { params = ["i32"],                          results = [] }
 
+# --- background apps (docs/gui/APPS.md "Wake sockets") ------------------------------
+socket_wake              = { params = ["i32"],                          results = [],      doc = "(pid) a socket of pid with SO_ECM_WAKE became readable: the host gives its suspended app a wake window" }
+
 [exports]
 memory                   = { kind = "memory" }
 main                     = { params = [],                               results = [],      doc = "Boot. Called once, before the worker loop starts" }

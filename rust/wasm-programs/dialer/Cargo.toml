@@ -1,0 +1,17 @@
+[package]
+name = "dialer"
+version = "0.1.0"
+edition = "2021"
+description = "Phone (dev.ecm.dialer): favourites, recents, contacts, keypad, voicemail, the incoming and in-call screens, over telephonyd's control socket. The app is ecm_tel_ui::dialer; this is the program."
+
+[[bin]]
+name = "dialer"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel-ui = { workspace = true }
+ecm-ui = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel = { workspace = true }

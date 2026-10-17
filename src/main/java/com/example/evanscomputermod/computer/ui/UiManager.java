@@ -237,7 +237,16 @@ public final class UiManager implements CompositorHost {
         var apps = computer.getAppManager();
         if (apps != null && apps.isConfined(pid)) {
             String cmd = t.isEmpty() ? "" : t.split("\\s+")[0];
-            if (!cmd.equals("launch")) return "gui: apps may only use launch\n";
+            if (cmd.equals("wakelock")) {
+                // An app holds the computer awake only for a call or audio it is playing.
+                var i = apps.instanceOf(pid);
+                boolean releasing = t.split("\\s+").length > 1 && t.split("\\s+")[1].equals("0");
+                if (!releasing && (i == null || !(i.activeModes().contains("call") || i.activeModes().contains("audio")))) {
+                    return "gui: wakelock needs an active call or audio mode\n";
+                }
+            } else if (!cmd.equals("launch")) {
+                return "gui: apps may only use launch\n";
+            }
         }
         return command(pid, line);
     }
@@ -280,6 +289,23 @@ public final class UiManager implements CompositorHost {
             case "status" -> {
                 return status();
             }
+            case "wakelock" -> {
+                // wakelock MS: keep the computer awake MS from now (renew before it runs out; 0 releases);
+                // no argument: the holders.
+                if (parts.length < 2) {
+                    var holders = computer.wakeLockHolders();
+                    return holders.isEmpty() ? "gui: no wake locks\n" : String.join("\n", holders) + "\n";
+                }
+                long ms;
+                try {
+                    ms = Long.parseLong(parts[1]);
+                } catch (NumberFormatException e) {
+                    return "usage: wakelock [MS]\n";
+                }
+                if (ms < 0) return "usage: wakelock [MS]\n";
+                computer.uictlWakeLock(pid, ms);
+                return "ok\n";
+            }
             case "phone" -> {
                 PhoneUi p = phone;
                 return p == null ? "gui: not a phone\n" : p.statusText();
@@ -296,6 +322,30 @@ public final class UiManager implements CompositorHost {
                 }
                 return "ok\n";
             }
+            case "volte" -> {
+                // telephonyd's report (docs/TELEPHONY.md): volte <0|1> <number|->
+                PhoneUi p = phone;
+                if (p == null) return "gui: not a phone\n";
+                if (parts.length < 2) return "usage: volte 0|1 [NUMBER]\n";
+                p.volteReport("1".equals(parts[1]), parts.length > 2 ? parts[2] : "-");
+                return "ok\n";
+            }
+            case "ring" -> {
+                // telephonyd: a call rings (the holder gets a HUD message): ring <0|1> <name, percent-encoded>
+                PhoneUi p = phone;
+                if (p == null) return "gui: not a phone\n";
+                if (parts.length < 2) return "usage: ring 0|1 [NAME]\n";
+                p.ringing("1".equals(parts[1]) ? pctDecode(parts.length > 2 ? parts[2] : "") : null);
+                return "ok\n";
+            }
+            case "notify" -> {
+                // a system daemon posts a notification for an app: notify <app> <tag> <title> <body> (percent-encoded)
+                Compositor c = compositor;
+                if (c == null) return "gui: not running\n";
+                if (parts.length < 5) return "usage: notify APP TAG TITLE BODY\n";
+                c.postSystem(parts[1], pctDecode(parts[2]), pctDecode(parts[3]), pctDecode(parts[4]));
+                return "ok\n";
+            }
             case "prompt" -> {
                 // Show the shell's permission dialog (P4 routes real prompts this way); the answer is logged.
                 Compositor c = compositor;
@@ -309,9 +359,29 @@ public final class UiManager implements CompositorHost {
                 return "gui: asked the shell (request " + req + ")\n";
             }
             default -> {
-                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, cell, prompt)\n";
+                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, cell, volte, ring, notify, prompt)\n";
             }
         }
+    }
+
+    /** {@code %XX} escapes (ecm_tel::ctl's encoding); {@code -} alone is empty. */
+    public static String pctDecode(String s) {
+        if (s == null || s.equals("-")) return "";
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i = 0; i < b.length; i++) {
+            if (b[i] == '%' && i + 2 < b.length) {
+                try {
+                    o.write(Integer.parseInt(new String(b, i + 1, 2, java.nio.charset.StandardCharsets.US_ASCII), 16));
+                    i += 2;
+                    continue;
+                } catch (NumberFormatException ignored) {
+                    // a plain '%'
+                }
+            }
+            o.write(b[i]);
+        }
+        return o.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public String status() {
@@ -583,6 +653,16 @@ public final class UiManager implements CompositorHost {
             public void openFile(com.example.evanscomputermod.computer.apps.AppInstance app, String path) {
                 deliverOpenFile(app, path);
             }
+
+            @Override
+            public void backgroundModesChanged(com.example.evanscomputermod.computer.apps.AppInstance app, java.util.Set<String> activeModes) {
+                deliverAppModes(app, activeModes);
+            }
+
+            @Override
+            public void backgroundModeResult(com.example.evanscomputermod.computer.apps.AppInstance app, String mode, boolean granted) {
+                deliverBackgroundModeResult(app, mode, granted);
+            }
         });
     }
 
@@ -650,6 +730,12 @@ public final class UiManager implements CompositorHost {
      * (it keeps that app's identity and permissions: no escape through Launch
      * or {@code /dev/uictl launch}).
      */
+    @Override
+    public void raise(String appId) {
+        PhoneUi p = phone;
+        if (p != null) p.launch(appId, List.of());
+    }
+
     @Override
     public int launch(int fromPid, String appId, List<String> args) {
         var apps = computer.getAppManager();
@@ -898,6 +984,49 @@ public final class UiManager implements CompositorHost {
     public void backgroundDone(int pid) {
         var apps = computer.getAppManager();
         if (apps != null) apps.onBackgroundDone(pid);
+    }
+
+    /** {@code BackgroundMode}: to the app manager, off the compositor's lock (a first-time prompt may follow). */
+    @Override
+    public void backgroundMode(int pid, String mode, boolean on) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        SERVICES.execute(() -> {
+            try {
+                apps.onBackgroundMode(pid, mode, on);
+            } catch (RuntimeException e) {
+                log("BackgroundMode " + mode + " from pid " + pid + " failed: " + e);
+            }
+        });
+    }
+
+    @Override
+    public void mediaSessionChanged(int pid, String appId, UiProto.MediaInfo info) {
+        PhoneUi p = phone;
+        if (p != null) p.mediaChanged(pid, appId, info);
+    }
+
+    /** {@code BackgroundModeResult{mode, granted}} to every UI connection of {@code app}. */
+    void deliverBackgroundModeResult(com.example.evanscomputermod.computer.apps.AppInstance app, String mode, boolean granted) {
+        var apps = computer.getAppManager();
+        Compositor cc = compositor;
+        if (apps == null || cc == null) return;
+        cc.sendToApp(pid -> apps.instanceOf(pid) == app, new UiProto.BackgroundModeResult(mode, granted));
+    }
+
+    /** An app's background modes changed: the shell's tray and pills ({@code AppModes}). */
+    void deliverAppModes(com.example.evanscomputermod.computer.apps.AppInstance app, java.util.Set<String> modes) {
+        Compositor cc = compositor;
+        if (cc != null) cc.appModesChanged(app.pid(), app.appId(), modes);
+    }
+
+    /**
+     * Post a notification from the system itself (no app connection: the background limit's
+     * "Music was paused to let Discord run"). It shows in the shell under {@code appId}.
+     */
+    public void systemNotify(String appId, String tag, String title, String body) {
+        Compositor cc = compositor;
+        if (cc != null) cc.postSystem(appId, tag, title, body);
     }
 
     @Override

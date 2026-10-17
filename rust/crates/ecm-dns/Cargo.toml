@@ -11,3 +11,4 @@ doctest = false
 [dependencies]
 ecm-host-abi = { workspace = true }
 sha2 = { workspace = true }
+hmac = { workspace = true }

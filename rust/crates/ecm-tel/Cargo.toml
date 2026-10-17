@@ -1,0 +1,17 @@
+[package]
+name = "ecm-tel"
+version = "0.1.0"
+edition = "2021"
+description = "Telephony (docs/TELEPHONY.md): phone numbers (E.164/NANP, ENUM), SIP and SDP, 3GPP SMS TPDUs (GSM 7-bit, UCS-2, concatenation) and the RP layer, OMA MMS PDUs and WAP push, vCard 3.0, the IMS query protocol, and the sans-IO machines behind telephonyd, imsd, smscd, mmscd and mrfd. Pure Rust (time passed in), tested on the host."
+
+[lib]
+name = "ecm_tel"
+doctest = false
+
+[dependencies]
+sha2 = { workspace = true }
+hmac = { workspace = true }
+ecm-rtp = { workspace = true }
+
+[dev-dependencies]
+ecm-cell = { workspace = true }

@@ -134,16 +134,88 @@ info     TXT "hello world"
 ```
 
 `$ORIGIN`, `$TTL`, `@`, relative and absolute names, a blank owner (same as the line before),
-TTL and class in any order, parentheses over several lines, `;` comments, TTL units (`1h`,
-`2d`) are all supported. Record types: A, NS, CNAME, SOA, PTR, MX, TXT (others are passed
-through as raw data in answers). A zone needs one SOA and an NS at its apex.
+TTL and class in any order, parentheses over several lines, `;` comments, quoted strings
+(`\"` and `\\` inside them), TTL units (`1h`, `2d`) are all supported. A zone needs one SOA and
+an NS at its apex. Record types (others are passed through as raw data in answers):
+
+| Type | Code | Data in a zone file (and as `dig` prints it) | Additional section |
+|---|---|---|---|
+| A | 1 | `10.53.0.3` | |
+| NS | 2 | `ns1.lab.test.` | the server's address (glue) |
+| CNAME | 5 | `www.lab.test.` | |
+| SOA | 6 | `mname rname serial refresh retry expire minimum` | |
+| PTR | 12 | `www.lab.test.` | |
+| MX | 15 | `10 mail.lab.test.` | the exchanger's address |
+| TXT | 16 | `"one" "two"` | |
+| SRV (RFC 2782) | 33 | `priority weight port target`: `10 60 5060 sip.carrier.ecm.` | the target's address |
+| NAPTR (RFC 3403) | 35 | `order preference "flags" "services" "regexp" replacement`: `100 10 "u" "E2U+sip" "!^.*$!sip:\\1@carrier.ecm!" .` | |
+
+On the wire the SRV target and the NAPTR replacement are never compressed (as the RFCs ask);
+both types travel in answers, caches and zone transfers like every other type.
+
+### ENUM and SIP: NAPTR and SRV
+
+Phone numbers live in DNS through **ENUM** (RFC 6116). An E.164 number's digits, reversed and
+one per label, form a name under `e164.arpa`: `+1 214 555 0142` is
+`2.4.1.0.5.5.5.4.1.2.1.e164.arpa`. A carrier that holds the block 214-555 (10,000 numbers)
+runs the zone `5.5.5.4.1.2.1.e164.arpa` and gives each number NAPTR records:
+
+```text
+$ORIGIN 5.5.5.4.1.2.1.e164.arpa.
+$TTL 300
+@        SOA ns1.carrier.ecm. admin.carrier.ecm. 1 60 30 600 30
+@        NS  ns1.carrier.ecm.
+2.4.1.0  NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:\\1@carrier.ecm!" .
+2.4.1.0  NAPTR 100 20 "u" "E2U+sip" "!^\\+1(.*)$!sip:\\1@backup.carrier.ecm!" .
+```
+
+The flag `u` says the result is a URI; the service `E2U+sip` (or the older `SIP+E2U`) says it is
+SIP. The `regexp` field is a substitution `!pattern!replacement!` applied to the number with
+its `+` (`+12145550142`); `\1` is the first group. The SIP URI's domain is then looked up the
+RFC 3263 way, with SRV records:
+
+```text
+_sip._udp.carrier.ecm.  SRV 10 60 5060 sip.carrier.ecm.
+```
+
+```text
+dig -t NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa
+dig -t SRV _sip._udp.carrier.ecm
+```
+
+`ecm_dns::enum_dns` has the helpers programs use for this:
+
+| Function | Does |
+|---|---|
+| `enum_domain(e164, suffix)` | `("+12145550142", "e164.arpa")` gives `2.4.1.0.5.5.5.4.1.2.1.e164.arpa` |
+| `enum_block_domain(prefix, suffix)` | a number block: `("+1214555", "e164.arpa")` gives `5.5.5.4.1.2.1.e164.arpa` |
+| `aus(e164)` | the string the regexps run on: `+` and the digits |
+| `naptrs(records)` | the NAPTR data among answer records |
+| `enum_sip_uri(naptrs, e164)` | the records with flag `u` and service `E2U+sip`/`SIP+E2U` (any case), lowest order then preference first; the first whose regexp matches gives the URI |
+| `apply_regexp(expr, input)` | one `!pattern!replacement!flags` substitution |
+
+The regexp is a subset of POSIX ERE, enough for ENUM zones: the anchors `^` and `$`, literal
+characters, `\x` for a literal `x` (`\+`, `\.`), `.`, bracket sets (`[0-9]`, `[^5]`), the
+quantifiers `*`, `+`, `?`, capture groups without nesting (`\1` to `\9`) and the flag `i`. No
+alternation, no `{m,n}`, no `[:digit:]`. As in `sed`, the matched part is replaced and the rest
+kept. In a pattern without any group, `\1` is the whole match, so the common
+`!^.*$!sip:\1@carrier.ecm!` gives `sip:+12145550142@carrier.ecm`.
 
 ### dig and nslookup
 
 ```text
-dig [@SERVER] NAME [TYPE] [+trace] [+norecurse] [+short] [+tcp] [-p PORT]
+dig [@SERVER] NAME [TYPE] [+trace] [+norecurse] [+short] [+tcp] [-p PORT] [-t TYPE]
 dig @SERVER ZONE AXFR          # the whole zone
 nslookup [-type=TYPE] NAME [SERVER]
+```
+
+TYPE is any type of the table above, or ANY (`dig -t SRV _sip._udp.carrier.ecm`,
+`nslookup -type=NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa`). `dig` prints records the way BIND
+does:
+
+```text
+2.4.1.0.5.5.5.4.1.2.1.e164.arpa.    300 IN NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:\\1@carrier.ecm!" .
+_sip._udp.carrier.ecm.      60 IN SRV   10 60 5060 sip.carrier.ecm.
 ```
 
 Without `@SERVER`, `dig` asks the first `nameserver` of `/etc/resolv.conf`. `+trace` asks
@@ -270,6 +342,58 @@ The other two ways real life has work too:
 * **Local zone**: a resolver answers a private TLD itself (`zone home primary
   /etc/named/home.zone` on a home router or your own resolver), without asking the root.
 
+## ENUM: number blocks and porting
+
+IANA is also the numbering administrator, as NANPA is: `ianad` hands carriers blocks of
+10,000 numbers (one NPA-NXX, written `+1214555`) and publishes who serves each number under
+`e164.arpa` (`ecm_dns::numbering`; how imsd uses it: [TELEPHONY.md](TELEPHONY.md)).
+
+**How the zone is reached.** `ianad` keeps `e164.arpa` in the same `named` as the root
+zone. When it starts (and on every change) it adds `zone e164.arpa primary
+/etc/named/e164.arpa.zone` to `/etc/named.conf` and `e164.arpa. NS iana.ring.` to the root
+zone if they are missing, then has named reload; the root letters get the delegation by
+NOTIFY + AXFR. A resolver anywhere asks a root letter, is referred to `iana.ring` (no glue:
+it looks `iana.ring` up in `ring.`), and asks IANA's named. `enum-ns` in `/etc/ianad.conf`
+names the nameserver if IANA's computer is called something else.
+
+**A block.** The carrier publishes its SIP border first (`_sip._udp.<domain>` SRV, or at
+least the domain's A record), then applies:
+
+```text
+domain enum apply +1214555 cell-red.ecm
+```
+
+`ianad` checks the block (NANP: NPA and NXX start 2-9 and are not N11; not held yet) and that
+the SRV or the A record resolves, grants it and writes one NAPTR at the block's name:
+
+```text
+5.5.5.4.1.2.1.e164.arpa. 300 IN NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:\\1@cell-red.ecm!" .
+```
+
+The reply carries the domain's ENUM key (32 hex digits), shown once. The carrier stores it in
+`cored enum-key <hex>`. A domain's next blocks need the key: `domain enum apply +1214556
+cell-red.ecm <key>`.
+
+**A port.** The subscriber asks the losing carrier for a port-out code (`cored port-code
+<who>`): `<nonce>-<mac>`, 6 and 8 hex digits, the mac the first 8 hex digits of
+HMAC-SHA256(block key, `ECM-PORT` || number || nonce). The gaining carrier gives the number
+its new SIM (`cored number <who> +12145550142 ported`) and asks IANA:
+
+```text
+domain enum port +12145550142 cell-blue.ecm 3fa2c1-b843a26d <cell-blue's key>
+```
+
+`ianad` checks the key is the one it issued to `cell-blue.ecm`, the mac against the key of
+the number's block, and that the code was not used before, then writes a NAPTR at the
+number's own name (`2.4.1.0.5.5.5.4.1.2.1.e164.arpa`) that overrides the block's. Lookups ask
+the number's name first, then the block's (`ecm_tel_net::sys::enum_lookup`). Porting back to
+the block's holder removes the override. Codes always come from the block's holder, so a
+ported-in number's carrier cannot issue one.
+
+`domain enum list` (or `ianad enum` at the console) lists blocks and ports; an operator takes
+a block back with `ianad enum-revoke +1214555` (its ports go too). The database lines are
+`enum-key`, `enum-block`, `enum-port` and `enum-used` in `/etc/ianad.db`.
+
 ## Provisioning
 
 `PROVISION_VERSION` 6 (`WorldNetwork`) adds the computers above, with their `named.conf`,
@@ -313,10 +437,10 @@ nearest to you. The tap scenarios start on the fiber span nearest to you, which 
 within 64 blocks. GameTests: `scripts\Test.ps1 -GameTests ecm_dns` (`testing/v1211/DnsTests`;
 the ring ones place Tech Village 1 at its site and boot the ring). Simulator:
 `45_dns_lab`, `46_dns_registry`. Rust: `cargo test -p ecm-dns` (unit tests, a multi-server
-`hierarchy` test, `fuzz`), `-p ecm-net` (stub resolver), JUnit `DnsPlanTest`.
+`hierarchy` test, `fuzz`), `-p dig` (what dig prints), `-p ecm-net` (stub resolver), JUnit `DnsPlanTest`.
 
 ## Later
 
-Reverse DNS for `100.64.0.0/10` (so `traceroute` prints names), SRV records (so `disco` can
-also look up `_chat._tcp.ring`), `Host:`-based virtual hosting in `httpd`, an anycast resolver
+Reverse DNS for `100.64.0.0/10` (so `traceroute` prints names), `disco` looking up SRV
+records such as `_chat._tcp.ring`, SRV/NAPTR in the registrar's `domain set`, `Host:`-based virtual hosting in `httpd`, an anycast resolver
 address, DNSSEC with the keys `pkg` already uses, payment in emeralds and expiry.

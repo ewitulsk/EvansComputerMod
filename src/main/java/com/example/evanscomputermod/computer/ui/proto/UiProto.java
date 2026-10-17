@@ -75,10 +75,17 @@ public final class UiProto {
         public static final int FILE_PICKED = 0x0531;
         public static final int OPEN = 0x0532;
         public static final int OPEN_FILE = 0x0533;
+        public static final int MEDIA_SESSION = 0x0540;
+        public static final int MEDIA_ACTION = 0x0541;
+        public static final int MEDIA_SESSION_CHANGED = 0x0542;
+        public static final int MEDIA_CONTROL = 0x0543;
         public static final int WILL_SUSPEND = 0x0600;
         public static final int SAVE_STATE = 0x0601;
         public static final int RESTORE = 0x0602;
         public static final int BACKGROUND_DONE = 0x0603;
+        public static final int BACKGROUND_MODE = 0x0604;
+        public static final int BACKGROUND_MODE_RESULT = 0x0605;
+        public static final int APP_MODES = 0x0606;
     }
 
     public enum Role {
@@ -372,6 +379,24 @@ public final class UiProto {
         }
     }
 
+    /** What a media session is doing; none = it ended (the Now Playing card goes away). */
+    public enum MediaState {
+        NONE(0, "none"),
+        PLAYING(1, "playing"),
+        PAUSED(2, "paused"),
+        BUFFERING(3, "buffering");
+
+        public final int code;
+        public final String wireName;
+
+        MediaState(int code, String wireName) { this.code = code; this.wireName = wireName; }
+
+        public static MediaState fromCode(int code, String path) throws UiProtoException {
+            for (MediaState v : values()) if (v.code == code) return v;
+            throw UiProtoException.malformed("bad enum value " + code + ": " + path);
+        }
+    }
+
     /** Bits of WindowStates (u32). */
     public static final class WindowStates {
         private WindowStates() {}
@@ -605,6 +630,81 @@ public final class UiProto {
         }
     }
 
+    /** Now Playing (§12): art_w x art_h RGBA8888 cover art (0 x 0 and no bytes: none; at most 160 x 160). actions = what the player may ask for: play, pause, next, previous, seek. */
+    public record MediaInfo(String title, String artist, String album, int artW, int artH, byte[] artRgba, UiProto.MediaState state, int positionMs, int durationMs, List<String> actions) {
+        public void enc(UiWriter w) {
+            w.str(this.title);
+            w.str(this.artist);
+            w.str(this.album);
+            w.u16(this.artW);
+            w.u16(this.artH);
+            w.bytes(this.artRgba);
+            w.u8(this.state.code);
+            w.u32(this.positionMs);
+            w.u32(this.durationMs);
+            w.u32(this.actions.size());
+            for (String x19 : this.actions) {
+                w.str(x19);
+            }
+        }
+
+        public static MediaInfo dec(UiReader r) throws UiProtoException {
+            String title_ = r.str(256, "MediaInfo.title");
+            String artist_ = r.str(256, "MediaInfo.artist");
+            String album_ = r.str(256, "MediaInfo.album");
+            int v20 = r.u16();
+            if (v20 < 0 || v20 > 160) throw UiProtoException.malformed("out of range: MediaInfo.art_w");
+            int artW_ = v20;
+            int v21 = r.u16();
+            if (v21 < 0 || v21 > 160) throw UiProtoException.malformed("out of range: MediaInfo.art_h");
+            int artH_ = v21;
+            byte[] artRgba_ = r.bytes(102400, "MediaInfo.art_rgba");
+            UiProto.MediaState state_ = UiProto.MediaState.fromCode(r.u8(), "MediaInfo.state");
+            int v22 = r.u32();
+            int positionMs_ = v22;
+            int v23 = r.u32();
+            int durationMs_ = v23;
+            int n24 = r.count(8, 4, "MediaInfo.actions");
+            List<String> list25 = new ArrayList<>(n24);
+            for (int i26 = 0; i26 < n24; i26++) {
+                list25.add(r.str(16, "MediaInfo.actions"));
+            }
+            List<String> actions_ = List.copyOf(list25);
+            return new MediaInfo(title_, artist_, album_, artW_, artH_, artRgba_, state_, positionMs_, durationMs_, actions_);
+        }
+
+        public void json(StringBuilder o) {
+            o.append('{');
+            o.append("\"title\":");
+            UiJson.str(o, this.title);
+            o.append(",\"artist\":");
+            UiJson.str(o, this.artist);
+            o.append(",\"album\":");
+            UiJson.str(o, this.album);
+            o.append(",\"art_w\":");
+            o.append(this.artW);
+            o.append(",\"art_h\":");
+            o.append(this.artH);
+            o.append(",\"art_rgba\":");
+            UiJson.hex(o, this.artRgba);
+            o.append(",\"state\":");
+            UiJson.str(o, this.state.wireName);
+            o.append(",\"position_ms\":");
+            o.append(Integer.toUnsignedString(this.positionMs));
+            o.append(",\"duration_ms\":");
+            o.append(Integer.toUnsignedString(this.durationMs));
+            o.append(",\"actions\":");
+            o.append('[');
+            for (int i28 = 0; i28 < this.actions.size(); i28++) {
+                if (i28 > 0) o.append(',');
+                String x27 = this.actions.get(i28);
+                UiJson.str(o, x27);
+            }
+            o.append(']');
+            o.append('}');
+        }
+    }
+
     /** A node property. Prop lists are sorted by tag, without duplicates. */
     public sealed interface Prop {
         int tag();
@@ -616,25 +716,25 @@ public final class UiProto {
             int tag = r.u8();
             switch (tag) {
                 case 1: {
-                    int v19 = r.i32();
-                    int value_ = v19;
+                    int v29 = r.i32();
+                    int value_ = v29;
                     return new X(value_);
                 }
                 case 2: {
-                    int v20 = r.i32();
-                    int value_ = v20;
+                    int v30 = r.i32();
+                    int value_ = v30;
                     return new Y(value_);
                 }
                 case 3: {
-                    int v21 = r.i32();
-                    if (v21 < 0) throw UiProtoException.malformed("out of range: Prop.W.value");
-                    int value_ = v21;
+                    int v31 = r.i32();
+                    if (v31 < 0) throw UiProtoException.malformed("out of range: Prop.W.value");
+                    int value_ = v31;
                     return new W(value_);
                 }
                 case 4: {
-                    int v22 = r.i32();
-                    if (v22 < 0) throw UiProtoException.malformed("out of range: Prop.H.value");
-                    int value_ = v22;
+                    int v32 = r.i32();
+                    if (v32 < 0) throw UiProtoException.malformed("out of range: Prop.H.value");
+                    int value_ = v32;
                     return new H(value_);
                 }
                 case 5: {
@@ -642,39 +742,39 @@ public final class UiProto {
                     return new Clip(value_);
                 }
                 case 6: {
-                    int v23 = r.u8();
-                    int value_ = v23;
+                    int v33 = r.u8();
+                    int value_ = v33;
                     return new Opacity(value_);
                 }
                 case 7: {
-                    int v24 = r.u8();
-                    if (v24 < 1 || v24 > 8) throw UiProtoException.malformed("out of range: Prop.Scale.value");
-                    int value_ = v24;
+                    int v34 = r.u8();
+                    if (v34 < 1 || v34 > 8) throw UiProtoException.malformed("out of range: Prop.Scale.value");
+                    int value_ = v34;
                     return new Scale(value_);
                 }
                 case 8: {
-                    int v25 = r.u32();
-                    int value_ = v25;
+                    int v35 = r.u32();
+                    int value_ = v35;
                     return new HitId(value_);
                 }
                 case 9: {
-                    int v26 = r.u32();
-                    int value_ = v26;
+                    int v36 = r.u32();
+                    int value_ = v36;
                     return new Fill(value_);
                 }
                 case 10: {
-                    int v27 = r.u16();
-                    int value_ = v27;
+                    int v37 = r.u16();
+                    int value_ = v37;
                     return new Radius(value_);
                 }
                 case 11: {
-                    int v28 = r.u16();
-                    int value_ = v28;
+                    int v38 = r.u16();
+                    int value_ = v38;
                     return new BorderW(value_);
                 }
                 case 12: {
-                    int v29 = r.u32();
-                    int value_ = v29;
+                    int v39 = r.u32();
+                    int value_ = v39;
                     return new BorderColor(value_);
                 }
                 case 13: {
@@ -686,19 +786,19 @@ public final class UiProto {
                     return new Font(value_);
                 }
                 case 15: {
-                    int v30 = r.u8();
-                    if (!(v30 == 8 || v30 == 12 || v30 == 16 || v30 == 24 || v30 == 32)) throw UiProtoException.malformed("out of range: Prop.Size.value");
-                    int value_ = v30;
+                    int v40 = r.u8();
+                    if (!(v40 == 8 || v40 == 12 || v40 == 16 || v40 == 24 || v40 == 32)) throw UiProtoException.malformed("out of range: Prop.Size.value");
+                    int value_ = v40;
                     return new Size(value_);
                 }
                 case 16: {
-                    int v31 = r.u32();
-                    int value_ = v31;
+                    int v41 = r.u32();
+                    int value_ = v41;
                     return new Color(value_);
                 }
                 case 17: {
-                    int v32 = r.u32();
-                    int value_ = v32;
+                    int v42 = r.u32();
+                    int value_ = v42;
                     return new Resource(value_);
                 }
                 case 18: {
@@ -710,97 +810,97 @@ public final class UiProto {
                     return new Sampling(value_);
                 }
                 case 20: {
-                    int v33 = r.u32();
-                    int value_ = v33;
+                    int v43 = r.u32();
+                    int value_ = v43;
                     return new Tint(value_);
                 }
                 case 21: {
-                    int n34 = r.count(256, 8, "Prop.Points.value");
-                    List<UiProto.Point> list35 = new ArrayList<>(n34);
-                    for (int i36 = 0; i36 < n34; i36++) {
-                        list35.add(UiProto.Point.dec(r));
+                    int n44 = r.count(256, 8, "Prop.Points.value");
+                    List<UiProto.Point> list45 = new ArrayList<>(n44);
+                    for (int i46 = 0; i46 < n44; i46++) {
+                        list45.add(UiProto.Point.dec(r));
                     }
-                    List<UiProto.Point> value_ = List.copyOf(list35);
+                    List<UiProto.Point> value_ = List.copyOf(list45);
                     return new Points(value_);
                 }
                 case 22: {
-                    int v37 = r.u16();
-                    int value_ = v37;
+                    int v47 = r.u16();
+                    int value_ = v47;
                     return new Width(value_);
                 }
                 case 23: {
-                    int v38 = r.u32();
-                    int value_ = v38;
+                    int v48 = r.u32();
+                    int value_ = v48;
                     return new HoverFill(value_);
                 }
                 case 24: {
-                    int v39 = r.u32();
-                    int value_ = v39;
+                    int v49 = r.u32();
+                    int value_ = v49;
                     return new HoverBorderColor(value_);
                 }
                 case 25: {
-                    int v40 = r.u32();
-                    int value_ = v40;
+                    int v50 = r.u32();
+                    int value_ = v50;
                     return new HoverColor(value_);
                 }
                 case 26: {
-                    int v41 = r.u32();
-                    int value_ = v41;
+                    int v51 = r.u32();
+                    int value_ = v51;
                     return new PressedFill(value_);
                 }
                 case 27: {
-                    int v42 = r.u32();
-                    int value_ = v42;
+                    int v52 = r.u32();
+                    int value_ = v52;
                     return new PressedBorderColor(value_);
                 }
                 case 28: {
-                    int v43 = r.u32();
-                    int value_ = v43;
+                    int v53 = r.u32();
+                    int value_ = v53;
                     return new PressedColor(value_);
                 }
                 case 29: {
-                    int v44 = r.u8();
-                    if (v44 < 0 || v44 > 3) throw UiProtoException.malformed("out of range: Prop.Scroll.value");
-                    int value_ = v44;
+                    int v54 = r.u8();
+                    if (v54 < 0 || v54 > 3) throw UiProtoException.malformed("out of range: Prop.Scroll.value");
+                    int value_ = v54;
                     return new Scroll(value_);
                 }
                 case 30: {
-                    int v45 = r.i32();
-                    if (v45 < 0) throw UiProtoException.malformed("out of range: Prop.ContentW.value");
-                    int value_ = v45;
+                    int v55 = r.i32();
+                    if (v55 < 0) throw UiProtoException.malformed("out of range: Prop.ContentW.value");
+                    int value_ = v55;
                     return new ContentW(value_);
                 }
                 case 31: {
-                    int v46 = r.i32();
-                    if (v46 < 0) throw UiProtoException.malformed("out of range: Prop.ContentH.value");
-                    int value_ = v46;
+                    int v56 = r.i32();
+                    if (v56 < 0) throw UiProtoException.malformed("out of range: Prop.ContentH.value");
+                    int value_ = v56;
                     return new ContentH(value_);
                 }
                 case 32: {
-                    int v47 = r.i32();
-                    if (v47 < 0) throw UiProtoException.malformed("out of range: Prop.ScrollX.value");
-                    int value_ = v47;
+                    int v57 = r.i32();
+                    if (v57 < 0) throw UiProtoException.malformed("out of range: Prop.ScrollX.value");
+                    int value_ = v57;
                     return new ScrollX(value_);
                 }
                 case 33: {
-                    int v48 = r.i32();
-                    if (v48 < 0) throw UiProtoException.malformed("out of range: Prop.ScrollY.value");
-                    int value_ = v48;
+                    int v58 = r.i32();
+                    if (v58 < 0) throw UiProtoException.malformed("out of range: Prop.ScrollY.value");
+                    int value_ = v58;
                     return new ScrollY(value_);
                 }
                 case 34: {
-                    int v49 = r.u32();
-                    int value_ = v49;
+                    int v59 = r.u32();
+                    int value_ = v59;
                     return new DragWindow(value_);
                 }
                 case 35: {
-                    int v50 = r.u32();
-                    int value_ = v50;
+                    int v60 = r.u32();
+                    int value_ = v60;
                     return new Caret(value_);
                 }
                 case 36: {
-                    int v51 = r.u32();
-                    int value_ = v51;
+                    int v61 = r.u32();
+                    int value_ = v61;
                     return new CaretOf(value_);
                 }
                 default: throw UiProtoException.malformed("bad enum value " + tag + ": Prop");
@@ -1119,18 +1219,18 @@ public final class UiProto {
             @Override public void enc(UiWriter w) {
                 w.u8(21);
                 w.u32(this.value.size());
-                for (UiProto.Point x52 : this.value) {
-                    x52.enc(w);
+                for (UiProto.Point x62 : this.value) {
+                    x62.enc(w);
                 }
             }
             @Override public void json(StringBuilder o) {
                 o.append("{\"type\":\"Points\"");
                 o.append(",\"value\":");
                 o.append('[');
-                for (int i54 = 0; i54 < this.value.size(); i54++) {
-                    if (i54 > 0) o.append(',');
-                    UiProto.Point x53 = this.value.get(i54);
-                    x53.json(o);
+                for (int i64 = 0; i64 < this.value.size(); i64++) {
+                    if (i64 > 0) o.append(',');
+                    UiProto.Point x63 = this.value.get(i64);
+                    x63.json(o);
                 }
                 o.append(']');
                 o.append('}');
@@ -1389,23 +1489,23 @@ public final class UiProto {
             int tag = r.u8();
             switch (tag) {
                 case 0: {
-                    int v55 = r.u32();
-                    if (Integer.compareUnsigned(v55, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Create.id");
-                    int id_ = v55;
-                    int v56 = r.u32();
-                    int parent_ = v56;
-                    int v57 = r.u32();
-                    int index_ = v57;
+                    int v65 = r.u32();
+                    if (Integer.compareUnsigned(v65, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Create.id");
+                    int id_ = v65;
+                    int v66 = r.u32();
+                    int parent_ = v66;
+                    int v67 = r.u32();
+                    int index_ = v67;
                     UiProto.NodeKind kind_ = UiProto.NodeKind.fromCode(r.u8(), "TreeOp.Create.kind");
-                    int n58 = r.count(32, 2, "TreeOp.Create.props");
-                    List<UiProto.Prop> list59 = new ArrayList<>(n58);
-                    for (int i60 = 0; i60 < n58; i60++) {
-                        list59.add(UiProto.Prop.dec(r));
+                    int n68 = r.count(32, 2, "TreeOp.Create.props");
+                    List<UiProto.Prop> list69 = new ArrayList<>(n68);
+                    for (int i70 = 0; i70 < n68; i70++) {
+                        list69.add(UiProto.Prop.dec(r));
                     }
-                    for (int k = 1; k < list59.size(); k++) {
-                        if (Integer.compare(list59.get(k - 1).tag(), list59.get(k).tag()) >= 0) throw UiProtoException.malformed("not sorted: TreeOp.Create.props");
+                    for (int k = 1; k < list69.size(); k++) {
+                        if (Integer.compare(list69.get(k - 1).tag(), list69.get(k).tag()) >= 0) throw UiProtoException.malformed("not sorted: TreeOp.Create.props");
                     }
-                    List<UiProto.Prop> props_ = List.copyOf(list59);
+                    List<UiProto.Prop> props_ = List.copyOf(list69);
                     for (UiProto.Prop p : props_) {
                         if (!UiProto.nodeAllows(kind_, p.tag()))
                             throw UiProtoException.malformed("prop not allowed: TreeOp.Create.props");
@@ -1413,34 +1513,34 @@ public final class UiProto {
                     return new Create(id_, parent_, index_, kind_, props_);
                 }
                 case 1: {
-                    int v61 = r.u32();
-                    if (Integer.compareUnsigned(v61, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Set.id");
-                    int id_ = v61;
-                    int n62 = r.count(32, 2, "TreeOp.Set.props");
-                    List<UiProto.Prop> list63 = new ArrayList<>(n62);
-                    for (int i64 = 0; i64 < n62; i64++) {
-                        list63.add(UiProto.Prop.dec(r));
+                    int v71 = r.u32();
+                    if (Integer.compareUnsigned(v71, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Set.id");
+                    int id_ = v71;
+                    int n72 = r.count(32, 2, "TreeOp.Set.props");
+                    List<UiProto.Prop> list73 = new ArrayList<>(n72);
+                    for (int i74 = 0; i74 < n72; i74++) {
+                        list73.add(UiProto.Prop.dec(r));
                     }
-                    for (int k = 1; k < list63.size(); k++) {
-                        if (Integer.compare(list63.get(k - 1).tag(), list63.get(k).tag()) >= 0) throw UiProtoException.malformed("not sorted: TreeOp.Set.props");
+                    for (int k = 1; k < list73.size(); k++) {
+                        if (Integer.compare(list73.get(k - 1).tag(), list73.get(k).tag()) >= 0) throw UiProtoException.malformed("not sorted: TreeOp.Set.props");
                     }
-                    List<UiProto.Prop> props_ = List.copyOf(list63);
+                    List<UiProto.Prop> props_ = List.copyOf(list73);
                     return new Set(id_, props_);
                 }
                 case 2: {
-                    int v65 = r.u32();
-                    if (Integer.compareUnsigned(v65, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Move.id");
-                    int id_ = v65;
-                    int v66 = r.u32();
-                    int parent_ = v66;
-                    int v67 = r.u32();
-                    int index_ = v67;
+                    int v75 = r.u32();
+                    if (Integer.compareUnsigned(v75, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Move.id");
+                    int id_ = v75;
+                    int v76 = r.u32();
+                    int parent_ = v76;
+                    int v77 = r.u32();
+                    int index_ = v77;
                     return new Move(id_, parent_, index_);
                 }
                 case 3: {
-                    int v68 = r.u32();
-                    if (Integer.compareUnsigned(v68, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Remove.id");
-                    int id_ = v68;
+                    int v78 = r.u32();
+                    if (Integer.compareUnsigned(v78, 1) < 0) throw UiProtoException.malformed("out of range: TreeOp.Remove.id");
+                    int id_ = v78;
                     return new Remove(id_);
                 }
                 default: throw UiProtoException.malformed("bad enum value " + tag + ": TreeOp");
@@ -1458,8 +1558,8 @@ public final class UiProto {
                 w.u32(this.index);
                 w.u8(this.kind.code);
                 w.u32(this.props.size());
-                for (UiProto.Prop x69 : this.props) {
-                    x69.enc(w);
+                for (UiProto.Prop x79 : this.props) {
+                    x79.enc(w);
                 }
             }
             @Override public void json(StringBuilder o) {
@@ -1474,10 +1574,10 @@ public final class UiProto {
                 UiJson.str(o, this.kind.wireName);
                 o.append(",\"props\":");
                 o.append('[');
-                for (int i71 = 0; i71 < this.props.size(); i71++) {
-                    if (i71 > 0) o.append(',');
-                    UiProto.Prop x70 = this.props.get(i71);
-                    x70.json(o);
+                for (int i81 = 0; i81 < this.props.size(); i81++) {
+                    if (i81 > 0) o.append(',');
+                    UiProto.Prop x80 = this.props.get(i81);
+                    x80.json(o);
                 }
                 o.append(']');
                 o.append('}');
@@ -1492,8 +1592,8 @@ public final class UiProto {
                 w.u8(1);
                 w.u32(this.id);
                 w.u32(this.props.size());
-                for (UiProto.Prop x72 : this.props) {
-                    x72.enc(w);
+                for (UiProto.Prop x82 : this.props) {
+                    x82.enc(w);
                 }
             }
             @Override public void json(StringBuilder o) {
@@ -1502,10 +1602,10 @@ public final class UiProto {
                 o.append(Integer.toUnsignedString(this.id));
                 o.append(",\"props\":");
                 o.append('[');
-                for (int i74 = 0; i74 < this.props.size(); i74++) {
-                    if (i74 > 0) o.append(',');
-                    UiProto.Prop x73 = this.props.get(i74);
-                    x73.json(o);
+                for (int i84 = 0; i84 < this.props.size(); i84++) {
+                    if (i84 > 0) o.append(',');
+                    UiProto.Prop x83 = this.props.get(i84);
+                    x83.json(o);
                 }
                 o.append(']');
                 o.append('}');
@@ -1564,7 +1664,7 @@ public final class UiProto {
     }
 
     /** A protocol message. */
-    public sealed interface Message permits Hello, Welcome, Error, SurfaceCreate, SurfaceDestroy, SurfaceSetTitle, SurfaceSetHints, SurfaceResize, Configure, AckConfigure, Commit, RequestFrame, Frame, CommitAt, QueueFlush, SurfaceSetContent, QueueLimits, CloseRequested, PopupDone, TreeOps, ResourceCreate, ResourceDestroy, Pointer, Key, Text, Focus, Hotkey, Chord, HotkeyClaim, PointerLock, Scrolled, PointerLockChanged, WindowOpened, WindowChanged, WindowClosed, WindowRequest, DisplayChanged, Place, Stack, FocusWindow, SetVisible, SetOpacity, BindChord, CloseWindow, Launch, SetTheme, ThemeChanged, PermissionPrompt, AnswerPermission, ClipboardSet, ClipboardRequest, ClipboardData, Notify, NotificationAction, NotificationPosted, NotificationInvoke, PickFile, FilePicked, Open, OpenFile, WillSuspend, SaveState, Restore, BackgroundDone {
+    public sealed interface Message permits Hello, Welcome, Error, SurfaceCreate, SurfaceDestroy, SurfaceSetTitle, SurfaceSetHints, SurfaceResize, Configure, AckConfigure, Commit, RequestFrame, Frame, CommitAt, QueueFlush, SurfaceSetContent, QueueLimits, CloseRequested, PopupDone, TreeOps, ResourceCreate, ResourceDestroy, Pointer, Key, Text, Focus, Hotkey, Chord, HotkeyClaim, PointerLock, Scrolled, PointerLockChanged, WindowOpened, WindowChanged, WindowClosed, WindowRequest, DisplayChanged, Place, Stack, FocusWindow, SetVisible, SetOpacity, BindChord, CloseWindow, Launch, SetTheme, ThemeChanged, PermissionPrompt, AnswerPermission, ClipboardSet, ClipboardRequest, ClipboardData, Notify, NotificationAction, NotificationPosted, NotificationInvoke, PickFile, FilePicked, Open, OpenFile, MediaSession, MediaAction, MediaSessionChanged, MediaControl, WillSuspend, SaveState, Restore, BackgroundDone, BackgroundMode, BackgroundModeResult, AppModes {
         int opcode();
         String name();
         void encBody(UiWriter w);
@@ -1579,20 +1679,20 @@ public final class UiProto {
             w.u16(this.version);
             w.u8(this.role.code);
             w.u32(this.capabilities.size());
-            for (String x75 : this.capabilities) {
-                w.str(x75);
+            for (String x85 : this.capabilities) {
+                w.str(x85);
             }
         }
         static Hello dec(UiReader r) throws UiProtoException {
-            int v76 = r.u16();
-            int version_ = v76;
+            int v86 = r.u16();
+            int version_ = v86;
             UiProto.Role role_ = UiProto.Role.fromCode(r.u8(), "Hello.role");
-            int n77 = r.count(64, 4, "Hello.capabilities");
-            List<String> list78 = new ArrayList<>(n77);
-            for (int i79 = 0; i79 < n77; i79++) {
-                list78.add(r.str(64, "Hello.capabilities"));
+            int n87 = r.count(64, 4, "Hello.capabilities");
+            List<String> list88 = new ArrayList<>(n87);
+            for (int i89 = 0; i89 < n87; i89++) {
+                list88.add(r.str(64, "Hello.capabilities"));
             }
-            List<String> capabilities_ = List.copyOf(list78);
+            List<String> capabilities_ = List.copyOf(list88);
             return new Hello(version_, role_, capabilities_);
         }
         @Override public void json(StringBuilder o) {
@@ -1603,10 +1703,10 @@ public final class UiProto {
             UiJson.str(o, this.role.wireName);
             o.append(",\"capabilities\":");
             o.append('[');
-            for (int i81 = 0; i81 < this.capabilities.size(); i81++) {
-                if (i81 > 0) o.append(',');
-                String x80 = this.capabilities.get(i81);
-                UiJson.str(o, x80);
+            for (int i91 = 0; i91 < this.capabilities.size(); i91++) {
+                if (i91 > 0) o.append(',');
+                String x90 = this.capabilities.get(i91);
+                UiJson.str(o, x90);
             }
             o.append(']');
             o.append('}');
@@ -1624,25 +1724,25 @@ public final class UiProto {
             this.theme.enc(w);
             w.u32(this.fontMetrics);
             w.u32(this.capabilities.size());
-            for (String x82 : this.capabilities) {
-                w.str(x82);
+            for (String x92 : this.capabilities) {
+                w.str(x92);
             }
             w.bool(this.restoreFollows);
         }
         static Welcome dec(UiReader r) throws UiProtoException {
-            int v83 = r.u16();
-            int version_ = v83;
+            int v93 = r.u16();
+            int version_ = v93;
             String appId_ = r.str(128, "Welcome.app_id");
             UiProto.DisplayInfo display_ = UiProto.DisplayInfo.dec(r);
             UiProto.Theme theme_ = UiProto.Theme.dec(r);
-            int v84 = r.u32();
-            int fontMetrics_ = v84;
-            int n85 = r.count(64, 4, "Welcome.capabilities");
-            List<String> list86 = new ArrayList<>(n85);
-            for (int i87 = 0; i87 < n85; i87++) {
-                list86.add(r.str(64, "Welcome.capabilities"));
+            int v94 = r.u32();
+            int fontMetrics_ = v94;
+            int n95 = r.count(64, 4, "Welcome.capabilities");
+            List<String> list96 = new ArrayList<>(n95);
+            for (int i97 = 0; i97 < n95; i97++) {
+                list96.add(r.str(64, "Welcome.capabilities"));
             }
-            List<String> capabilities_ = List.copyOf(list86);
+            List<String> capabilities_ = List.copyOf(list96);
             boolean restoreFollows_ = r.bool("Welcome.restore_follows");
             return new Welcome(version_, appId_, display_, theme_, fontMetrics_, capabilities_, restoreFollows_);
         }
@@ -1660,10 +1760,10 @@ public final class UiProto {
             o.append(Integer.toUnsignedString(this.fontMetrics));
             o.append(",\"capabilities\":");
             o.append('[');
-            for (int i89 = 0; i89 < this.capabilities.size(); i89++) {
-                if (i89 > 0) o.append(',');
-                String x88 = this.capabilities.get(i89);
-                UiJson.str(o, x88);
+            for (int i99 = 0; i99 < this.capabilities.size(); i99++) {
+                if (i99 > 0) o.append(',');
+                String x98 = this.capabilities.get(i99);
+                UiJson.str(o, x98);
             }
             o.append(']');
             o.append(",\"restore_follows\":");
@@ -1714,28 +1814,28 @@ public final class UiProto {
             w.str(this.title);
         }
         static SurfaceCreate dec(UiReader r) throws UiProtoException {
-            int v90 = r.u32();
-            if (Integer.compareUnsigned(v90, 1) < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.surface");
-            int surface_ = v90;
+            int v100 = r.u32();
+            if (Integer.compareUnsigned(v100, 1) < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.surface");
+            int surface_ = v100;
             UiProto.SurfaceKind kind_ = UiProto.SurfaceKind.fromCode(r.u8(), "SurfaceCreate.kind");
             UiProto.SurfaceRole role_ = UiProto.SurfaceRole.fromCode(r.u8(), "SurfaceCreate.role");
             UiProto.Layer layer_ = UiProto.Layer.fromCode(r.u8(), "SurfaceCreate.layer");
-            int v91 = r.u32();
-            int parent_ = v91;
-            int v92 = r.i32();
-            int x_ = v92;
-            int v93 = r.i32();
-            int y_ = v93;
-            int v94 = r.i32();
-            if (v94 < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.w");
-            int w_ = v94;
-            int v95 = r.i32();
-            if (v95 < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.h");
-            int h_ = v95;
+            int v101 = r.u32();
+            int parent_ = v101;
+            int v102 = r.i32();
+            int x_ = v102;
+            int v103 = r.i32();
+            int y_ = v103;
+            int v104 = r.i32();
+            if (v104 < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.w");
+            int w_ = v104;
+            int v105 = r.i32();
+            if (v105 < 0) throw UiProtoException.malformed("out of range: SurfaceCreate.h");
+            int h_ = v105;
             UiProto.PixelFormat format_ = UiProto.PixelFormat.fromCode(r.u8(), "SurfaceCreate.format");
-            int v96 = r.u8();
-            if (v96 < 1 || v96 > 8) throw UiProtoException.malformed("out of range: SurfaceCreate.scale");
-            int scale_ = v96;
+            int v106 = r.u8();
+            if (v106 < 1 || v106 > 8) throw UiProtoException.malformed("out of range: SurfaceCreate.scale");
+            int scale_ = v106;
             String title_ = r.str(256, "SurfaceCreate.title");
             return new SurfaceCreate(surface_, kind_, role_, layer_, parent_, x_, y_, w_, h_, format_, scale_, title_);
         }
@@ -1777,8 +1877,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static SurfaceDestroy dec(UiReader r) throws UiProtoException {
-            int v97 = r.u32();
-            int surface_ = v97;
+            int v107 = r.u32();
+            int surface_ = v107;
             return new SurfaceDestroy(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -1798,8 +1898,8 @@ public final class UiProto {
             w.str(this.title);
         }
         static SurfaceSetTitle dec(UiReader r) throws UiProtoException {
-            int v98 = r.u32();
-            int surface_ = v98;
+            int v108 = r.u32();
+            int surface_ = v108;
             String title_ = r.str(256, "SurfaceSetTitle.title");
             return new SurfaceSetTitle(surface_, title_);
         }
@@ -1825,20 +1925,20 @@ public final class UiProto {
             w.i32(this.maxH);
         }
         static SurfaceSetHints dec(UiReader r) throws UiProtoException {
-            int v99 = r.u32();
-            int surface_ = v99;
-            int v100 = r.i32();
-            if (v100 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.min_w");
-            int minW_ = v100;
-            int v101 = r.i32();
-            if (v101 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.min_h");
-            int minH_ = v101;
-            int v102 = r.i32();
-            if (v102 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.max_w");
-            int maxW_ = v102;
-            int v103 = r.i32();
-            if (v103 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.max_h");
-            int maxH_ = v103;
+            int v109 = r.u32();
+            int surface_ = v109;
+            int v110 = r.i32();
+            if (v110 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.min_w");
+            int minW_ = v110;
+            int v111 = r.i32();
+            if (v111 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.min_h");
+            int minH_ = v111;
+            int v112 = r.i32();
+            if (v112 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.max_w");
+            int maxW_ = v112;
+            int v113 = r.i32();
+            if (v113 < 0) throw UiProtoException.malformed("out of range: SurfaceSetHints.max_h");
+            int maxH_ = v113;
             return new SurfaceSetHints(surface_, minW_, minH_, maxW_, maxH_);
         }
         @Override public void json(StringBuilder o) {
@@ -1869,18 +1969,18 @@ public final class UiProto {
             w.u8(this.scale);
         }
         static SurfaceResize dec(UiReader r) throws UiProtoException {
-            int v104 = r.u32();
-            int surface_ = v104;
-            int v105 = r.i32();
-            if (v105 < 1) throw UiProtoException.malformed("out of range: SurfaceResize.w");
-            int w_ = v105;
-            int v106 = r.i32();
-            if (v106 < 1) throw UiProtoException.malformed("out of range: SurfaceResize.h");
-            int h_ = v106;
+            int v114 = r.u32();
+            int surface_ = v114;
+            int v115 = r.i32();
+            if (v115 < 1) throw UiProtoException.malformed("out of range: SurfaceResize.w");
+            int w_ = v115;
+            int v116 = r.i32();
+            if (v116 < 1) throw UiProtoException.malformed("out of range: SurfaceResize.h");
+            int h_ = v116;
             UiProto.PixelFormat format_ = UiProto.PixelFormat.fromCode(r.u8(), "SurfaceResize.format");
-            int v107 = r.u8();
-            if (v107 < 1 || v107 > 8) throw UiProtoException.malformed("out of range: SurfaceResize.scale");
-            int scale_ = v107;
+            int v117 = r.u8();
+            if (v117 < 1 || v117 > 8) throw UiProtoException.malformed("out of range: SurfaceResize.scale");
+            int scale_ = v117;
             return new SurfaceResize(surface_, w_, h_, format_, scale_);
         }
         @Override public void json(StringBuilder o) {
@@ -1911,19 +2011,19 @@ public final class UiProto {
             w.u32(this.states);
         }
         static Configure dec(UiReader r) throws UiProtoException {
-            int v108 = r.u32();
-            int surface_ = v108;
-            int v109 = r.u32();
-            int serial_ = v109;
-            int v110 = r.i32();
-            if (v110 < 0) throw UiProtoException.malformed("out of range: Configure.w");
-            int w_ = v110;
-            int v111 = r.i32();
-            if (v111 < 0) throw UiProtoException.malformed("out of range: Configure.h");
-            int h_ = v111;
-            int v112 = r.u32();
-            if ((v112 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Configure.states");
-            int states_ = v112;
+            int v118 = r.u32();
+            int surface_ = v118;
+            int v119 = r.u32();
+            int serial_ = v119;
+            int v120 = r.i32();
+            if (v120 < 0) throw UiProtoException.malformed("out of range: Configure.w");
+            int w_ = v120;
+            int v121 = r.i32();
+            if (v121 < 0) throw UiProtoException.malformed("out of range: Configure.h");
+            int h_ = v121;
+            int v122 = r.u32();
+            if ((v122 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Configure.states");
+            int states_ = v122;
             return new Configure(surface_, serial_, w_, h_, states_);
         }
         @Override public void json(StringBuilder o) {
@@ -1951,10 +2051,10 @@ public final class UiProto {
             w.u32(this.serial);
         }
         static AckConfigure dec(UiReader r) throws UiProtoException {
-            int v113 = r.u32();
-            int surface_ = v113;
-            int v114 = r.u32();
-            int serial_ = v114;
+            int v123 = r.u32();
+            int surface_ = v123;
+            int v124 = r.u32();
+            int serial_ = v124;
             return new AckConfigure(surface_, serial_);
         }
         @Override public void json(StringBuilder o) {
@@ -1975,8 +2075,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static Commit dec(UiReader r) throws UiProtoException {
-            int v115 = r.u32();
-            int surface_ = v115;
+            int v125 = r.u32();
+            int surface_ = v125;
             return new Commit(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -1995,8 +2095,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static RequestFrame dec(UiReader r) throws UiProtoException {
-            int v116 = r.u32();
-            int surface_ = v116;
+            int v126 = r.u32();
+            int surface_ = v126;
             return new RequestFrame(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -2016,10 +2116,10 @@ public final class UiProto {
             w.u64(this.timeMs);
         }
         static Frame dec(UiReader r) throws UiProtoException {
-            int v117 = r.u32();
-            int surface_ = v117;
-            long v118 = r.u64();
-            long timeMs_ = v118;
+            int v127 = r.u32();
+            int surface_ = v127;
+            long v128 = r.u64();
+            long timeMs_ = v128;
             return new Frame(surface_, timeMs_);
         }
         @Override public void json(StringBuilder o) {
@@ -2041,10 +2141,10 @@ public final class UiProto {
             w.u64(this.ptsUs);
         }
         static CommitAt dec(UiReader r) throws UiProtoException {
-            int v119 = r.u32();
-            int surface_ = v119;
-            long v120 = r.u64();
-            long ptsUs_ = v120;
+            int v129 = r.u32();
+            int surface_ = v129;
+            long v130 = r.u64();
+            long ptsUs_ = v130;
             return new CommitAt(surface_, ptsUs_);
         }
         @Override public void json(StringBuilder o) {
@@ -2065,8 +2165,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static QueueFlush dec(UiReader r) throws UiProtoException {
-            int v121 = r.u32();
-            int surface_ = v121;
+            int v131 = r.u32();
+            int surface_ = v131;
             return new QueueFlush(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -2087,13 +2187,13 @@ public final class UiProto {
             w.u8(this.hint);
         }
         static SurfaceSetContent dec(UiReader r) throws UiProtoException {
-            int v122 = r.u32();
-            int surface_ = v122;
-            int v123 = r.u32();
-            int resource_ = v123;
-            int v124 = r.u8();
-            if (v124 < 0 || v124 > 2) throw UiProtoException.malformed("out of range: SurfaceSetContent.hint");
-            int hint_ = v124;
+            int v132 = r.u32();
+            int surface_ = v132;
+            int v133 = r.u32();
+            int resource_ = v133;
+            int v134 = r.u8();
+            if (v134 < 0 || v134 > 2) throw UiProtoException.malformed("out of range: SurfaceSetContent.hint");
+            int hint_ = v134;
             return new SurfaceSetContent(surface_, resource_, hint_);
         }
         @Override public void json(StringBuilder o) {
@@ -2117,10 +2217,10 @@ public final class UiProto {
             w.u32(this.maxQueueMs);
         }
         static QueueLimits dec(UiReader r) throws UiProtoException {
-            int v125 = r.u16();
-            int maxQueueFrames_ = v125;
-            int v126 = r.u32();
-            int maxQueueMs_ = v126;
+            int v135 = r.u16();
+            int maxQueueFrames_ = v135;
+            int v136 = r.u32();
+            int maxQueueMs_ = v136;
             return new QueueLimits(maxQueueFrames_, maxQueueMs_);
         }
         @Override public void json(StringBuilder o) {
@@ -2141,8 +2241,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static CloseRequested dec(UiReader r) throws UiProtoException {
-            int v127 = r.u32();
-            int surface_ = v127;
+            int v137 = r.u32();
+            int surface_ = v137;
             return new CloseRequested(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -2161,8 +2261,8 @@ public final class UiProto {
             w.u32(this.surface);
         }
         static PopupDone dec(UiReader r) throws UiProtoException {
-            int v128 = r.u32();
-            int surface_ = v128;
+            int v138 = r.u32();
+            int surface_ = v138;
             return new PopupDone(surface_);
         }
         @Override public void json(StringBuilder o) {
@@ -2180,19 +2280,19 @@ public final class UiProto {
         @Override public void encBody(UiWriter w) {
             w.u32(this.surface);
             w.u32(this.ops.size());
-            for (UiProto.TreeOp x129 : this.ops) {
-                x129.enc(w);
+            for (UiProto.TreeOp x139 : this.ops) {
+                x139.enc(w);
             }
         }
         static TreeOps dec(UiReader r) throws UiProtoException {
-            int v130 = r.u32();
-            int surface_ = v130;
-            int n131 = r.count(65535, 5, "TreeOps.ops");
-            List<UiProto.TreeOp> list132 = new ArrayList<>(n131);
-            for (int i133 = 0; i133 < n131; i133++) {
-                list132.add(UiProto.TreeOp.dec(r));
+            int v140 = r.u32();
+            int surface_ = v140;
+            int n141 = r.count(65535, 5, "TreeOps.ops");
+            List<UiProto.TreeOp> list142 = new ArrayList<>(n141);
+            for (int i143 = 0; i143 < n141; i143++) {
+                list142.add(UiProto.TreeOp.dec(r));
             }
-            List<UiProto.TreeOp> ops_ = List.copyOf(list132);
+            List<UiProto.TreeOp> ops_ = List.copyOf(list142);
             return new TreeOps(surface_, ops_);
         }
         @Override public void json(StringBuilder o) {
@@ -2201,10 +2301,10 @@ public final class UiProto {
             o.append(Integer.toUnsignedString(this.surface));
             o.append(",\"ops\":");
             o.append('[');
-            for (int i135 = 0; i135 < this.ops.size(); i135++) {
-                if (i135 > 0) o.append(',');
-                UiProto.TreeOp x134 = this.ops.get(i135);
-                x134.json(o);
+            for (int i145 = 0; i145 < this.ops.size(); i145++) {
+                if (i145 > 0) o.append(',');
+                UiProto.TreeOp x144 = this.ops.get(i145);
+                x144.json(o);
             }
             o.append(']');
             o.append('}');
@@ -2223,16 +2323,16 @@ public final class UiProto {
             w.u8(this.format.code);
         }
         static ResourceCreate dec(UiReader r) throws UiProtoException {
-            int v136 = r.u32();
-            if (Integer.compareUnsigned(v136, 1) < 0) throw UiProtoException.malformed("out of range: ResourceCreate.id");
-            int id_ = v136;
+            int v146 = r.u32();
+            if (Integer.compareUnsigned(v146, 1) < 0) throw UiProtoException.malformed("out of range: ResourceCreate.id");
+            int id_ = v146;
             UiProto.ResourceKind kind_ = UiProto.ResourceKind.fromCode(r.u8(), "ResourceCreate.kind");
-            int v137 = r.i32();
-            if (v137 < 1) throw UiProtoException.malformed("out of range: ResourceCreate.w");
-            int w_ = v137;
-            int v138 = r.i32();
-            if (v138 < 1) throw UiProtoException.malformed("out of range: ResourceCreate.h");
-            int h_ = v138;
+            int v147 = r.i32();
+            if (v147 < 1) throw UiProtoException.malformed("out of range: ResourceCreate.w");
+            int w_ = v147;
+            int v148 = r.i32();
+            if (v148 < 1) throw UiProtoException.malformed("out of range: ResourceCreate.h");
+            int h_ = v148;
             UiProto.PixelFormat format_ = UiProto.PixelFormat.fromCode(r.u8(), "ResourceCreate.format");
             return new ResourceCreate(id_, kind_, w_, h_, format_);
         }
@@ -2260,8 +2360,8 @@ public final class UiProto {
             w.u32(this.id);
         }
         static ResourceDestroy dec(UiReader r) throws UiProtoException {
-            int v139 = r.u32();
-            int id_ = v139;
+            int v149 = r.u32();
+            int id_ = v149;
             return new ResourceDestroy(id_);
         }
         @Override public void json(StringBuilder o) {
@@ -2288,23 +2388,23 @@ public final class UiProto {
             w.u32(this.hitId);
         }
         static Pointer dec(UiReader r) throws UiProtoException {
-            int v140 = r.u32();
-            int surface_ = v140;
+            int v150 = r.u32();
+            int surface_ = v150;
             UiProto.PointerKind kind_ = UiProto.PointerKind.fromCode(r.u8(), "Pointer.kind");
-            int v141 = r.i32();
-            int x_ = v141;
-            int v142 = r.i32();
-            int y_ = v142;
-            int v143 = r.u8();
-            if ((v143 & ~0x7) != 0) throw UiProtoException.malformed("bad flag bits: Pointer.buttons");
-            int buttons_ = v143;
+            int v151 = r.i32();
+            int x_ = v151;
+            int v152 = r.i32();
+            int y_ = v152;
+            int v153 = r.u8();
+            if ((v153 & ~0x7) != 0) throw UiProtoException.malformed("bad flag bits: Pointer.buttons");
+            int buttons_ = v153;
             UiProto.Button button_ = UiProto.Button.fromCode(r.u8(), "Pointer.button");
-            int v144 = r.i16();
-            int scrollX_ = v144;
-            int v145 = r.i16();
-            int scrollY_ = v145;
-            int v146 = r.u32();
-            int hitId_ = v146;
+            int v154 = r.i16();
+            int scrollX_ = v154;
+            int v155 = r.i16();
+            int scrollY_ = v155;
+            int v156 = r.u32();
+            int hitId_ = v156;
             return new Pointer(surface_, kind_, x_, y_, buttons_, button_, scrollX_, scrollY_, hitId_);
         }
         @Override public void json(StringBuilder o) {
@@ -2343,13 +2443,13 @@ public final class UiProto {
             w.bool(this.repeat);
         }
         static Key dec(UiReader r) throws UiProtoException {
-            int v147 = r.u32();
-            int surface_ = v147;
-            int v148 = r.u16();
-            int key_ = v148;
-            int v149 = r.u16();
-            if ((v149 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Key.mods");
-            int mods_ = v149;
+            int v157 = r.u32();
+            int surface_ = v157;
+            int v158 = r.u16();
+            int key_ = v158;
+            int v159 = r.u16();
+            if ((v159 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Key.mods");
+            int mods_ = v159;
             boolean down_ = r.bool("Key.down");
             boolean repeat_ = r.bool("Key.repeat");
             return new Key(surface_, key_, mods_, down_, repeat_);
@@ -2379,8 +2479,8 @@ public final class UiProto {
             w.str(this.text);
         }
         static Text dec(UiReader r) throws UiProtoException {
-            int v150 = r.u32();
-            int surface_ = v150;
+            int v160 = r.u32();
+            int surface_ = v160;
             String text_ = r.str(256, "Text.text");
             return new Text(surface_, text_);
         }
@@ -2403,8 +2503,8 @@ public final class UiProto {
             w.bool(this.gained);
         }
         static Focus dec(UiReader r) throws UiProtoException {
-            int v151 = r.u32();
-            int surface_ = v151;
+            int v161 = r.u32();
+            int surface_ = v161;
             boolean gained_ = r.bool("Focus.gained");
             return new Focus(surface_, gained_);
         }
@@ -2427,9 +2527,9 @@ public final class UiProto {
             w.bool(this.down);
         }
         static Hotkey dec(UiReader r) throws UiProtoException {
-            int v152 = r.u8();
-            if (v152 < 1 || v152 > 6) throw UiProtoException.malformed("out of range: Hotkey.slot");
-            int slot_ = v152;
+            int v162 = r.u8();
+            if (v162 < 1 || v162 > 6) throw UiProtoException.malformed("out of range: Hotkey.slot");
+            int slot_ = v162;
             boolean down_ = r.bool("Hotkey.down");
             return new Hotkey(slot_, down_);
         }
@@ -2451,8 +2551,8 @@ public final class UiProto {
             w.u32(this.id);
         }
         static Chord dec(UiReader r) throws UiProtoException {
-            int v153 = r.u32();
-            int id_ = v153;
+            int v163 = r.u32();
+            int id_ = v163;
             return new Chord(id_);
         }
         @Override public void json(StringBuilder o) {
@@ -2472,9 +2572,9 @@ public final class UiProto {
             w.str(this.label);
         }
         static HotkeyClaim dec(UiReader r) throws UiProtoException {
-            int v154 = r.u8();
-            if (v154 < 1 || v154 > 6) throw UiProtoException.malformed("out of range: HotkeyClaim.slot");
-            int slot_ = v154;
+            int v164 = r.u8();
+            if (v164 < 1 || v164 > 6) throw UiProtoException.malformed("out of range: HotkeyClaim.slot");
+            int slot_ = v164;
             String label_ = r.str(64, "HotkeyClaim.label");
             return new HotkeyClaim(slot_, label_);
         }
@@ -2497,8 +2597,8 @@ public final class UiProto {
             w.bool(this.lock);
         }
         static PointerLock dec(UiReader r) throws UiProtoException {
-            int v155 = r.u32();
-            int surface_ = v155;
+            int v165 = r.u32();
+            int surface_ = v165;
             boolean lock_ = r.bool("PointerLock.lock");
             return new PointerLock(surface_, lock_);
         }
@@ -2523,16 +2623,16 @@ public final class UiProto {
             w.i32(this.y);
         }
         static Scrolled dec(UiReader r) throws UiProtoException {
-            int v156 = r.u32();
-            int surface_ = v156;
-            int v157 = r.u32();
-            int node_ = v157;
-            int v158 = r.i32();
-            if (v158 < 0) throw UiProtoException.malformed("out of range: Scrolled.x");
-            int x_ = v158;
-            int v159 = r.i32();
-            if (v159 < 0) throw UiProtoException.malformed("out of range: Scrolled.y");
-            int y_ = v159;
+            int v166 = r.u32();
+            int surface_ = v166;
+            int v167 = r.u32();
+            int node_ = v167;
+            int v168 = r.i32();
+            if (v168 < 0) throw UiProtoException.malformed("out of range: Scrolled.x");
+            int x_ = v168;
+            int v169 = r.i32();
+            if (v169 < 0) throw UiProtoException.malformed("out of range: Scrolled.y");
+            int y_ = v169;
             return new Scrolled(surface_, node_, x_, y_);
         }
         @Override public void json(StringBuilder o) {
@@ -2558,8 +2658,8 @@ public final class UiProto {
             w.bool(this.locked);
         }
         static PointerLockChanged dec(UiReader r) throws UiProtoException {
-            int v160 = r.u32();
-            int surface_ = v160;
+            int v170 = r.u32();
+            int surface_ = v170;
             boolean locked_ = r.bool("PointerLockChanged.locked");
             return new PointerLockChanged(surface_, locked_);
         }
@@ -2590,27 +2690,27 @@ public final class UiProto {
             w.u32(this.parent);
         }
         static WindowOpened dec(UiReader r) throws UiProtoException {
-            int v161 = r.u32();
-            int window_ = v161;
-            int v162 = r.u32();
-            int pid_ = v162;
+            int v171 = r.u32();
+            int window_ = v171;
+            int v172 = r.u32();
+            int pid_ = v172;
             String appId_ = r.str(128, "WindowOpened.app_id");
             String title_ = r.str(256, "WindowOpened.title");
             String icon_ = r.str(256, "WindowOpened.icon");
-            int v163 = r.i32();
-            if (v163 < 0) throw UiProtoException.malformed("out of range: WindowOpened.min_w");
-            int minW_ = v163;
-            int v164 = r.i32();
-            if (v164 < 0) throw UiProtoException.malformed("out of range: WindowOpened.min_h");
-            int minH_ = v164;
-            int v165 = r.i32();
-            if (v165 < 0) throw UiProtoException.malformed("out of range: WindowOpened.max_w");
-            int maxW_ = v165;
-            int v166 = r.i32();
-            if (v166 < 0) throw UiProtoException.malformed("out of range: WindowOpened.max_h");
-            int maxH_ = v166;
-            int v167 = r.u32();
-            int parent_ = v167;
+            int v173 = r.i32();
+            if (v173 < 0) throw UiProtoException.malformed("out of range: WindowOpened.min_w");
+            int minW_ = v173;
+            int v174 = r.i32();
+            if (v174 < 0) throw UiProtoException.malformed("out of range: WindowOpened.min_h");
+            int minH_ = v174;
+            int v175 = r.i32();
+            if (v175 < 0) throw UiProtoException.malformed("out of range: WindowOpened.max_w");
+            int maxW_ = v175;
+            int v176 = r.i32();
+            if (v176 < 0) throw UiProtoException.malformed("out of range: WindowOpened.max_h");
+            int maxH_ = v176;
+            int v177 = r.u32();
+            int parent_ = v177;
             return new WindowOpened(window_, pid_, appId_, title_, icon_, minW_, minH_, maxW_, maxH_, parent_);
         }
         @Override public void json(StringBuilder o) {
@@ -2652,21 +2752,21 @@ public final class UiProto {
             w.i32(this.maxH);
         }
         static WindowChanged dec(UiReader r) throws UiProtoException {
-            int v168 = r.u32();
-            int window_ = v168;
+            int v178 = r.u32();
+            int window_ = v178;
             String title_ = r.str(256, "WindowChanged.title");
-            int v169 = r.i32();
-            if (v169 < 0) throw UiProtoException.malformed("out of range: WindowChanged.min_w");
-            int minW_ = v169;
-            int v170 = r.i32();
-            if (v170 < 0) throw UiProtoException.malformed("out of range: WindowChanged.min_h");
-            int minH_ = v170;
-            int v171 = r.i32();
-            if (v171 < 0) throw UiProtoException.malformed("out of range: WindowChanged.max_w");
-            int maxW_ = v171;
-            int v172 = r.i32();
-            if (v172 < 0) throw UiProtoException.malformed("out of range: WindowChanged.max_h");
-            int maxH_ = v172;
+            int v179 = r.i32();
+            if (v179 < 0) throw UiProtoException.malformed("out of range: WindowChanged.min_w");
+            int minW_ = v179;
+            int v180 = r.i32();
+            if (v180 < 0) throw UiProtoException.malformed("out of range: WindowChanged.min_h");
+            int minH_ = v180;
+            int v181 = r.i32();
+            if (v181 < 0) throw UiProtoException.malformed("out of range: WindowChanged.max_w");
+            int maxW_ = v181;
+            int v182 = r.i32();
+            if (v182 < 0) throw UiProtoException.malformed("out of range: WindowChanged.max_h");
+            int maxH_ = v182;
             return new WindowChanged(window_, title_, minW_, minH_, maxW_, maxH_);
         }
         @Override public void json(StringBuilder o) {
@@ -2695,8 +2795,8 @@ public final class UiProto {
             w.u32(this.window);
         }
         static WindowClosed dec(UiReader r) throws UiProtoException {
-            int v173 = r.u32();
-            int window_ = v173;
+            int v183 = r.u32();
+            int window_ = v183;
             return new WindowClosed(window_);
         }
         @Override public void json(StringBuilder o) {
@@ -2717,12 +2817,12 @@ public final class UiProto {
             w.u8(this.edges);
         }
         static WindowRequest dec(UiReader r) throws UiProtoException {
-            int v174 = r.u32();
-            int window_ = v174;
+            int v184 = r.u32();
+            int window_ = v184;
             UiProto.WindowAction action_ = UiProto.WindowAction.fromCode(r.u8(), "WindowRequest.action");
-            int v175 = r.u8();
-            if ((v175 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: WindowRequest.edges");
-            int edges_ = v175;
+            int v185 = r.u8();
+            if ((v185 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: WindowRequest.edges");
+            int edges_ = v185;
             return new WindowRequest(window_, action_, edges_);
         }
         @Override public void json(StringBuilder o) {
@@ -2770,21 +2870,21 @@ public final class UiProto {
             this.transition.enc(w);
         }
         static Place dec(UiReader r) throws UiProtoException {
-            int v176 = r.u32();
-            int window_ = v176;
-            int v177 = r.i32();
-            int x_ = v177;
-            int v178 = r.i32();
-            int y_ = v178;
-            int v179 = r.i32();
-            if (v179 < 0) throw UiProtoException.malformed("out of range: Place.w");
-            int w_ = v179;
-            int v180 = r.i32();
-            if (v180 < 0) throw UiProtoException.malformed("out of range: Place.h");
-            int h_ = v180;
-            int v181 = r.u32();
-            if ((v181 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Place.states");
-            int states_ = v181;
+            int v186 = r.u32();
+            int window_ = v186;
+            int v187 = r.i32();
+            int x_ = v187;
+            int v188 = r.i32();
+            int y_ = v188;
+            int v189 = r.i32();
+            if (v189 < 0) throw UiProtoException.malformed("out of range: Place.w");
+            int w_ = v189;
+            int v190 = r.i32();
+            if (v190 < 0) throw UiProtoException.malformed("out of range: Place.h");
+            int h_ = v190;
+            int v191 = r.u32();
+            if ((v191 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: Place.states");
+            int states_ = v191;
             UiProto.Transition transition_ = UiProto.Transition.dec(r);
             return new Place(window_, x_, y_, w_, h_, states_, transition_);
         }
@@ -2814,28 +2914,28 @@ public final class UiProto {
         @Override public String name() { return "Stack"; }
         @Override public void encBody(UiWriter w) {
             w.u32(this.windows.size());
-            for (Integer x182 : this.windows) {
-                w.u32(x182);
+            for (Integer x192 : this.windows) {
+                w.u32(x192);
             }
         }
         static Stack dec(UiReader r) throws UiProtoException {
-            int n183 = r.count(1024, 4, "Stack.windows");
-            List<Integer> list184 = new ArrayList<>(n183);
-            for (int i185 = 0; i185 < n183; i185++) {
-                int v186 = r.u32();
-                list184.add(v186);
+            int n193 = r.count(1024, 4, "Stack.windows");
+            List<Integer> list194 = new ArrayList<>(n193);
+            for (int i195 = 0; i195 < n193; i195++) {
+                int v196 = r.u32();
+                list194.add(v196);
             }
-            List<Integer> windows_ = List.copyOf(list184);
+            List<Integer> windows_ = List.copyOf(list194);
             return new Stack(windows_);
         }
         @Override public void json(StringBuilder o) {
             o.append("{\"op\":\"Stack\"");
             o.append(",\"windows\":");
             o.append('[');
-            for (int i188 = 0; i188 < this.windows.size(); i188++) {
-                if (i188 > 0) o.append(',');
-                Integer x187 = this.windows.get(i188);
-                o.append(Integer.toUnsignedString(x187));
+            for (int i198 = 0; i198 < this.windows.size(); i198++) {
+                if (i198 > 0) o.append(',');
+                Integer x197 = this.windows.get(i198);
+                o.append(Integer.toUnsignedString(x197));
             }
             o.append(']');
             o.append('}');
@@ -2850,8 +2950,8 @@ public final class UiProto {
             w.u32(this.window);
         }
         static FocusWindow dec(UiReader r) throws UiProtoException {
-            int v189 = r.u32();
-            int window_ = v189;
+            int v199 = r.u32();
+            int window_ = v199;
             return new FocusWindow(window_);
         }
         @Override public void json(StringBuilder o) {
@@ -2871,8 +2971,8 @@ public final class UiProto {
             w.bool(this.visible);
         }
         static SetVisible dec(UiReader r) throws UiProtoException {
-            int v190 = r.u32();
-            int window_ = v190;
+            int v200 = r.u32();
+            int window_ = v200;
             boolean visible_ = r.bool("SetVisible.visible");
             return new SetVisible(window_, visible_);
         }
@@ -2896,10 +2996,10 @@ public final class UiProto {
             this.transition.enc(w);
         }
         static SetOpacity dec(UiReader r) throws UiProtoException {
-            int v191 = r.u32();
-            int window_ = v191;
-            int v192 = r.u8();
-            int alpha_ = v192;
+            int v201 = r.u32();
+            int window_ = v201;
+            int v202 = r.u8();
+            int alpha_ = v202;
             UiProto.Transition transition_ = UiProto.Transition.dec(r);
             return new SetOpacity(window_, alpha_, transition_);
         }
@@ -2923,23 +3023,23 @@ public final class UiProto {
             w.u32(this.id);
             w.u16(this.mods);
             w.u32(this.keys.size());
-            for (Integer x193 : this.keys) {
-                w.u16(x193);
+            for (Integer x203 : this.keys) {
+                w.u16(x203);
             }
         }
         static BindChord dec(UiReader r) throws UiProtoException {
-            int v194 = r.u32();
-            int id_ = v194;
-            int v195 = r.u16();
-            if ((v195 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: BindChord.mods");
-            int mods_ = v195;
-            int n196 = r.count(4, 2, "BindChord.keys");
-            List<Integer> list197 = new ArrayList<>(n196);
-            for (int i198 = 0; i198 < n196; i198++) {
-                int v199 = r.u16();
-                list197.add(v199);
+            int v204 = r.u32();
+            int id_ = v204;
+            int v205 = r.u16();
+            if ((v205 & ~0xf) != 0) throw UiProtoException.malformed("bad flag bits: BindChord.mods");
+            int mods_ = v205;
+            int n206 = r.count(4, 2, "BindChord.keys");
+            List<Integer> list207 = new ArrayList<>(n206);
+            for (int i208 = 0; i208 < n206; i208++) {
+                int v209 = r.u16();
+                list207.add(v209);
             }
-            List<Integer> keys_ = List.copyOf(list197);
+            List<Integer> keys_ = List.copyOf(list207);
             return new BindChord(id_, mods_, keys_);
         }
         @Override public void json(StringBuilder o) {
@@ -2950,10 +3050,10 @@ public final class UiProto {
             o.append(Integer.toUnsignedString(this.mods));
             o.append(",\"keys\":");
             o.append('[');
-            for (int i201 = 0; i201 < this.keys.size(); i201++) {
-                if (i201 > 0) o.append(',');
-                Integer x200 = this.keys.get(i201);
-                o.append(x200);
+            for (int i211 = 0; i211 < this.keys.size(); i211++) {
+                if (i211 > 0) o.append(',');
+                Integer x210 = this.keys.get(i211);
+                o.append(x210);
             }
             o.append(']');
             o.append('}');
@@ -2968,8 +3068,8 @@ public final class UiProto {
             w.u32(this.window);
         }
         static CloseWindow dec(UiReader r) throws UiProtoException {
-            int v202 = r.u32();
-            int window_ = v202;
+            int v212 = r.u32();
+            int window_ = v212;
             return new CloseWindow(window_);
         }
         @Override public void json(StringBuilder o) {
@@ -2987,18 +3087,18 @@ public final class UiProto {
         @Override public void encBody(UiWriter w) {
             w.str(this.appId);
             w.u32(this.args.size());
-            for (String x203 : this.args) {
-                w.str(x203);
+            for (String x213 : this.args) {
+                w.str(x213);
             }
         }
         static Launch dec(UiReader r) throws UiProtoException {
             String appId_ = r.str(128, "Launch.app_id");
-            int n204 = r.count(64, 4, "Launch.args");
-            List<String> list205 = new ArrayList<>(n204);
-            for (int i206 = 0; i206 < n204; i206++) {
-                list205.add(r.str(1024, "Launch.args"));
+            int n214 = r.count(64, 4, "Launch.args");
+            List<String> list215 = new ArrayList<>(n214);
+            for (int i216 = 0; i216 < n214; i216++) {
+                list215.add(r.str(1024, "Launch.args"));
             }
-            List<String> args_ = List.copyOf(list205);
+            List<String> args_ = List.copyOf(list215);
             return new Launch(appId_, args_);
         }
         @Override public void json(StringBuilder o) {
@@ -3007,10 +3107,10 @@ public final class UiProto {
             UiJson.str(o, this.appId);
             o.append(",\"args\":");
             o.append('[');
-            for (int i208 = 0; i208 < this.args.size(); i208++) {
-                if (i208 > 0) o.append(',');
-                String x207 = this.args.get(i208);
-                UiJson.str(o, x207);
+            for (int i218 = 0; i218 < this.args.size(); i218++) {
+                if (i218 > 0) o.append(',');
+                String x217 = this.args.get(i218);
+                UiJson.str(o, x217);
             }
             o.append(']');
             o.append('}');
@@ -3065,8 +3165,8 @@ public final class UiProto {
             w.str(this.permission);
         }
         static PermissionPrompt dec(UiReader r) throws UiProtoException {
-            int v209 = r.u32();
-            int req_ = v209;
+            int v219 = r.u32();
+            int req_ = v219;
             String appId_ = r.str(128, "PermissionPrompt.app_id");
             String permission_ = r.str(64, "PermissionPrompt.permission");
             return new PermissionPrompt(req_, appId_, permission_);
@@ -3093,8 +3193,8 @@ public final class UiProto {
             w.bool(this.remember);
         }
         static AnswerPermission dec(UiReader r) throws UiProtoException {
-            int v210 = r.u32();
-            int req_ = v210;
+            int v220 = r.u32();
+            int req_ = v220;
             boolean allow_ = r.bool("AnswerPermission.allow");
             boolean remember_ = r.bool("AnswerPermission.remember");
             return new AnswerPermission(req_, allow_, remember_);
@@ -3186,8 +3286,8 @@ public final class UiProto {
             w.str(this.body);
             w.str(this.icon);
             w.u32(this.actions.size());
-            for (String x211 : this.actions) {
-                w.str(x211);
+            for (String x221 : this.actions) {
+                w.str(x221);
             }
         }
         static Notify dec(UiReader r) throws UiProtoException {
@@ -3195,12 +3295,12 @@ public final class UiProto {
             String title_ = r.str(256, "Notify.title");
             String body_ = r.str(1024, "Notify.body");
             String icon_ = r.str(256, "Notify.icon");
-            int n212 = r.count(4, 4, "Notify.actions");
-            List<String> list213 = new ArrayList<>(n212);
-            for (int i214 = 0; i214 < n212; i214++) {
-                list213.add(r.str(64, "Notify.actions"));
+            int n222 = r.count(4, 4, "Notify.actions");
+            List<String> list223 = new ArrayList<>(n222);
+            for (int i224 = 0; i224 < n222; i224++) {
+                list223.add(r.str(64, "Notify.actions"));
             }
-            List<String> actions_ = List.copyOf(list213);
+            List<String> actions_ = List.copyOf(list223);
             return new Notify(tag_, title_, body_, icon_, actions_);
         }
         @Override public void json(StringBuilder o) {
@@ -3215,10 +3315,10 @@ public final class UiProto {
             UiJson.str(o, this.icon);
             o.append(",\"actions\":");
             o.append('[');
-            for (int i216 = 0; i216 < this.actions.size(); i216++) {
-                if (i216 > 0) o.append(',');
-                String x215 = this.actions.get(i216);
-                UiJson.str(o, x215);
+            for (int i226 = 0; i226 < this.actions.size(); i226++) {
+                if (i226 > 0) o.append(',');
+                String x225 = this.actions.get(i226);
+                UiJson.str(o, x225);
             }
             o.append(']');
             o.append('}');
@@ -3260,24 +3360,24 @@ public final class UiProto {
             w.str(this.body);
             w.str(this.icon);
             w.u32(this.actions.size());
-            for (String x217 : this.actions) {
-                w.str(x217);
+            for (String x227 : this.actions) {
+                w.str(x227);
             }
         }
         static NotificationPosted dec(UiReader r) throws UiProtoException {
-            int v218 = r.u32();
-            int nid_ = v218;
+            int v228 = r.u32();
+            int nid_ = v228;
             String appId_ = r.str(128, "NotificationPosted.app_id");
             String tag_ = r.str(64, "NotificationPosted.tag");
             String title_ = r.str(256, "NotificationPosted.title");
             String body_ = r.str(1024, "NotificationPosted.body");
             String icon_ = r.str(256, "NotificationPosted.icon");
-            int n219 = r.count(4, 4, "NotificationPosted.actions");
-            List<String> list220 = new ArrayList<>(n219);
-            for (int i221 = 0; i221 < n219; i221++) {
-                list220.add(r.str(64, "NotificationPosted.actions"));
+            int n229 = r.count(4, 4, "NotificationPosted.actions");
+            List<String> list230 = new ArrayList<>(n229);
+            for (int i231 = 0; i231 < n229; i231++) {
+                list230.add(r.str(64, "NotificationPosted.actions"));
             }
-            List<String> actions_ = List.copyOf(list220);
+            List<String> actions_ = List.copyOf(list230);
             return new NotificationPosted(nid_, appId_, tag_, title_, body_, icon_, actions_);
         }
         @Override public void json(StringBuilder o) {
@@ -3296,10 +3396,10 @@ public final class UiProto {
             UiJson.str(o, this.icon);
             o.append(",\"actions\":");
             o.append('[');
-            for (int i223 = 0; i223 < this.actions.size(); i223++) {
-                if (i223 > 0) o.append(',');
-                String x222 = this.actions.get(i223);
-                UiJson.str(o, x222);
+            for (int i233 = 0; i233 < this.actions.size(); i233++) {
+                if (i233 > 0) o.append(',');
+                String x232 = this.actions.get(i233);
+                UiJson.str(o, x232);
             }
             o.append(']');
             o.append('}');
@@ -3315,8 +3415,8 @@ public final class UiProto {
             w.str(this.action);
         }
         static NotificationInvoke dec(UiReader r) throws UiProtoException {
-            int v224 = r.u32();
-            int nid_ = v224;
+            int v234 = r.u32();
+            int nid_ = v234;
             String action_ = r.str(64, "NotificationInvoke.action");
             return new NotificationInvoke(nid_, action_);
         }
@@ -3338,21 +3438,21 @@ public final class UiProto {
             w.u32(this.req);
             w.u8(this.mode.code);
             w.u32(this.types.size());
-            for (String x225 : this.types) {
-                w.str(x225);
+            for (String x235 : this.types) {
+                w.str(x235);
             }
             w.str(this.suggested);
         }
         static PickFile dec(UiReader r) throws UiProtoException {
-            int v226 = r.u32();
-            int req_ = v226;
+            int v236 = r.u32();
+            int req_ = v236;
             UiProto.PickMode mode_ = UiProto.PickMode.fromCode(r.u8(), "PickFile.mode");
-            int n227 = r.count(32, 4, "PickFile.types");
-            List<String> list228 = new ArrayList<>(n227);
-            for (int i229 = 0; i229 < n227; i229++) {
-                list228.add(r.str(32, "PickFile.types"));
+            int n237 = r.count(32, 4, "PickFile.types");
+            List<String> list238 = new ArrayList<>(n237);
+            for (int i239 = 0; i239 < n237; i239++) {
+                list238.add(r.str(32, "PickFile.types"));
             }
-            List<String> types_ = List.copyOf(list228);
+            List<String> types_ = List.copyOf(list238);
             String suggested_ = r.str(1024, "PickFile.suggested");
             return new PickFile(req_, mode_, types_, suggested_);
         }
@@ -3364,10 +3464,10 @@ public final class UiProto {
             UiJson.str(o, this.mode.wireName);
             o.append(",\"types\":");
             o.append('[');
-            for (int i231 = 0; i231 < this.types.size(); i231++) {
-                if (i231 > 0) o.append(',');
-                String x230 = this.types.get(i231);
-                UiJson.str(o, x230);
+            for (int i241 = 0; i241 < this.types.size(); i241++) {
+                if (i241 > 0) o.append(',');
+                String x240 = this.types.get(i241);
+                UiJson.str(o, x240);
             }
             o.append(']');
             o.append(",\"suggested\":");
@@ -3385,8 +3485,8 @@ public final class UiProto {
             w.str(this.path);
         }
         static FilePicked dec(UiReader r) throws UiProtoException {
-            int v232 = r.u32();
-            int req_ = v232;
+            int v242 = r.u32();
+            int req_ = v242;
             String path_ = r.str(1024, "FilePicked.path");
             return new FilePicked(req_, path_);
         }
@@ -3438,6 +3538,106 @@ public final class UiProto {
         }
     }
 
+    /** MediaSession · opcode 0x0540 · a>c. What the app is playing. Sent again on every change (state, position about once a second while playing); state none ends the session. */
+    public record MediaSession(UiProto.MediaInfo info) implements Message {
+        @Override public int opcode() { return 0x0540; }
+        @Override public String name() { return "MediaSession"; }
+        @Override public void encBody(UiWriter w) {
+            this.info.enc(w);
+        }
+        static MediaSession dec(UiReader r) throws UiProtoException {
+            UiProto.MediaInfo info_ = UiProto.MediaInfo.dec(r);
+            return new MediaSession(info_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"MediaSession\"");
+            o.append(",\"info\":");
+            this.info.json(o);
+            o.append('}');
+        }
+    }
+
+    /** MediaAction · opcode 0x0541 · c>a. The player pressed a Now Playing control (shell card, AirPods double-tap, lock screen): play, pause, next, previous, or seek to position_ms. */
+    public record MediaAction(String action, int positionMs) implements Message {
+        @Override public int opcode() { return 0x0541; }
+        @Override public String name() { return "MediaAction"; }
+        @Override public void encBody(UiWriter w) {
+            w.str(this.action);
+            w.u32(this.positionMs);
+        }
+        static MediaAction dec(UiReader r) throws UiProtoException {
+            String action_ = r.str(16, "MediaAction.action");
+            int v243 = r.u32();
+            int positionMs_ = v243;
+            return new MediaAction(action_, positionMs_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"MediaAction\"");
+            o.append(",\"action\":");
+            UiJson.str(o, this.action);
+            o.append(",\"position_ms\":");
+            o.append(Integer.toUnsignedString(this.positionMs));
+            o.append('}');
+        }
+    }
+
+    /** MediaSessionChanged · opcode 0x0542 · c>s. An app's media session (the shell's Now Playing card); state none = it ended. */
+    public record MediaSessionChanged(int pid, String appId, UiProto.MediaInfo info) implements Message {
+        @Override public int opcode() { return 0x0542; }
+        @Override public String name() { return "MediaSessionChanged"; }
+        @Override public void encBody(UiWriter w) {
+            w.u32(this.pid);
+            w.str(this.appId);
+            this.info.enc(w);
+        }
+        static MediaSessionChanged dec(UiReader r) throws UiProtoException {
+            int v244 = r.u32();
+            int pid_ = v244;
+            String appId_ = r.str(128, "MediaSessionChanged.app_id");
+            UiProto.MediaInfo info_ = UiProto.MediaInfo.dec(r);
+            return new MediaSessionChanged(pid_, appId_, info_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"MediaSessionChanged\"");
+            o.append(",\"pid\":");
+            o.append(Integer.toUnsignedString(this.pid));
+            o.append(",\"app_id\":");
+            UiJson.str(o, this.appId);
+            o.append(",\"info\":");
+            this.info.json(o);
+            o.append('}');
+        }
+    }
+
+    /** MediaControl · opcode 0x0543 · s>c. The player pressed a Now Playing control for app pid: the compositor sends it MediaAction. */
+    public record MediaControl(int pid, String action, int positionMs) implements Message {
+        @Override public int opcode() { return 0x0543; }
+        @Override public String name() { return "MediaControl"; }
+        @Override public void encBody(UiWriter w) {
+            w.u32(this.pid);
+            w.str(this.action);
+            w.u32(this.positionMs);
+        }
+        static MediaControl dec(UiReader r) throws UiProtoException {
+            int v245 = r.u32();
+            int pid_ = v245;
+            String action_ = r.str(16, "MediaControl.action");
+            int v246 = r.u32();
+            int positionMs_ = v246;
+            return new MediaControl(pid_, action_, positionMs_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"MediaControl\"");
+            o.append(",\"pid\":");
+            o.append(Integer.toUnsignedString(this.pid));
+            o.append(",\"action\":");
+            UiJson.str(o, this.action);
+            o.append(",\"position_ms\":");
+            o.append(Integer.toUnsignedString(this.positionMs));
+            o.append('}');
+        }
+    }
+
     /** WillSuspend · opcode 0x0600 · c>a */
     public record WillSuspend(int deadlineMs) implements Message {
         @Override public int opcode() { return 0x0600; }
@@ -3446,8 +3646,8 @@ public final class UiProto {
             w.u32(this.deadlineMs);
         }
         static WillSuspend dec(UiReader r) throws UiProtoException {
-            int v233 = r.u32();
-            int deadlineMs_ = v233;
+            int v247 = r.u32();
+            int deadlineMs_ = v247;
             return new WillSuspend(deadlineMs_);
         }
         @Override public void json(StringBuilder o) {
@@ -3511,10 +3711,98 @@ public final class UiProto {
         }
     }
 
+    /** BackgroundMode · opcode 0x0604 · a>c. The app starts (on) or stops a background mode: audio, call, radio, transfer, navigation (declared in app.toml). */
+    public record BackgroundMode(String mode, boolean on) implements Message {
+        @Override public int opcode() { return 0x0604; }
+        @Override public String name() { return "BackgroundMode"; }
+        @Override public void encBody(UiWriter w) {
+            w.str(this.mode);
+            w.bool(this.on);
+        }
+        static BackgroundMode dec(UiReader r) throws UiProtoException {
+            String mode_ = r.str(32, "BackgroundMode.mode");
+            boolean on_ = r.bool("BackgroundMode.on");
+            return new BackgroundMode(mode_, on_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"BackgroundMode\"");
+            o.append(",\"mode\":");
+            UiJson.str(o, this.mode);
+            o.append(",\"on\":");
+            o.append(this.on ? "true" : "false");
+            o.append('}');
+        }
+    }
+
+    /** BackgroundModeResult · opcode 0x0605 · c>a. Whether the app may keep running for mode while hidden: at once when background:<mode> is decided, else once the player answered the first-time prompt. */
+    public record BackgroundModeResult(String mode, boolean granted) implements Message {
+        @Override public int opcode() { return 0x0605; }
+        @Override public String name() { return "BackgroundModeResult"; }
+        @Override public void encBody(UiWriter w) {
+            w.str(this.mode);
+            w.bool(this.granted);
+        }
+        static BackgroundModeResult dec(UiReader r) throws UiProtoException {
+            String mode_ = r.str(32, "BackgroundModeResult.mode");
+            boolean granted_ = r.bool("BackgroundModeResult.granted");
+            return new BackgroundModeResult(mode_, granted_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"BackgroundModeResult\"");
+            o.append(",\"mode\":");
+            UiJson.str(o, this.mode);
+            o.append(",\"granted\":");
+            o.append(this.granted ? "true" : "false");
+            o.append('}');
+        }
+    }
+
+    /** AppModes · opcode 0x0606 · c>s. An app's active background modes changed (the desktop's tray, the phone's pills); no modes = none. */
+    public record AppModes(int pid, String appId, List<String> modes) implements Message {
+        @Override public int opcode() { return 0x0606; }
+        @Override public String name() { return "AppModes"; }
+        @Override public void encBody(UiWriter w) {
+            w.u32(this.pid);
+            w.str(this.appId);
+            w.u32(this.modes.size());
+            for (String x248 : this.modes) {
+                w.str(x248);
+            }
+        }
+        static AppModes dec(UiReader r) throws UiProtoException {
+            int v249 = r.u32();
+            int pid_ = v249;
+            String appId_ = r.str(128, "AppModes.app_id");
+            int n250 = r.count(8, 4, "AppModes.modes");
+            List<String> list251 = new ArrayList<>(n250);
+            for (int i252 = 0; i252 < n250; i252++) {
+                list251.add(r.str(32, "AppModes.modes"));
+            }
+            List<String> modes_ = List.copyOf(list251);
+            return new AppModes(pid_, appId_, modes_);
+        }
+        @Override public void json(StringBuilder o) {
+            o.append("{\"op\":\"AppModes\"");
+            o.append(",\"pid\":");
+            o.append(Integer.toUnsignedString(this.pid));
+            o.append(",\"app_id\":");
+            UiJson.str(o, this.appId);
+            o.append(",\"modes\":");
+            o.append('[');
+            for (int i254 = 0; i254 < this.modes.size(); i254++) {
+                if (i254 > 0) o.append(',');
+                String x253 = this.modes.get(i254);
+                UiJson.str(o, x253);
+            }
+            o.append(']');
+            o.append('}');
+        }
+    }
+
     /** Whether {@code opcode} names a message of this protocol version. */
     public static boolean isKnown(int opcode) {
         return switch (opcode) {
-            case 0x0001, 0x0002, 0x0003, 0x0100, 0x0101, 0x0102, 0x0103, 0x0104, 0x0105, 0x0106, 0x0107, 0x0108, 0x0109, 0x010c, 0x010d, 0x010e, 0x010f, 0x010a, 0x010b, 0x0200, 0x0210, 0x0211, 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0305, 0x0310, 0x0311, 0x0313, 0x0312, 0x0400, 0x0401, 0x0402, 0x0403, 0x0404, 0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, 0x0418, 0x0419, 0x0500, 0x0501, 0x0510, 0x0511, 0x0512, 0x0520, 0x0521, 0x0522, 0x0523, 0x0530, 0x0531, 0x0532, 0x0533, 0x0600, 0x0601, 0x0602, 0x0603 -> true;
+            case 0x0001, 0x0002, 0x0003, 0x0100, 0x0101, 0x0102, 0x0103, 0x0104, 0x0105, 0x0106, 0x0107, 0x0108, 0x0109, 0x010c, 0x010d, 0x010e, 0x010f, 0x010a, 0x010b, 0x0200, 0x0210, 0x0211, 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0305, 0x0310, 0x0311, 0x0313, 0x0312, 0x0400, 0x0401, 0x0402, 0x0403, 0x0404, 0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, 0x0418, 0x0419, 0x0500, 0x0501, 0x0510, 0x0511, 0x0512, 0x0520, 0x0521, 0x0522, 0x0523, 0x0530, 0x0531, 0x0532, 0x0533, 0x0540, 0x0541, 0x0542, 0x0543, 0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x0606 -> true;
             default -> false;
         };
     }
@@ -3581,10 +3869,17 @@ public final class UiProto {
             case 0x0531 -> FilePicked.dec(r);
             case 0x0532 -> Open.dec(r);
             case 0x0533 -> OpenFile.dec(r);
+            case 0x0540 -> MediaSession.dec(r);
+            case 0x0541 -> MediaAction.dec(r);
+            case 0x0542 -> MediaSessionChanged.dec(r);
+            case 0x0543 -> MediaControl.dec(r);
             case 0x0600 -> WillSuspend.dec(r);
             case 0x0601 -> SaveState.dec(r);
             case 0x0602 -> Restore.dec(r);
             case 0x0603 -> BackgroundDone.dec(r);
+            case 0x0604 -> BackgroundMode.dec(r);
+            case 0x0605 -> BackgroundModeResult.dec(r);
+            case 0x0606 -> AppModes.dec(r);
             default -> throw UiProtoException.unknownOpcode(opcode);
         };
     }

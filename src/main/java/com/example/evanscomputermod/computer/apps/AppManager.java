@@ -347,6 +347,45 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         return i == null || decide(i, permission, false, pid);
     }
 
+    /**
+     * A system app: built into the phone ({@code .pkg-origin} = {@code builtin}) or one of
+     * {@link SystemApps} (installed from the server's programs, not from a repository).
+     */
+    public boolean isSystemApp(String appId) {
+        if (appId == null) return false;
+        if (SystemApps.ALL.stream().anyMatch(a -> a.id().equals(appId))) return true;
+        try {
+            Path o = storageRoot().resolve("apps").resolve(appId).resolve(".pkg-origin");
+            return Files.isRegularFile(o) && Files.readString(o).strip().equals("builtin");
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * An app (not a system app) places a call or sends a text through telephonyd: the player
+     * confirms each one ({@code confirm:<what>}; never remembered). Blocks the child thread.
+     */
+    @Override
+    public boolean confirm(int pid, String what) {
+        AppInstance i = instanceOf(pid);
+        if (i == null || isSystemApp(i.appId())) return true;
+        PermissionPrompter p = prompter;
+        if (p == null) return EcmConfig.appsAllowWithoutPrompter();
+        CompletableFuture<PermissionPrompter.Answer> f = p.prompt(new PermissionPrompter.Request(nextReq.getAndIncrement(), i.appId(), i.manifest().name(), "confirm:" + what, pid));
+        if (f == null) return EcmConfig.appsAllowWithoutPrompter();
+        try {
+            PermissionPrompter.Answer a = f.get(promptTimeoutMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (a == null || !a.allow()) {
+                deny(i, "confirm:" + what, "the player said no");
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** May this app use {@code permission} (prompting if {@code mayPrompt} and undecided)? */
     public boolean check(AppInstance i, String permission, boolean mayPrompt) {
         return decide(i, permission, mayPrompt, i.pid());
@@ -367,6 +406,58 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         // Background modes are approved by the player in Settings / the phone shell, never mid-run.
         if (!mayPrompt || perm.startsWith("background:")) return false;
         return ask(i, perm, pid);
+    }
+
+    /** The remembered answer for {@code perm}, else this run's, else null (undecided; not declared = false). */
+    @Nullable
+    Boolean decisionOf(AppInstance i, String perm) {
+        if (!i.manifest().permissions().contains(perm)) return false;
+        Boolean d = store.decision(i.appId(), perm);
+        return d != null ? d : i.sessionAnswers.get(perm);
+    }
+
+    /**
+     * Ask the player about {@code perm} without blocking anyone (the first-time background
+     * prompt): the future completes with the answer, which is remembered as the player chose.
+     * Without a prompter it completes with the no-prompter policy.
+     */
+    CompletableFuture<Boolean> askAsync(AppInstance i, String perm) {
+        CompletableFuture<Boolean> out = new CompletableFuture<>();
+        Boolean d = decisionOf(i, perm);
+        if (d != null) {
+            out.complete(d);
+            return out;
+        }
+        PermissionPrompter p = prompter;
+        String key = i.appId() + "\n" + perm;
+        CompletableFuture<PermissionPrompter.Answer> f = p == null ? null : pendingPrompts.computeIfAbsent(key, k -> p.prompt(new PermissionPrompter.Request(
+                nextReq.getAndIncrement(), i.appId(), i.manifest().name(), perm, i.pid())));
+        if (f == null) {
+            boolean allow = EcmConfig.appsAllowWithoutPrompter();
+            i.sessionAnswers.put(perm, allow);
+            out.complete(allow);
+            return out;
+        }
+        f.whenComplete((a, err) -> {
+            pendingPrompts.remove(key, f);
+            PermissionPrompter.Answer ans = err != null || a == null ? PermissionPrompter.Answer.DENY_ONCE : a;
+            if (ans.remember()) store.setDecision(i.appId(), perm, ans.allow());
+            else i.sessionAnswers.put(perm, ans.allow());
+            if (!ans.allow()) deny(i, perm, ans.remember() ? "the player said no" : "the player said no (this run)");
+            out.complete(ans.allow());
+        });
+        return out;
+    }
+
+    private volatile java.util.function.Predicate<AppInstance> foreground = a -> false;
+
+    /** Who is on screen (the phone's foreground app): the background limit never stops it. */
+    public void setForegroundProbe(@Nullable java.util.function.Predicate<AppInstance> probe) {
+        foreground = probe == null ? a -> false : probe;
+    }
+
+    boolean isForeground(AppInstance i) {
+        return foreground.test(i);
     }
 
     private void deny(AppInstance i, String perm, String why) {
@@ -443,6 +534,12 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
             if (vpath.equals("/etc/pkg/signing.key")) return false;
             return decide(i, "packages", true, pid);
         }
+        // the address book (Contacts, docs/TELEPHONY.md): its own permission, not documents'
+        if (under(vpath, "/home/.contacts")) {
+            return declared.contains("contacts") && decide(i, "contacts", true, pid);
+        }
+        // the phone's texts and call history belong to telephonyd (apps ask it, with phone / sms)
+        if (under(vpath, "/var/telephony")) return false;
         boolean documents = under(vpath, "/home");
         if (documents && declared.contains("files:documents") && decide(i, "files:documents", true, pid)) return true;
         if (declared.contains("files:all")) {
@@ -674,6 +771,13 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         collectStates(List.of(i), EcmConfig.appsSaveStateDeadlineMs());
         i.state = AppInstance.State.SUSPENDED;
         pm.pauseGroup(i.group());
+        background.onSuspended(i);
+    }
+
+    /** {@code BackgroundMode{mode, on}} from {@code pid}'s app (see {@link BackgroundScheduler#requested}). */
+    public void onBackgroundMode(int pid, String mode, boolean on) {
+        AppInstance i = instanceOf(pid);
+        if (i != null) background.requested(i, mode, on);
     }
 
     /** Bring a suspended app back (foreground). */

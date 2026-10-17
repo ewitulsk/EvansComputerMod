@@ -6,7 +6,10 @@
 //! default: `ecm_apps_ui::settings::AppsSection` over `app_ctl`), Sound (the
 //! default speaker and microphone, written to `/etc/sound.conf`, their volume
 //! and gain, and a live input level meter that records from the microphone
-//! while the page is open), Bluetooth (an ePhone's radio: pair AirPods whose
+//! while the page is open), Mixer (the Volume Mixer, `/dev/mixer`: a master strip per
+//! speaker, a strip per app with its volume 0-150 %, mute, live meter, ducked badge,
+//! reset and, with several speakers, the speaker it plays on, and the microphones'
+//! gain and level; re-read twice a second while shown), Bluetooth (an ePhone's radio: pair AirPods whose
 //! case lid is open, connect, disconnect and forget them; docs/BLUETOOTH.md) and
 //! About.
 //!
@@ -14,7 +17,7 @@
 //! page on medium and wide windows (wider on wide), and on compact ones a
 //! header with the section's name and a Sections menu above the page.
 //!
-//!   settings [wifi|cellular|display|appearance|apps|sound|bluetooth|about]
+//!   settings [wifi|cellular|display|appearance|apps|sound|mixer|bluetooth|about]
 
 use crate::sys::{self, BtState, CellState, DisplayState, Network, SoundDevice, Sys, WifiState};
 use crate::uitoml;
@@ -28,7 +31,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// The sections, in order.
-pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "Apps", "Sound", "Bluetooth", "About"];
+pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "Apps", "Sound", "Mixer", "Bluetooth", "About"];
 
 /// The Apps section's index in [`SECTIONS`].
 pub const APPS: usize = 4;
@@ -36,8 +39,11 @@ pub const APPS: usize = 4;
 /// The Sound section's index in [`SECTIONS`].
 pub const SOUND: usize = 5;
 
+/// The Mixer section's index in [`SECTIONS`] (the Volume Mixer, under Sound).
+pub const MIXER: usize = 6;
+
 /// The Bluetooth section's index in [`SECTIONS`].
-pub const BLUETOOTH: usize = 6;
+pub const BLUETOOTH: usize = 7;
 
 /// The shells Settings offers (program / app id, label).
 pub const SHELLS: &[(&str, &str)] = &[("dev.ecm.desktop", "Desktop"), ("test-shell", "Test shell (tiling)")];
@@ -51,8 +57,9 @@ pub fn section_named(s: &str) -> Option<usize> {
         "appearance" | "theme" => 3,
         "apps" | "permissions" => APPS,
         "sound" | "audio" | "microphone" => SOUND,
+        "mixer" | "volume" | "volume-mixer" => MIXER,
         "bluetooth" | "bt" | "airpods" => BLUETOOTH,
-        "about" => 7,
+        "about" => 8,
         _ => return None,
     })
 }
@@ -84,6 +91,9 @@ pub struct State {
     pub default_output: Option<String>,
     pub default_input: Option<String>,
     pub input_level: Option<i32>,
+    /// Settings -> Mixer: the Volume Mixer's strips (None, with the reason, when there is none).
+    pub mixer: Option<ecm_audio::mixer::Strips>,
+    pub mixer_error: Option<String>,
     /// Settings -> Bluetooth.
     pub bt: BtState,
 }
@@ -119,6 +129,7 @@ pub fn refresh(st: &Shared, sys: &SysRef) {
     s.autostart = uitoml::get(&toml, "autostart").as_deref() == Some("true");
     drop(s);
     refresh_sound(st, sys);
+    refresh_mixer(st, sys);
     let bt = sys.borrow_mut().bluetooth();
     st.borrow_mut().bt = bt;
 }
@@ -135,6 +146,20 @@ fn refresh_sound(st: &Shared, sys: &SysRef) {
     s.sound = devices;
     s.default_output = ecm_audio::parse_sound_conf(&conf, "output");
     s.default_input = ecm_audio::parse_sound_conf(&conf, "input");
+}
+
+/// Re-read the Volume Mixer; true if something it shows changed.
+fn refresh_mixer(st: &Shared, sys: &SysRef) -> bool {
+    let r = sys.borrow_mut().mixer();
+    let mut s = st.borrow_mut();
+    let (mixer, error) = match r {
+        Ok(m) => (Some(m), None),
+        Err(e) => (None, Some(e)),
+    };
+    let changed = s.mixer != mixer || s.mixer_error != error;
+    s.mixer = mixer;
+    s.mixer_error = error;
+    changed
 }
 
 /// The device of a kind that is in use: the default if it is attached, else the first.
@@ -174,6 +199,12 @@ fn set_default(st: &Shared, sys: &SysRef, input: bool, name: &str) {
 /// A text level meter: 20 cells over -60..0 dBFS.
 pub fn meter(db: i32) -> String {
     let n = ((db + 60).clamp(0, 60) / 3) as usize;
+    format!("{}{}", "|".repeat(n), ".".repeat(20 - n))
+}
+
+/// A Volume Mixer peak (0-32767) as the same 20-cell meter (`ecm_audio::mixer::meter_percent`).
+pub fn peak_meter(peak: u32) -> String {
+    let n = (ecm_audio::mixer::meter_percent(peak) as usize + 2) / 5;
     format!("{}{}", "|".repeat(n), ".".repeat(20 - n))
 }
 
@@ -384,6 +415,8 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
             )
             .child(kv_w("State", m.message.clone(), kw).id("cell_state"))
             .child(kv_w("SIM", m.sim.clone(), kw).id("cell_sim"))
+            .child(kv_w("Number", if m.number.is_empty() { "-".to_string() } else { m.number.clone() }, kw).id("cell_number"))
+            .child(kv_w("Calls", m.ims.clone(), kw).id("cell_ims"))
             .child(kv_w("Cell", m.cell.clone(), kw))
             .child(kv_w("Signal", m.signal.clone(), kw))
             .child(kv_w("Address", m.address.clone(), kw))
@@ -582,8 +615,138 @@ fn sound_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
         }
         None => c = c.child(label("No microphone: place a Microphone next to the computer.").id("no_input")),
     }
+    let (a, ya) = (st.clone(), sys.clone());
+    c = c.child(
+        row()
+            .gap(8)
+            .align(Align::Center)
+            .child(label("Each app's volume, the speaker it plays on and its level:").style("caption"))
+            .child(button("Volume Mixer").id("open_mixer").on_click(move |cx, _| select_section(cx, &a, &ya, MIXER))),
+    );
     if !s.notice.is_empty() && s.section == SOUND {
         c = c.child(label(s.notice.clone()).id("sound_notice").style("caption"));
+    }
+    c
+}
+
+/// Send a Volume Mixer command and re-read the strips; a refusal becomes the page's notice.
+fn mixer_do(cx: &mut Ctx, st: &Shared, sys: &SysRef, cmd: String) {
+    let r = sys.borrow_mut().mixer_command(&cmd);
+    refresh_mixer(st, sys);
+    st.borrow_mut().notice = match r {
+        Ok(()) => String::new(),
+        Err(e) => e,
+    };
+    cx.invalidate();
+}
+
+/// A volume (or gain) slider that sends `cmd(value)` as it moves, with the value beside it.
+fn mixer_slider(id: String, max: i32, value: u32, unit: &str, st: &Shared, sys: &SysRef, cmd: impl Fn(i32) -> String + 'static) -> Element {
+    let (a, ya) = (st.clone(), sys.clone());
+    row()
+        .gap(8)
+        .align(Align::Center)
+        .child(slider(0, max).value(value as i32).id(id).grow(1).on_change(move |cx, e| {
+            if let EventValue::Int(v) = e.value {
+                mixer_do(cx, &a, &ya, cmd(v.clamp(0, max)));
+            }
+        }))
+        .child(label(format!("{value}{unit}")).wrap(false).width(40))
+}
+
+fn mute_toggle(id: String, muted: bool, target: String, st: &Shared, sys: &SysRef) -> Element {
+    let (a, ya) = (st.clone(), sys.clone());
+    toggle("Mute").id(id).checked(muted).on_change(move |cx, e| {
+        if let EventValue::Bool(on) = e.value {
+            mixer_do(cx, &a, &ya, format!("mute {target} {}", if on { "on" } else { "off" }));
+        }
+    })
+}
+
+/// A level meter line (monospace) with a caption after it.
+fn meter_row(id: String, cells: String, after: String) -> Element {
+    row().gap(8).child(label(cells).id(id).wrap(false).font(proto::Font::Mono)).child(label(after).style("caption").wrap(false))
+}
+
+/// Settings -> Mixer: the Volume Mixer's strips, re-read twice a second while shown.
+fn mixer_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
+    let mut c = column().gap(6).child(title("Volume Mixer"));
+    let Some(m) = &s.mixer else {
+        let why = s.mixer_error.clone().unwrap_or_else(|| "This computer has no Volume Mixer.".into());
+        return c.child(label(why).id("no_mixer"));
+    };
+    c = c.child(label("SPEAKERS").style("caption"));
+    if m.outputs.is_empty() {
+        c = c.child(label("No speaker: place a Speaker next to the computer.").id("mixer_no_output"));
+    }
+    let several = m.outputs.len() > 1;
+    for o in &m.outputs {
+        let target = if several { format!("master.{}", o.side) } else { "master".to_string() };
+        let name = if o.label.is_empty() { o.side.clone() } else { format!("{} ({})", o.label, o.side) };
+        let t = target.clone();
+        c = c
+            .child(row().gap(8).align(Align::Center).child(label(name).wrap(false)).child(spacer()).child(mute_toggle(format!("master_mute:{}", o.side), o.mute, target.clone(), st, sys)))
+            .child(mixer_slider(format!("master_vol:{}", o.side), 100, o.volume, "%", st, sys, move |v| format!("set {t} {v}")))
+            .child(meter_row(format!("master_meter:{}", o.side), peak_meter(o.peak), String::new()));
+    }
+    c = c.child(label("APPS").style("caption"));
+    if m.apps.is_empty() {
+        c = c.child(label("No app has played sound yet.").id("mixer_no_apps").style("caption"));
+    }
+    for a in &m.apps {
+        let id = a.app.clone();
+        let mut head = row().gap(8).align(Align::Center).child(label(a.app.clone()).wrap(false));
+        if a.ducked {
+            head = head.child(label("ducked").id(format!("ducked:{id}")).style("caption").color(0xd29922ff).wrap(false));
+        }
+        if a.role != "media" {
+            head = head.child(label(a.role.clone()).style("caption").wrap(false));
+        }
+        let (r, yr, rid) = (st.clone(), sys.clone(), id.clone());
+        head = head
+            .child(spacer())
+            .child(mute_toggle(format!("app_mute:{id}"), a.mute, id.clone(), st, sys))
+            .child(button("Reset").id(format!("app_reset:{id}")).style("flat").on_click(move |cx, _| mixer_do(cx, &r, &yr, format!("reset {rid}"))));
+        let t = id.clone();
+        let playing = match (&a.on, a.streams) {
+            (Some(on), _) => format!("on {on}"),
+            (None, 0) => "not playing".to_string(),
+            (None, _) => String::new(),
+        };
+        c = c
+            .child(head)
+            .child(mixer_slider(format!("app_vol:{id}"), ecm_audio::mixer::MAX_APP_PERCENT as i32, a.volume, "%", st, sys, move |v| format!("set {t} {v}")))
+            .child(meter_row(format!("app_meter:{id}"), peak_meter(a.peak), playing));
+        if several {
+            // The route picker: the default speaker or one of the others.
+            let mut pick = row().gap(4).align(Align::Center).child(label("Plays on").style("caption").wrap(false));
+            let choices = std::iter::once(None).chain(m.outputs.iter().map(|o| Some(o.side.clone())));
+            for side in choices {
+                let chosen = a.route == side;
+                let (p, yp, app) = (st.clone(), sys.clone(), id.clone());
+                let arg = side.clone().unwrap_or_else(|| "-".into());
+                let text = side.clone().unwrap_or_else(|| "Default".into());
+                let mut b = button(text).id(format!("app_route:{id}:{arg}")).on_click(move |cx, _| mixer_do(cx, &p, &yp, format!("route {app} {arg}")));
+                b = if chosen { b.style("primary") } else { b.style("flat") };
+                pick = pick.child(b);
+            }
+            c = c.child(pick);
+        }
+    }
+    c = c.child(label("MICROPHONES").style("caption"));
+    if m.inputs.is_empty() {
+        c = c.child(label("No microphone: place a Microphone next to the computer.").id("mixer_no_input").style("caption"));
+    }
+    for i in &m.inputs {
+        let side = i.side.clone();
+        let level = if i.level <= -99 { "silent".to_string() } else { format!("{} dBFS", i.level) };
+        c = c
+            .child(label(format!("Microphone ({})", i.side)).wrap(false))
+            .child(mixer_slider(format!("mic_gain:{}", i.side), 100, i.gain, "", st, sys, move |v| format!("gain {side} {v}")))
+            .child(meter_row(format!("mic_meter:{}", i.side), meter(i.level), level));
+    }
+    if !s.notice.is_empty() && s.section == MIXER {
+        c = c.child(label(s.notice.clone()).id("mixer_notice").color(0xe5534bff));
     }
     c
 }
@@ -731,6 +894,7 @@ fn page(vcx: &ecm_ui::ViewCtx, s: &State, st: &Shared, sys: &SysRef, compact: bo
         3 => appearance_page(s, st, sys),
         APPS => apps_page(vcx, s),
         SOUND => sound_page(s, st, sys),
+        MIXER => mixer_page(s, st, sys),
         BLUETOOTH => bluetooth_page(s, st, sys),
         _ => about_page(s),
     };
@@ -829,7 +993,8 @@ pub fn app_with(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: O
     refresh(&st, &sys);
     let (s1, y1) = (st.clone(), sys.clone());
     app.window("Settings", move |vcx| view(vcx, &s1, &y1));
-    // One timer (an app has one `every`): the input level meter on Sound (every 500 ms), the
+    // One timer (an app has one `every`): the input level meter on Sound and the Volume Mixer's
+    // strips on Mixer (every 500 ms), the
     // Bluetooth devices on Bluetooth (they come and go: a case lid opens, a pairing lands), and
     // the Wi-Fi and cellular status every 3 s.
     let (s2, y2) = (st.clone(), sys.clone());
@@ -846,6 +1011,10 @@ pub fn app_with(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: O
                 changed |= s.input_level != level;
                 s.input_level = level;
             }
+        }
+        if section == MIXER {
+            // The meters, the ducked badges and apps that start or stop playing.
+            changed |= refresh_mixer(&s2, &y2);
         }
         if section == BLUETOOTH {
             let bt = y2.borrow_mut().bluetooth();

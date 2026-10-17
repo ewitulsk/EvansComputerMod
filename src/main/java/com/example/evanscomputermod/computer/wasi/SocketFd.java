@@ -13,6 +13,12 @@ import java.nio.ByteOrder;
  */
 public class SocketFd implements WasiFileDescriptor {
 
+    /** Connected to one of telephonyd's control ports (calls and texts an app sends get confirmed). */
+    public volatile boolean telephony;
+
+    /** Made without "network" by an app with "phone" or "sms": it may only connect to telephonyd's control ports. */
+    public volatile boolean loopbackOnly;
+
     // Syscall IDs matching the kernel's net/ipc.rs (and rust/simulator/src/child.rs)
     public static final int SOCK_SOCKET = 0;
     public static final int SOCK_BIND = 1;
@@ -31,6 +37,8 @@ public class SocketFd implements WasiFileDescriptor {
     public static final int SOCK_SHUTDOWN = 14;
     /** Readiness of several sockets: args [timeout_ms][n] then n x [sock_id i32][events i16][pad i16]. */
     public static final int SOCK_POLL = 15;
+    /** ECM's socket option (level SOL_SOCKET): data arriving wakes the owner's suspended app (the kernel's SO_ECM_WAKE). */
+    public static final int SO_ECM_WAKE = 0x4543;
     public static final int SOCK_DESTROY_SESSION = 99;
 
     // Remote shell session syscalls (sshd); handled by the kernel's session

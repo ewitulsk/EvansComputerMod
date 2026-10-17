@@ -1,0 +1,9 @@
+id          = "dev.ecm.contacts"
+name        = "Contacts"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Your address book: numbers, emails, notes, vCards"
+publisher   = "ECM"
+permissions = ["contacts", "sms", "files:documents"]
+open_with   = [".vcf"]
+icon        = "icon.png"

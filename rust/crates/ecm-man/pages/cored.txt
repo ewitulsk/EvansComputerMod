@@ -18,6 +18,14 @@ SYNOPSIS
 
     cored quota <imsi> <bytes> | label <imsi> <label>
 
+    cored block add <NPA-NXX> | block remove <NPA-NXX> | blocks
+
+    cored numbers | number <who> [+number [ported]]
+
+    cored number release <who> | number move <+number> <who>
+
+    cored enum-key <hex> | port-code <who> [code]
+
     cored config | config set <key> <value>... | config keys
 
     cored enable | disable
@@ -80,6 +88,27 @@ COMMANDS
     remove, label, release
         Delete a subscriber; name it; end its session now.
 
+    block add <NPA-NXX>, block remove <NPA-NXX>, blocks
+        The number blocks the carrier holds (10,000 numbers each, like
+        214-555). Get one from IANA first: domain enum apply.
+
+    numbers, number <who> [+number [ported]]
+        Who has which number; give a subscriber (IMSI, label or number)
+        the next free number, or a given one in the blocks. Add ported
+        for a number ported in from another carrier (outside the
+        blocks). number release and number move free or move one.
+
+    enum-key <hex>
+        The ENUM key IANA printed when it granted the block. It signs
+        the carrier's port-out codes.
+
+    port-code <who> [code]
+        Without a code: make a port-out code for the subscriber's
+        number (NONCE-MAC, signed with the enum key) and print it. The
+        subscriber takes it to the new carrier, which gives it to IANA
+        with domain enum port. A ported-in number gets its codes from
+        its block's holder. With a code: store that one.
+
     config, config set, config keys
         Show or change /etc/cored.toml (restart cored to apply).
 
@@ -105,6 +134,10 @@ EXAMPLES
       cored subs
       cored revoke 001011234567890
       cored enable
+      cored block add 214-555
+      cored enum-key 00112233445566778899aabbccddeeff
+      cored port-code alice
+      cored number bob +19725550123 ported
 
 NOTES
     For phones to reach the rest of your network, the core computer
@@ -113,4 +146,4 @@ NOTES
     ip route add 100.65.2.0/24 via <core address>.
 
 SEE ALSO
-    celld-site, carrier, cardtool, cellular, ip
+    celld-site, carrier, cardtool, cellular, ip, domain, ianad

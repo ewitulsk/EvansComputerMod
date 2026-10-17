@@ -126,6 +126,11 @@ values = { move = 0, resize = 1, minimize = 2, maximize = 3, fullscreen = 4, act
 type = "u8"
 values = { open = 0, save = 1 }
 
+[enums.MediaState]
+type = "u8"
+doc = "What a media session is doing; none = it ended (the Now Playing card goes away)."
+values = { none = 0, playing = 1, paused = 2, buffering = 3 }
+
 # ---------------------------------------------------------------- flags
 
 [flags.WindowStates]
@@ -166,6 +171,10 @@ fields = ["x: i32", "y: i32"]
 
 [structs.Rect]
 fields = ["x: i32", "y: i32", "w: i32 range=0..", "h: i32 range=0.."]
+
+[structs.MediaInfo]
+doc = "Now Playing (§12): art_w x art_h RGBA8888 cover art (0 x 0 and no bytes: none; at most 160 x 160). actions = what the player may ask for: play, pause, next, previous, seek."
+fields = ["title: str max=256", "artist: str max=256", "album: str max=256", "art_w: u16 range=0..160", "art_h: u16 range=0..160", "art_rgba: bytes max=102400", "state: MediaState", "position_ms: u32", "duration_ms: u32", "actions: [str] max=8 itemmax=16"]
 
 # ---------------------------------------------------------------- display-list nodes (§6)
 # A tree surface has an implicit root group with id 0. Node ids are u32 >= 1,
@@ -579,6 +588,32 @@ opcode = 0x0533
 dir = "c>a"
 fields = ["path: str max=1024"]
 
+# --- media session (§12)
+
+[messages.MediaSession]
+opcode = 0x0540
+dir = "a>c"
+doc = "What the app is playing. Sent again on every change (state, position about once a second while playing); state none ends the session."
+fields = ["info: MediaInfo"]
+
+[messages.MediaAction]
+opcode = 0x0541
+dir = "c>a"
+doc = "The player pressed a Now Playing control (shell card, AirPods double-tap, lock screen): play, pause, next, previous, or seek to position_ms."
+fields = ["action: str max=16", "position_ms: u32"]
+
+[messages.MediaSessionChanged]
+opcode = 0x0542
+dir = "c>s"
+doc = "An app's media session (the shell's Now Playing card); state none = it ended."
+fields = ["pid: u32", "app_id: str max=128", "info: MediaInfo"]
+
+[messages.MediaControl]
+opcode = 0x0543
+dir = "s>c"
+doc = "The player pressed a Now Playing control for app pid: the compositor sends it MediaAction."
+fields = ["pid: u32", "action: str max=16", "position_ms: u32"]
+
 # --- lifecycle (§11)
 
 [messages.WillSuspend]
@@ -600,3 +635,21 @@ fields = ["data: bytes max=262144"]
 opcode = 0x0603
 dir = "a>c"
 fields = []
+
+[messages.BackgroundMode]
+opcode = 0x0604
+dir = "a>c"
+doc = "The app starts (on) or stops a background mode: audio, call, radio, transfer, navigation (declared in app.toml)."
+fields = ["mode: str max=32", "on: bool"]
+
+[messages.BackgroundModeResult]
+opcode = 0x0605
+dir = "c>a"
+doc = "Whether the app may keep running for mode while hidden: at once when background:<mode> is decided, else once the player answered the first-time prompt."
+fields = ["mode: str max=32", "granted: bool"]
+
+[messages.AppModes]
+opcode = 0x0606
+dir = "c>s"
+doc = "An app's active background modes changed (the desktop's tray, the phone's pills); no modes = none."
+fields = ["pid: u32", "app_id: str max=128", "modes: [str] max=8 itemmax=32"]

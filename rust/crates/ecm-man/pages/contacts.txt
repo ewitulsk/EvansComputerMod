@@ -1,0 +1,60 @@
+NAME
+    contacts - the Contacts app: the phone's address book
+
+SYNOPSIS
+    contacts
+    contacts --add <number>
+    contacts --show <number>
+    contacts <file>.vcf
+
+DESCRIPTION
+    Opens Contacts (dev.ecm.contacts), the address book that Phone and
+    Messages also read. The contacts live in one vCard 3.0 file,
+    /home/.contacts/contacts.vcf; the app needs the contacts permission
+    for it. It needs the GUI (start it with gui).
+
+    The list: My card at the top shows this phone's own number (No
+    number when there is no SIM or telephonyd is not running). Type in
+    the search field to find names and numbers. The letters down the
+    side are the A-Z index: tap one to see only the names under it, tap
+    it again for all. Favourites have a Fav tag. Tap a contact to open it.
+    Add makes a new contact; Import adds the cards of a .vcf file you
+    choose (contacts whose first number is already in the book are
+    merged, the rest added; it says how many of each).
+
+    A contact's page shows the photo or initials, the name, each number
+    with its label and Call (opens Phone and dials it) and Text (opens
+    Messages to it), the emails and the note. Edit opens the form;
+    Favourite puts the contact in Phone's Favourites; Share writes the
+    card to /home/Documents/<name>.vcf, and Send in Messages then opens
+    Messages with that file; Delete asks first.
+
+    The form: name, numbers (tap a number's label to switch between
+    mobile, home and work; Add number and x add and remove rows),
+    email, notes and a photo (a .png chosen with the file picker).
+    Save needs a name or a number; a contact with only a number is
+    named after it. Cancel changes nothing.
+
+OPTIONS
+    --add <number>
+        Open the form for a new contact with the number filled in.
+    --show <number>
+        Open the contact with this number, or the form for a new one
+        when no contact has it.
+    <file>.vcf
+        Import the cards in the file. Opening a .vcf file in Files does
+        the same.
+
+FILES
+    /home/.contacts/contacts.vcf
+        The address book (vCard 3.0). Other programs may change it;
+        Contacts reloads it within a second.
+    /home/Documents/<name>.vcf
+        A shared contact.
+
+EXAMPLES
+      contacts --show +12145550142
+      contacts /home/Downloads/friends.vcf
+
+SEE ALSO
+    dialer, messages, telephonyd, files, gui

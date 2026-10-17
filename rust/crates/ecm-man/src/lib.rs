@@ -17,17 +17,18 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Getting started", &["intro", "shell", "keys", "terminal", "filesystem", "help", "man", "less", "history"]),
     ("Files", &["ls", "cd", "pwd", "cat", "cp", "mv", "rm", "mkdir", "touch", "echo", "grep", "wc", "edit", "upload", "git"]),
     ("Programs and jobs", &["ps", "kill", "jobs", "fg", "bg", "set", "sleep", "clear", "exit", "passwd"]),
-    ("Scripting", &["scripting", "python", "lua", "ui", "peripheral", "peripherals"]),
+    ("Scripting", &["scripting", "python", "lua", "ui", "peripheral", "peripherals", "auth"]),
     ("Desktop and apps", &["gui", "desktop", "terminal-app", "files", "editor", "notes", "settings", "store", "pkg", "picker", "chooser", "visual"]),
     ("ePhone", &["phone-guide", "phone"]),
     ("Networking", &["networking", "ifconfig", "ip", "ping", "traceroute", "dhclient", "dhcpd", "wifi", "iw", "wpa_cli", "wpa_supplicant", "switch", "router", "tcpdump"]),
     ("Names and the web", &["browser", "nslookup", "dig", "named", "resolvectl", "domain", "whois", "registrard", "registryd", "ianad", "httpd", "curl", "disco"]),
-    ("Remote login, chat and Discord", &["ssh", "sshd", "ssh-keygen", "chat", "discord", "discordd"]),
+    ("Remote login, chat and Discord", &["ssh", "sshd", "ssh-keygen", "chat", "discord", "discordd", "authd", "music", "musicd"]),
     ("Voice and Bluetooth", &["voice", "arecord", "bluetooth", "bluetoothctl"]),
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
+    ("Calls and texts", &["telephony", "dialer", "messages", "contacts", "tel", "sms", "telephonyd", "imsd", "smscd", "mmscd", "mrfd"]),
     ("Cards", &["cards", "cardtool"]),
-    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "player", "video", "videoplayer", "gfx"]),
+    ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "mixer", "player", "video", "videoplayer", "gfx"]),
 ];
 
 /// A built-in page's text.

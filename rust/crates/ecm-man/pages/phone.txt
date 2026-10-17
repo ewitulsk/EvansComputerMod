@@ -16,11 +16,29 @@ DESCRIPTION
     with its initial, and the shell's own Controls entry. Tap an app to
     open it.
 
-    Status bar: the clock, a dot for unread notifications, a pill for
-    each background mode in use (AUDIO, RADIO, DL, NAV), the carrier and
-    cellular bars, Wi-Fi bars, and the battery percentage. Tap it (or
-    pull it down) for the notification sheet: tap a notification to open
-    its app, or Clear all.
+    Status bar: the clock, a dot for unread notifications, an orange MIC
+    pill while an app you can't see is listening to the microphone, a
+    pill for each background mode in use (CALL, AUDIO, RADIO, DL, NAV),
+    the carrier and cellular bars, Wi-Fi bars, and the battery
+    percentage. Tap it (or pull it down) for the notification sheet.
+
+    Notification sheet, top to bottom:
+
+    Now Playing: a card for each app that is playing something (newest
+    first) with its cover art, title, artist and progress, and Previous,
+    Play or Pause, and Next buttons that control that app. The card goes
+    away when the app stops its session.
+
+    Volume: the speaker icon (tap to mute or unmute) and a slider for the
+    phone speaker's master volume. The arrow at the right expands it into
+    a strip per app that makes sound: its name, a slider from 0 to 150 %
+    (the mark is 100 %), Mute, a level meter, and a "ducked" badge while
+    a call or voice chat lowers it; then the microphone's gain with its
+    level. While the sheet is open the strips are read about twice a
+    second. Drag or tap a slider to set it. Settings has the same Volume
+    Mixer.
+
+    Notifications: tap one to open its app, or Clear all.
 
     Navigation bar: Back, Home and Recent apps. Recent apps shows the
     open apps; tap one to show it, X to close it.
@@ -29,7 +47,11 @@ DESCRIPTION
     on screen first) and the keys below.
 
     When an app asks for a permission, a dialog offers Allow, Only this
-    time and Don't allow.
+    time and Don't allow. The first time an app wants to keep working
+    after you leave it (a call, music, radio, a download, navigation),
+    the dialog asks "Keep <app> running in the background for calls?"
+    (or audio, radio, downloads, navigation) with Allow and Don't allow;
+    the answer is remembered (change it in Settings > Apps).
 
     An app that leaves the screen is suspended: it saves its state and
     stops until it is shown again (see phone-guide for the exceptions).
@@ -56,6 +78,11 @@ KEYS
 
     Plain Backspace and Home go to the app (text fields need them). Esc
     closes the phone screen.
+
+FILES
+    /dev/mixer
+        The Volume Mixer the sheet's slider and strips read and change
+        (set master, set <app>, mute <app> toggle, gain <mic>).
 
 SEE ALSO
     phone-guide, desktop, gui, terminal-app, settings, store

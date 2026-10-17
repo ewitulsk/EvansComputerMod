@@ -1,0 +1,125 @@
+NAME
+    mrfd - the carrier's media server: voicemail, support line, 3-way
+
+SYNOPSIS
+    mrfd start [--wait]
+
+    mrfd stop | status | boxes | log [n]
+
+    mrfd config | config keys | config set <key> <value>...
+
+    mrfd enable | disable
+
+DESCRIPTION
+    Everything on a call that is not another phone: the carrier's
+    media server (MRF). It runs on the carrier's IMS computer beside
+    imsd and cored (SIP, UDP 5064; voice on rtp_ports; HTTP, TCP 8003
+    for visual voicemail). imsd sends it calls, naming the service:
+
+      voicemail           a call nobody answered: tones and a beep,
+                          then the caller's message (up to
+                          max_message seconds) goes into the box; the
+                          box's phone is told a message waits
+      voicemail-retrieve  *86: the new messages, then the saved ones;
+                          keys 7 delete, 9 save, 1 replay, # next
+      announcement        a failed call (unknown number, off phone):
+                          the special information tones, then hang up
+      support             611: 1 texts your data balance, 2 texts
+                          your number, 0 repeats; ends after 30 s
+      conference          a merged three-way call: everyone hears
+                          everyone else
+
+    The support line's texts go through smscd; the balance comes from
+    cored's HSS. Phones read their own box over HTTP (the Phone app's
+    Voicemail tab, tel voicemail): only from the phone's own IMS
+    address, which imsd's registration notices tell mrfd.
+
+    At start mrfd asks the HSS (NUM) for the carrier, the domain and
+    the P-CSCF address, and loads the boxes from /var/spool/vm. With
+    --wait it keeps asking until cored answers (for boot); without
+    it, it gives up after 5 seconds.
+
+COMMANDS
+    start [--wait]
+        Run mrfd (background it: mrfd start &).
+
+    stop, status, boxes, log [n]
+        Ask the running mrfd over its admin socket (127.0.0.1, TCP
+        7724). status: the domain, its SIP address, the sessions and
+        the conference participants. boxes: the numbers that have a
+        voicemail box. log: the last n lines (default 50).
+
+    config, config keys, config set <key> <value>...
+        Show /etc/mrfd.toml with defaults filled in, explain the keys,
+        or change some. Restart mrfd to apply.
+
+    enable, disable
+        Start (or stop starting) mrfd at boot: the line
+        "mrfd start --wait &" in /services.cfg.
+
+CONFIG
+    /etc/mrfd.toml, key = value lines.
+
+    hss = 127.0.0.1:3868
+        cored's HSS port.
+
+    hss_secret = ""
+        cored's hss_secret, when cored runs on another computer.
+
+    ip = ""
+        This computer's IMS address (default: the P-CSCF the HSS
+        names).
+
+    ims = ""
+        imsd (default ip:5060).
+
+    smsc = ""
+        smscd, for the support line's texts (default ip:5062).
+
+    rtp_ports = 31000-32000
+        The media ports, from-to.
+
+    max_message = 60
+        The longest voicemail, seconds (5 to 300).
+
+    http_port = 8003
+        Visual voicemail: phones fetch their messages here.
+
+    admin_port = 7724
+        The admin socket (127.0.0.1).
+
+VISUAL VOICEMAIL
+    From a registered phone of this carrier, under
+    http://<mrf>:8003/vm:
+
+      GET /vm               the box: msg id from time ms new|heard
+      GET /vm/<id>.wav      one message (16 kHz mono WAV)
+      POST /vm/<id>/heard   mark it heard
+      DELETE /vm/<id>       delete it
+
+    Any other address gets 403.
+
+FILES
+    /etc/mrfd.toml
+        The settings.
+
+    /var/spool/vm/<number>/
+        A voicemail box: an index and one WAV per message.
+
+    /var/log/mrfd.log
+        The log (rotated at 64 KB).
+
+EXAMPLES
+      mrfd start &
+      mrfd enable
+      mrfd boxes
+      mrfd config set max_message 120
+
+NOTES
+    Phones learn the voicemail URL when they register with imsd: if
+    you change http_port, set imsd's vvm_http to the same port. Keep
+    rtp_ports apart from imsd's relay_ports (30000-31000) when both
+    run on one computer.
+
+SEE ALSO
+    telephony, imsd, smscd, mmscd, cored, tel, dialer

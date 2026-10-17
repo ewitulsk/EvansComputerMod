@@ -62,10 +62,10 @@ import java.util.regex.Pattern;
  *   <li>{@code phone_basics}: held = awake (boots, console 30x25), a counter
  *       program runs; hotkey slot 1 reaches the computer as {@code phone_hotkey}
  *       events (control: refused while the phone is only in the hotbar); hotbar =
- *       asleep, the counter freezes; back in hand it continues; into the
- *       inventory = off (detached, same computer paused, counter frozen); back
- *       in the hotbar it resumes the same computer where it was; off hand =
- *       awake.</li>
+ *       asleep, the counter freezes; back in hand it continues; in the main
+ *       inventory (a pocket) = asleep too, still attached with its radios; into a
+ *       chest = off (detached, same computer paused, counter frozen); taken back
+ *       and held it resumes the same computer where it was; off hand = awake.</li>
  *   <li>{@code phone_battery}: the battery drains while held, a Charging Dock
  *       charges a docked phone (its lamp lit), an empty battery powers the
  *       phone off (the computer stops; control: an empty phone in hand stays
@@ -88,6 +88,8 @@ import java.util.regex.Pattern;
 public final class PhoneScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
+    /** Where phone_basics puts its chest (relative, next to the holder). */
+    static final BlockPos CHEST = new BlockPos(1, 1, 1);
     /** Where the holder stands (relative). */
     static final BlockPos STAND = new BlockPos(0, 1, 0);
     static final String COUNTER = "import time\ni = 0\nwhile True:\n    i += 1\n    print('count', i)\n    time.sleep(0.25)\n";
@@ -344,8 +346,8 @@ public final class PhoneScenarios {
 
     private static Scenario basics() {
         var b = Scenario.builder("phone_basics",
-                        "ePhone states: held = awake, hotbar = asleep (frozen), elsewhere = off (paused) and back where it was;"
-                                + " hotkey slot 1 reaches the computer")
+                        "ePhone states: held = awake, hotbar and pocket = asleep (frozen), a chest = off (paused) and back"
+                                + " where it was; hotkey slot 1 reaches the computer")
                 .asPlayer()
                 .decor(stage(floor(-2, -2, 2, 2), PhoneScenarios::givePhone))
                 .note("Setup (done for you): a player right-clicks a new ePhone (its first use gives it a computer) and holds it."
@@ -379,15 +381,26 @@ public final class PhoneScenarios {
                 .await(r -> unchanged(r), "the counter did not move while asleep", 1_000)
                 .mutate(r -> select(holder(r), 0), "select the phone again")
                 .await(r -> resumed(r), "awake again: the same computer continues counting", 10_000)
-                .note("Off: move the phone into the inventory (out of the hotbar)")
+                .note("Pocket: move the phone into the main inventory (out of the hotbar): it sleeps like in the hotbar")
                 .mutate(r -> move(r, holder(r), 9), "move the phone to an inventory slot")
-                .await(r -> asleepFrozen(r, PhoneState.OFF, false), "off: paused in memory, host detached", 5_000)
+                .await(r -> asleepFrozen(r, PhoneState.ASLEEP, true), "pocket: asleep, still attached (radios on)", 5_000)
+                .note("Off: put the phone in a chest (place a chest, open it, shift-click the phone in)")
+                .mutate(r -> {
+                    r.player().place(Blocks.CHEST, r.abs(CHEST), Direction.NORTH);
+                    r.player().useEmpty(r.abs(CHEST), Direction.UP, false);
+                    r.player().shiftClick(27); // the chest menu's first player-inventory slot (inventory slot 9)
+                }, "place a chest, open it and shift-click the phone into it")
+                .await(r -> asleepFrozen(r, PhoneState.OFF, false), "in the chest: off, paused in memory, host detached", 5_000)
                 .waitMs(1_500, "off for 1.5 s")
                 .await(r -> unchanged(r), "the counter did not move while off", 1_000)
                 .mutate(r -> {
+                    r.player().shiftClick(0); // the chest's first slot back into the player's inventory
+                    r.player().closeScreen();
+                    int at = slotOf(holder(r), st(r).phone);
+                    if (at < 0) r.fail("the phone didn't come back out of the chest");
                     move(r, holder(r), 0);
                     select(holder(r), 0);
-                }, "put the phone back in hotbar slot 1 and hold it")
+                }, "shift-click the phone back out of the chest, close it, put it in hotbar slot 1 and hold it")
                 .await(r -> resumed(r), "it resumes where it was: same computer, the counter goes on from its value", 10_000)
                 .note("Off hand: hold it in the off hand with an empty main hand")
                 .mutate(r -> {

@@ -1,0 +1,74 @@
+NAME
+    authd - the Auth server: accounts shared by Discord, Music and others
+
+SYNOPSIS
+    authd [PORT] [--name REALM] [--data DIR] [--key-file FILE]
+    authd key [--data DIR] [--key-file FILE]
+    authd users [--data DIR]
+    authd disable|enable|reset|revoke USER [--data DIR]
+
+DESCRIPTION
+    Runs a realm: a set of accounts that backends such as discordd and
+    musicd can trust, so players sign up once instead of once per
+    server. It listens on TCP PORT (default 7600). REALM is the name
+    players see (default Auth).
+
+    A realm is known by its realm key, not by its name or address: the
+    key's fingerprint (3F:A1:9C:...) is what apps pin the first time
+    they meet the realm, and what backends are told to trust. An app
+    refuses a realm whose name or address it knows but whose key has
+    changed, until the player removes the old pin by hand.
+
+    Passwords never reach authd and never cross the network. The app
+    turns the password into a key for this realm only (PBKDF2 salted
+    with the realm key), signs the encrypted handshake with it, and
+    authd stores only the public half. A server pretending to be the
+    realm cannot prove it holds the realm key, and a token made for one
+    backend is refused by every other backend.
+
+    The realm key is kept as a hex seed in DIR/realm.key (DIR is
+    /var/auth by default), made on the first start unless --key-file
+    names a key file. The accounts are in DIR/users, saved after every
+    change. Failed sign-ins are limited per username (5) and per address
+    (10); then the name or address waits 30 seconds, doubling up to 15
+    minutes. Sign-ins and failures are logged with the time.
+
+    It announces itself to disco serve as auth, so run disco serve & on
+    the same computer for apps to find it. Discovery only gives an
+    address; trust always comes from the pinned key.
+
+COMMANDS
+    key
+        Print the realm's fingerprint, its display form and the public
+        key. Give the fingerprint to the backends that should trust this
+        realm (their --auth HOST:7600 --auth-key FINGERPRINT options).
+    users
+        List the accounts: id, username, state (ok, disabled or reset),
+        signed-in devices and display name.
+    disable USER, enable USER
+        Stop USER signing in (and sign them out everywhere), or allow it
+        again.
+    reset USER
+        Clear USER's password. The next sign-in with that username sets
+        a new password and keeps the account.
+    revoke USER
+        Sign USER out on every device (their saved logins stop working).
+
+    The commands change DIR/users directly; a running authd notices the
+    change within two seconds and reloads it.
+
+FILES
+    /var/auth/realm.key
+        The realm key (keep it secret: whoever has it can mint tokens).
+    /var/auth/users
+        Accounts (public keys only) and hashed refresh tokens.
+
+EXAMPLES
+      authd &
+      authd --name "Tech Village" --data /var/village-auth &
+      authd key
+      authd reset alice
+      disco serve &
+
+SEE ALSO
+    auth, discordd, discord, disco, chat

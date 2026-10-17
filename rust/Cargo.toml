@@ -17,8 +17,11 @@ members = [
     "crates/ecm-cards",
     "crates/ecm-cell-net",
     "crates/ecm-cell-ui",
+    "crates/ecm-tel-ui",
     "crates/ecm-chat",
     "crates/ecm-discord",
+    "crates/ecm-auth",
+    "crates/ecm-music",
     "crates/ecm-disco",
     "crates/ecm-dns",
     "crates/ecm-ui-proto",
@@ -30,6 +33,9 @@ members = [
     "crates/ecm-apps-ui",
     "crates/ecm-web",
     "crates/ecm-js",
+    "crates/ecm-tel",
+    "crates/ecm-rtp",
+    "crates/ecm-tel-net",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -118,6 +124,10 @@ members = [
     "wasm-programs/iw",
     "wasm-programs/antenna",
     "wasm-programs/discordd",
+    "wasm-programs/authd",
+    "wasm-programs/mixer",
+    "wasm-programs/musicd",
+    "wasm-programs/music",
     "wasm-programs/chat",
     "wasm-programs/discord",
     "wasm-programs/bluetoothctl",
@@ -136,6 +146,16 @@ members = [
     "wasm-programs/domain",
     "wasm-programs/whois",
     "wasm-programs/browser",
+    "wasm-programs/imsd",
+    "wasm-programs/smscd",
+    "wasm-programs/mmscd",
+    "wasm-programs/mrfd",
+    "wasm-programs/telephonyd",
+    "wasm-programs/tel",
+    "wasm-programs/dialer",
+    "wasm-programs/messages",
+    "wasm-programs/contacts",
+    "wasm-programs/sms",
 ]
 resolver = "2"
 
@@ -154,6 +174,8 @@ ecm-cell = { path = "crates/ecm-cell" }
 ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-discord = { path = "crates/ecm-discord" }
+ecm-auth = { path = "crates/ecm-auth" }
+ecm-music = { path = "crates/ecm-music" }
 ecm-disco = { path = "crates/ecm-disco" }
 ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
@@ -164,6 +186,10 @@ ecm-man = { path = "crates/ecm-man" }
 ecm-apps = { path = "crates/ecm-apps" }
 ecm-web = { path = "crates/ecm-web" }
 ecm-js = { path = "crates/ecm-js" }
+ecm-tel = { path = "crates/ecm-tel" }
+ecm-rtp = { path = "crates/ecm-rtp" }
+ecm-tel-net = { path = "crates/ecm-tel-net" }
+ecm-tel-ui = { path = "crates/ecm-tel-ui" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -224,3 +250,8 @@ opt-level = "s"
 
 [profile.release.package.miniz_oxide]
 opt-level = "s"
+
+# Music (Symphonia MP3 decoding + the UI toolkit) stays well under the 2 MiB compile-before-run limit.
+[profile.release.package.music]
+opt-level = "s"
+strip = "symbols"

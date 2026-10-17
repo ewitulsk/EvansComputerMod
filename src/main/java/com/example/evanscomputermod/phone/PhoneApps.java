@@ -79,6 +79,12 @@ public final class PhoneApps {
     static void tick(PhoneHost phone) {
         PhoneUi ui = ui(phone);
         if (ui != null) ui.cellular(framedModem(phone) && SimCardItem.isIssued(phone.hardware().sim()));
+        // a ringing call: the holder sees who calls (docs/TELEPHONY.md), every second while it rings
+        String who = ui != null ? ui.ringingWho() : null;
+        net.minecraft.server.level.ServerPlayer holder = phone.holder();
+        if (who != null && holder != null && holder.tickCount % 20 == 0) {
+            holder.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.evanscomputermod.ephone.incoming_call", who), true);
+        }
         if (ui != null && phone.statusSourceFor() != ui) {
             phone.statusSourceSet(ui);
             ui.setStatus(new PhoneUi.Status() {
@@ -134,6 +140,18 @@ public final class PhoneApps {
     static void audioWritten(PhoneHost phone) {
         PhoneUi ui = ui(phone);
         if (ui != null) ui.audioActivity(ProcessManager.currentPid());
+    }
+
+    /** The phone's microphone was read: a hidden reader lights the MIC pill. */
+    static void micRead(PhoneHost phone) {
+        PhoneUi ui = ui(phone);
+        if (ui != null) ui.micActivity(ProcessManager.currentPid());
+    }
+
+    /** A double-tap on the AirPods connected to this phone: play/pause the media session. */
+    public static String mediaToggle(PhoneHost phone) {
+        PhoneUi ui = ui(phone);
+        return ui == null ? null : ui.mediaToggle();
     }
 }
 //?}

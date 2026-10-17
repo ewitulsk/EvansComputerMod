@@ -5,12 +5,13 @@
 //!   engines the Python modules and Rust programs use),
 //! - `_ecm` (a wall clock, sleep, float32 unpacking for the Lua modules),
 //! - the Lua-source modules `peripheral`, `sensors`, `controller`, `audio`,
-//!   `cards`, `radio`, `ui` and `web` (the counterparts of the Python modules of the same
+//!   `cards`, `radio`, `ui`, `web` and `auth` (the counterparts of the Python modules of the same
 //!   names), and the loader that finds them and the computer's own files.
 //!
 //! The binary adds the host-ABI modules (`shell`, `terminal`, `net`,
 //! `_peripheral`) before calling [`install`].
 
+pub mod auth_native;
 pub mod radio_native;
 pub mod ui_native;
 pub mod values;
@@ -28,6 +29,8 @@ pub const MODULES: &[(&str, &str)] = &[
     ("radio", include_str!("lua/radio.lua")),
     ("ui", include_str!("lua/ui.lua")),
     ("web", include_str!("lua/web.lua")),
+    ("auth", include_str!("lua/auth.lua")),
+    ("phone", include_str!("lua/phone.lua")),
 ];
 
 /// Module loader, `require` of the computer's files, compat names, lazy globals.
@@ -49,6 +52,8 @@ fn ecm_module(lua: &Lua) -> mlua::Result<Table> {
         }
         Ok(())
     })?)?;
+    // Make a directory and its parents (Lua has no mkdir); true when it exists after.
+    m.set("mkdir", lua.create_function(|_, path: String| Ok(std::fs::create_dir_all(&path).is_ok() || std::path::Path::new(&path).is_dir()))?)?;
     // Little-endian float32 values packed in a string (lidar ranges, points) as a list.
     m.set("unpack_f32", lua.create_function(|lua, data: LuaString| {
         let bytes = data.as_bytes();
@@ -76,6 +81,7 @@ pub fn register(lua: &Lua, name: &str, module: Table) -> mlua::Result<()> {
 pub fn install(lua: &Lua) -> mlua::Result<()> {
     register(lua, "_radio", radio_native::module(lua)?)?;
     register(lua, "_ui", ui_native::module(lua)?)?;
+    register(lua, "_auth", auth_native::module(lua)?)?;
     register(lua, "_ecm", ecm_module(lua)?)?;
     let sources = lua.create_table()?;
     for (name, src) in MODULES {
@@ -87,3 +93,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod auth_tests;
+#[cfg(test)]
+mod phone_tests;

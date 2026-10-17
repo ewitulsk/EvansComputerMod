@@ -91,8 +91,21 @@ public interface CompositorHost {
     /** {@code BackgroundDone} from {@code pid}. */
     default void backgroundDone(int pid) {}
 
+    /**
+     * {@code BackgroundMode{mode, on}} from {@code pid}: the app manager starts or stops the
+     * mode and answers with {@code BackgroundModeResult}. Called under the compositor's lock:
+     * do the work elsewhere.
+     */
+    default void backgroundMode(int pid, String mode, boolean on) {}
+
+    /** An app's media session changed (state none: it ended). Called under the compositor's lock. */
+    default void mediaSessionChanged(int pid, String appId, com.example.evanscomputermod.computer.ui.proto.UiProto.MediaInfo info) {}
+
     /** Keyboard focus moved between programs' windows (-1 = none); called under the compositor's lock. */
     default void focusChanged(int oldPid, int newPid) {}
+
+    /** Bring a running app to the front (a tapped notification for it); the phone shows it, a desktop leaves its windows. */
+    default void raise(String appId) {}
 
     /** P4: the file picker answered program {@code pid}: grant its app that one file. */
     default void filePicked(int pid, String path, boolean write) {}

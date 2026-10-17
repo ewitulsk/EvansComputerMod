@@ -1,0 +1,27 @@
+[package]
+name = "telephonyd"
+version = "0.1.0"
+edition = "2021"
+description = "telephonyd: the phone's IMS client (VoLTE calls with HD voice, SMS, MMS and group texts, voicemail) beside celld; Phone, Messages, Contacts, tel, sms and the phone module talk to it on 127.0.0.1:7720. The protocol logic is ecm_tel::ua; the message store is tested on the host."
+
+[lib]
+name = "telephonyd"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "telephonyd"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel-net = { workspace = true }
+ecm-cell = { workspace = true }
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }
+ecm-audio = { workspace = true }
+ecm-rtp = { workspace = true }
+celld = { path = "../celld" }

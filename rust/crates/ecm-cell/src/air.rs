@@ -356,6 +356,75 @@ pub struct Measurement {
     pub ul_mask: u8,
 }
 
+/// The IMS bearer a phone gets beside its default (`internet`) one: an address
+/// from the carrier's private IMS pool that only reaches the IMS core, the
+/// P-CSCF to register with, the carrier's SIP domain and the phone's number.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ImsInfo {
+    pub ip: [u8; 4],
+    pub prefix: u8,
+    pub pcscf: [u8; 4],
+    pub domain: String,
+    /// E.164 (may be empty: no number yet).
+    pub msisdn: String,
+}
+
+impl ImsInfo {
+    pub fn write(&self, w: &mut W) {
+        w.raw(&self.ip).u8(self.prefix).raw(&self.pcscf).str8(&self.domain).str8(&self.msisdn);
+    }
+    pub fn read(r: &mut R) -> DResult<ImsInfo> {
+        let i = ImsInfo { ip: r.arr()?, prefix: r.u8()?, pcscf: r.arr()?, domain: r.str8()?, msisdn: r.str8()? };
+        if i.prefix > 32 {
+            return Err(DecodeError::Value("prefix"));
+        }
+        Ok(i)
+    }
+}
+
+/// QCI 1: conversational voice (a guaranteed slot every 20 ms, served before best effort).
+pub const QCI_VOICE: u8 = 1;
+
+/// A dedicated bearer: one UDP flow on the IMS address (the call's RTP), with its QoS class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bearer {
+    pub id: u8,
+    pub qci: u8,
+    /// The phone's RTP port (on its IMS address).
+    pub ue_port: u16,
+    /// The far end of the flow (the media relay or the other phone).
+    pub remote: [u8; 4],
+    pub remote_port: u16,
+}
+
+impl Bearer {
+    pub fn write(&self, w: &mut W) {
+        w.u8(self.id).u8(self.qci).u16(self.ue_port).raw(&self.remote).u16(self.remote_port);
+    }
+    pub fn read(r: &mut R) -> DResult<Bearer> {
+        Ok(Bearer { id: r.u8()?, qci: r.u8()?, ue_port: r.u16()?, remote: r.arr()?, remote_port: r.u16()? })
+    }
+    /// Does IPv4/UDP packet `p` belong to this flow (either direction)?
+    pub fn matches(&self, p: &[u8]) -> bool {
+        let Some((src, dst, sport, dport)) = udp_flow(p) else { return false };
+        (dst == self.remote && dport == self.remote_port && sport == self.ue_port) || (src == self.remote && sport == self.remote_port && dport == self.ue_port)
+    }
+}
+
+/// `(src, dst, sport, dport)` of an IPv4 UDP packet.
+pub fn udp_flow(p: &[u8]) -> Option<([u8; 4], [u8; 4], u16, u16)> {
+    if p.len() < 28 || p[0] >> 4 != 4 || p[9] != 17 {
+        return None;
+    }
+    let ihl = ((p[0] & 0x0f) as usize) * 4;
+    if p.len() < ihl + 8 {
+        return None;
+    }
+    let src = [p[12], p[13], p[14], p[15]];
+    let dst = [p[16], p[17], p[18], p[19]];
+    Some((src, dst, u16::from_be_bytes([p[ihl], p[ihl + 1]]), u16::from_be_bytes([p[ihl + 2], p[ihl + 3]])))
+}
+
 /// Items inside a protected frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
@@ -389,6 +458,15 @@ pub enum Item {
     MeasGap { from_slot: u64, to_slot: u64 },
     /// 0x2D either way: still here.
     Keepalive,
+    /// 0x2E site -> UE, after `AttachAccept`: the IMS bearer.
+    Ims(ImsInfo),
+    /// 0x2F site -> UE: a dedicated bearer (the phone sends its packets first).
+    BearerSetup(Bearer),
+    /// 0x30 site -> UE.
+    BearerRelease { id: u8 },
+    /// 0x31 UE -> site: nothing to send, put me in idle now (before the phone
+    /// sleeps: the network keeps the session and pages for downlink).
+    IdleRequest,
 }
 
 const I_SMC_COMPLETE: u8 = 0x20;
@@ -405,6 +483,10 @@ const I_RELEASE: u8 = 0x2A;
 const I_DATA: u8 = 0x2B;
 const I_GAP: u8 = 0x2C;
 const I_KEEPALIVE: u8 = 0x2D;
+const I_IMS: u8 = 0x2E;
+const I_BEARER_SETUP: u8 = 0x2F;
+const I_BEARER_RELEASE: u8 = 0x30;
+const I_IDLE_REQUEST: u8 = 0x31;
 
 /// Item framing overhead.
 pub const ITEM_HEADER: usize = 3;
@@ -459,6 +541,19 @@ impl Item {
                 I_GAP
             }
             Item::Keepalive => I_KEEPALIVE,
+            Item::Ims(i) => {
+                i.write(w);
+                I_IMS
+            }
+            Item::BearerSetup(b) => {
+                b.write(w);
+                I_BEARER_SETUP
+            }
+            Item::BearerRelease { id } => {
+                w.u8(*id);
+                I_BEARER_RELEASE
+            }
+            Item::IdleRequest => I_IDLE_REQUEST,
         }
     }
 
@@ -537,6 +632,10 @@ impl Item {
                 Item::MeasGap { from_slot, to_slot }
             }
             I_KEEPALIVE => Item::Keepalive,
+            I_IMS => Item::Ims(ImsInfo::read(&mut r)?),
+            I_BEARER_SETUP => Item::BearerSetup(Bearer::read(&mut r)?),
+            I_BEARER_RELEASE => Item::BearerRelease { id: r.u8()? },
+            I_IDLE_REQUEST => Item::IdleRequest,
             other => return Err(DecodeError::Type(other)),
         };
         r.end()?;
@@ -621,7 +720,35 @@ mod tests {
             Item::Data { seq: 42, idx: 1, count: 2, bytes: vec![1, 2, 3] },
             Item::MeasGap { from_slot: 5, to_slot: 9 },
             Item::Keepalive,
+            Item::Ims(ImsInfo { ip: [10, 250, 0, 2], prefix: 16, pcscf: [100, 65, 2, 1], domain: "cell-red.ecm".into(), msisdn: "+12145550142".into() }),
+            Item::BearerSetup(Bearer { id: 1, qci: QCI_VOICE, ue_port: 40000, remote: [100, 65, 2, 1], remote_port: 30000 }),
+            Item::BearerRelease { id: 1 },
+            Item::IdleRequest,
         ]
+    }
+
+    #[test]
+    fn bearer_matches_its_flow() {
+        let b = Bearer { id: 1, qci: QCI_VOICE, ue_port: 40000, remote: [100, 65, 2, 1], remote_port: 30000 };
+        let mut p = vec![0u8; 40];
+        p[0] = 0x45;
+        p[9] = 17;
+        p[12..16].copy_from_slice(&[10, 250, 0, 2]);
+        p[16..20].copy_from_slice(&[100, 65, 2, 1]);
+        p[20..22].copy_from_slice(&40000u16.to_be_bytes());
+        p[22..24].copy_from_slice(&30000u16.to_be_bytes());
+        assert!(b.matches(&p), "uplink");
+        let mut d = p.clone();
+        d[12..16].copy_from_slice(&[100, 65, 2, 1]);
+        d[16..20].copy_from_slice(&[10, 250, 0, 2]);
+        d[20..22].copy_from_slice(&30000u16.to_be_bytes());
+        d[22..24].copy_from_slice(&40000u16.to_be_bytes());
+        assert!(b.matches(&d), "downlink");
+        p[22..24].copy_from_slice(&5060u16.to_be_bytes());
+        assert!(!b.matches(&p), "SIP is not the voice flow");
+        p[9] = 6;
+        assert!(!b.matches(&p));
+        assert!(!b.matches(&[0x45]));
     }
 
     #[test]

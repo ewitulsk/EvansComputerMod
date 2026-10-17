@@ -996,7 +996,7 @@ with its pinned key), Chat's page (Verified publisher), Install (the chat villag
 `.pkg-origin` says verified publisher), Open, an empty connect form that says where the address is, the ring's chat
 server and a nickname, Connect, Allow, a message that the chat server logs. The tech client suite then has the real
 player take a second display phone and photographs its App Store (`store_phone_app_store`: Chat, Verified publisher,
-Install) and Repositories page (`store_phone_repos`).
+Install) and Repositories page (`store_phone_repos`). Since accounts (docs/AUTH.md) the App Store's count is any "N apps from 1 repository" (Music too), and Discord opens on the account screen of the Data Center's Auth server (the store phone has its key pinned): the player taps "No account yet? Create one", types `shopper` and the password twice, Enter, and the backend logs "shopper signed in from" before #general.
 
 Measured (seed 73198425, `tech-client-20261012-120524`, chat village 4, repository `http://100.68.0.21:8080/`): the
 list was there when the App Store opened; Install of the 674 KB package over LTE from village 2 to village 4 took
@@ -1046,3 +1046,14 @@ re-attaches within a few seconds with the same address (the core keeps it).
   ring links and the core's route on the next start (`PROVISION_VERSION` 3), and the core boots everywhere.
 - The ring simulator scenarios (`17_bgp_ring10`, `21_bgp_*`, from `scripts/gen-ring-scenarios.py`) still model /28
   links without the cell routes: they test BGP on the ring, which this did not change.
+
+## As built: telephony
+
+Calls, texts and MMS run on top of this network ([TELEPHONY.md](../TELEPHONY.md)):
+
+- `cored` is also the HSS and PCRF. Its database gains numbers (`block`, `msisdn`), an `ims` line, IMS profiles and port-out codes, and it answers the HSS query protocol on TCP 3868.
+- An attach with an `ims` line gives the phone a second, IMS-only address (the `Ims` air item, celld's `ims0`).
+- Calls get QCI 1 voice bearers (`BearerSetup`/`BearerRelease` items and backhaul messages). They have their own downlink queue and scheduler sub-channel, up to `max_voice` per cell, and travel with the phone in `HoRequest`.
+- The UE can go idle (`IdleRequest`) while the phone sleeps; the network pages it by TMSI, and the modem's wake filter wakes the phone.
+- `cell` shows the number and the IMS bearer.
+

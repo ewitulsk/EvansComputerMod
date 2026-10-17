@@ -10,3 +10,4 @@ path = "src/main.rs"
 [dependencies]
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
+ecm-host-abi = { workspace = true }

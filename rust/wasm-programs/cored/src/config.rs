@@ -9,6 +9,8 @@
 //! admin_port = 7711           # the admin socket, 127.0.0.1 only
 //! imsi_prefix = 00101         # new SIMs' IMSIs start with this (MCC + MNC; 001 01 = test network)
 //! reader = ""                 # the Card Reader/Writer to write SIMs with (empty = the first)
+//! hss_port = 3868             # the HSS/PCRF port imsd, smscd and mmscd ask (docs/TELEPHONY.md)
+//! hss_secret = ""             # their shared secret; empty = only programs on this computer may ask
 //! ```
 //! Every key is optional: without the file `cored` uses these defaults.
 
@@ -32,12 +34,15 @@ pub const KEYS: &[Key] = &[
     Key { name: "admin_port", default: "7711", help: "the admin socket's port (TCP on 127.0.0.1)" },
     Key { name: "imsi_prefix", default: "00101", help: "new SIMs' IMSIs start with these digits (MCC + MNC, 5-6 digits)" },
     Key { name: "reader", default: "", help: "the Card Reader/Writer for new SIMs (empty = the first one)" },
+    Key { name: "hss_port", default: "3868", help: "the HSS/PCRF port imsd, smscd and mmscd ask (TCP)" },
+    Key { name: "hss_secret", default: "", help: "the shared secret of IMS programs on other computers (empty: only this computer may ask)" },
 ];
 
 fn check(name: &str, v: &str) -> Result<(), String> {
     let ok = match name {
         "db" => v.starts_with('/') && !v.ends_with('/'),
-        "listen" | "tunnel_port" | "admin_port" => v.parse::<u16>().is_ok_and(|p| p > 0),
+        "listen" | "tunnel_port" | "admin_port" | "hss_port" => v.parse::<u16>().is_ok_and(|p| p > 0),
+        "hss_secret" => v.len() <= 64 && !v.contains(char::is_whitespace),
         "tun" => (1..=11).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_alphanumeric()),
         "imsi_prefix" => (5..=6).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()),
         "reader" => !v.contains(char::is_whitespace),

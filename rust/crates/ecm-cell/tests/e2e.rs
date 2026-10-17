@@ -763,3 +763,192 @@ fn garbage_inputs_never_panic() {
     w.up(0, pkt(ip, SERVER, 100, 4242));
     assert!(w.run_until(1000, |w| w.lan.len() > before), "{}", w.dump());
 }
+
+// ------------------------------------------------------------ telephony (docs/TELEPHONY.md)
+
+const PCSCF: [u8; 4] = [100, 65, 2, 1];
+
+fn ims_db(subs: &str) -> String {
+    db(&format!("block 214-555\nims pool=10.250.0.0/24 domain=cell-red.ecm net=100.65.2.1/32\n{}", subs))
+}
+
+/// An IPv4 UDP packet with ports (the tag sits where the UDP length/checksum go).
+fn udp(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16, len: usize, tag: u32) -> Vec<u8> {
+    let mut p = pkt(src, dst, len, tag);
+    p[20..22].copy_from_slice(&sport.to_be_bytes());
+    p[22..24].copy_from_slice(&dport.to_be_bytes());
+    p
+}
+
+fn ims_of(w: &World, u: usize) -> Option<ecm_cell::air::ImsInfo> {
+    w.ues[u].ue.status().ims
+}
+
+#[test]
+fn ims_bearer_comes_with_the_attach_and_reaches_only_the_ims_core() {
+    let mut w = World::new(&ims_db(&(sub("310150000000001", K1, "msisdn=+12145550142") + &sub("310150000000002", K2, ""))));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0) && ims_of(w, 0).is_some()), "{}", w.dump());
+    let ims = ims_of(&w, 0).unwrap();
+    assert_eq!((ims.ip, ims.prefix, ims.pcscf), ([10, 250, 0, 2], 24, PCSCF));
+    assert_eq!((ims.domain.as_str(), ims.msisdn.as_str()), ("cell-red.ecm", "+12145550142"));
+    let core = w.core.as_ref().unwrap();
+    // the second subscriber got a number from the block when the core loaded the database
+    assert_eq!(core.db().subs["310150000000002"].ims.msisdn, "+12145550100");
+    let r = core.reach("+12145550142").unwrap();
+    assert_eq!((r.imsi.as_str(), r.ims_ip, r.idle), ("310150000000001", Some([10, 250, 0, 2]), false));
+    assert_eq!(core.imsi_at([10, 250, 0, 2]), Some("310150000000001"));
+    // the MMSC's header enrichment knows the phone by its data address and by its IMS address (an MMS
+    // POST to an MMSC on the P-CSCF's address leaves on ims0)
+    let data_ip = w.ue_ip(0).unwrap();
+    let core = w.core.as_mut().unwrap();
+    for ip in [data_ip, ims.ip] {
+        let a = core.hss(&format!("IPD {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]), 0).unwrap();
+        assert!(a.contains("msisdn +12145550142"), "IPD {:?}: {}", ip, a);
+    }
+    assert!(core.hss("IPD 10.250.0.77", 0).is_err(), "nobody there");
+    let core = w.core.as_ref().unwrap();
+    // SIP to the P-CSCF goes out; the same address towards the internet is dropped
+    let used0 = core.db().subs["310150000000001"].used;
+    let before = w.lan.len();
+    w.up(0, udp(ims.ip, PCSCF, 5060, 5060, 400, 1));
+    w.up(0, udp(ims.ip, SERVER, 5060, 80, 400, 2));
+    w.run(500);
+    let got: Vec<u32> = w.lan[before..].iter().map(|p| tag_of(p)).collect();
+    assert_eq!(got, vec![1], "{}", w.dump());
+    let core = w.core.as_ref().unwrap();
+    assert_eq!(core.ims_policy_drops, 1);
+    assert_eq!(core.db().subs["310150000000001"].used, used0, "the IMS bearer is not counted");
+    // downlink to the IMS address arrives (the P-CSCF answering)
+    w.down(udp(PCSCF, ims.ip, 5060, 5060, 300, 3));
+    assert!(w.run_until(2000, |w| w.ues[0].rx.iter().any(|p| tag_of(p) == 3)), "{}", w.dump());
+    // a SIM without a number gets no IMS bearer
+    let mut w2 = World::new(&db(&sub("310150000000001", K1, "")));
+    w2.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w2.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w2.run_until(5000, |w| w.attached(0)));
+    w2.run(300);
+    assert!(ims_of(&w2, 0).is_none());
+}
+
+#[test]
+fn a_voice_bearer_goes_first_and_moves_with_a_handover() {
+    let mut w = World::new(&ims_db(&sub("310150000000001", K1, "msisdn=+12145550142")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_site("site-b", 2, 1, 1200.0, [100, 66, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0) && ims_of(w, 0).is_some()), "{}", w.dump());
+    let ims = ims_of(&w, 0).unwrap().ip;
+    let media = [100, 65, 2, 1];
+    let (bid, sent) = w.core.as_mut().unwrap().bearer_setup(ims, 40000, media, 30000).unwrap();
+    assert!(sent);
+    w.route();
+    assert!(w.run_until(1000, |w| w.ues[0].ue.status().bearers == 1), "{}", w.dump());
+    assert!(w.core.as_ref().unwrap().sessions()[0].bearers[0].1, "admitted by the site");
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Bearer { up: true, .. })));
+    // a download is queued, then a voice frame: the voice frame overtakes it
+    let ip = w.ue_ip(0).unwrap();
+    for i in 0..40 {
+        w.down(pkt(SERVER, ip, 1400, 100 + i));
+    }
+    w.down(udp(media, ims, 30000, 40000, 120, 7));
+    assert!(w.run_until(3000, |w| w.ues[0].rx.iter().any(|p| tag_of(p) == 7)), "{}", w.dump());
+    let pos = w.ues[0].rx.iter().position(|p| tag_of(p) == 7).unwrap();
+    assert!(pos < 10, "voice delivered after {} bulk packets", pos);
+    w.run(3000);
+    // the call keeps going across a handover: a frame each way every 20 ms
+    let rx0 = w.ues[0].rx.len();
+    let lan0 = w.lan.len();
+    let (r, now) = (w.ues[0].radio, w.now * 1000);
+    w.m.move_to(r, [1100.0, 0.0, 1.5], now, 12_000_000);
+    let mut n = 0u32;
+    let end = w.now + 14_000;
+    while w.now < end {
+        if w.now % 20 == 0 {
+            w.down(udp(media, ims, 30000, 40000, 100, 10_000 + n));
+            w.up(0, udp(ims, media, 40000, 30000, 100, 20_000 + n));
+            n += 1;
+        }
+        w.step();
+    }
+    w.run(500);
+    let d = w.dump();
+    assert_eq!(w.ues[0].ue.status().cell, Some(2), "{}", d);
+    assert_eq!(w.ues[0].ue.status().bearers, 1, "the bearer is still up: {}", d);
+    assert!(w.core.as_ref().unwrap().sessions()[0].bearers[0].1, "admitted by the target: {}", d);
+    // longest run of lost frames each way (20 ms each): under 100 ms per handover
+    let worst = |got: Vec<u32>, base: u32| {
+        let set: std::collections::BTreeSet<u32> = got.into_iter().collect();
+        let (mut run, mut worst) = (0, 0);
+        for k in 0..n {
+            if set.contains(&(base + k)) {
+                run = 0;
+            } else {
+                run += 1;
+                worst = worst.max(run);
+            }
+        }
+        worst
+    };
+    let down_worst = worst(w.ues[0].rx[rx0..].iter().map(|p| tag_of(p)).collect(), 10_000);
+    let up_worst = worst(w.lan[lan0..].iter().map(|p| tag_of(p)).collect(), 20_000);
+    assert!(down_worst * 20 < 100 && up_worst * 20 < 100, "lost {} ms down, {} ms up\n{}", down_worst * 20, up_worst * 20, d);
+    // hang up
+    w.core.as_mut().unwrap().bearer_release(ims, bid).unwrap();
+    w.route();
+    assert!(w.run_until(1000, |w| w.ues[0].ue.status().bearers == 0), "{}", w.dump());
+}
+
+#[test]
+fn a_full_cell_runs_extra_calls_best_effort() {
+    let mut subs = String::new();
+    for i in 0..3 {
+        subs += &sub(&format!("31015000000020{}", i), K1, &format!("msisdn=+1214555020{}", i));
+    }
+    let mut w = World::new(&ims_db(&subs));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |c| c.max_voice = 2);
+    for i in 0..3 {
+        w.add_ue(&format!("ue{}", i), 0xB200 + i, 60.0 + 20.0 * i as f64, SoftSim::new("cell-red", &format!("31015000000020{}", i), K1));
+    }
+    assert!(w.run_until(10_000, |w| (0..3).all(|i| ims_of(w, i).is_some())), "{}", w.dump());
+    for i in 0..3 {
+        let ims = ims_of(&w, i).unwrap().ip;
+        w.core.as_mut().unwrap().bearer_setup(ims, 40000, PCSCF, 30000 + i as u16).unwrap();
+        w.route();
+        w.run(200);
+    }
+    let s = w.core.as_ref().unwrap().sessions();
+    let admitted = s.iter().filter(|x| x.bearers.first().is_some_and(|b| b.1)).count();
+    assert_eq!(admitted, 2, "{:?}", s);
+    assert!(w.core_log.iter().any(|l| l.contains("best effort")), "{}", w.dump());
+}
+
+#[test]
+fn a_phone_going_to_sleep_asks_for_idle_and_is_paged_for_a_call() {
+    let mut w = World::new(&ims_db(&sub("310150000000001", K1, "msisdn=+12145550142")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0) && ims_of(w, 0).is_some()), "{}", w.dump());
+    let ims = ims_of(&w, 0).unwrap().ip;
+    let tmsi = w.ues[0].ue.status().tmsi;
+    assert_ne!(tmsi, 0);
+    let n = w.n();
+    assert!(w.ues[0].ue.go_idle(n));
+    w.route();
+    assert!(w.run_until(2000, |w| w.ues[0].ue.status().state == "idle"), "{}", w.dump());
+    let r = w.core.as_ref().unwrap().reach("+12145550142").unwrap();
+    assert!(r.idle && r.ims_ip == Some(ims), "{:?}", r);
+    assert_eq!(w.ues[0].ue.status().tmsi, tmsi, "same TMSI while idle (the modem wakes on it)");
+    // an INVITE for it pages the phone, which resumes and gets it
+    w.down(udp(PCSCF, ims, 5060, 5060, 600, 9));
+    assert!(w.run_until(3000, |w| w.ues[0].rx.iter().any(|p| tag_of(p) == 9)), "{}", w.dump());
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Resumed { .. })));
+    assert_eq!(ims_of(&w, 0).map(|i| i.ip), Some(ims), "same IMS address after the resume");
+    // while a call's bearer is up the phone stays connected
+    w.core.as_mut().unwrap().bearer_setup(ims, 40000, PCSCF, 30000).unwrap();
+    w.route();
+    assert!(w.run_until(1000, |w| w.ues[0].ue.status().bearers == 1), "{}", w.dump());
+    let n = w.n();
+    assert!(!w.ues[0].ue.go_idle(n));
+}

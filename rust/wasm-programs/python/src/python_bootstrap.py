@@ -109,6 +109,12 @@ _cards_module.__file__ = '<cards>'
 exec(compile(_peripheral_native._cards_source, '<cards>', 'exec'), _cards_module.__dict__)
 sys.modules['cards'] = _cards_module
 
+# `phone` (the phone's number, calls, texts and contacts, over telephonyd).
+_phone_module = ModuleType('phone')
+_phone_module.__file__ = '<phone>'
+exec(compile(_peripheral_native._phone_source, '<phone>', 'exec'), _phone_module.__dict__)
+sys.modules['phone'] = _phone_module
+
 # `radio` (SDR flowgraphs) ships inside the native `_radio` module.
 import _radio as _radio_native
 _radio_module = ModuleType('radio')
@@ -129,6 +135,13 @@ _web_module = ModuleType('web')
 _web_module.__file__ = '<web>'
 exec(compile(_web_native._source, '<web>', 'exec'), _web_module.__dict__)
 sys.modules['web'] = _web_module
+
+# `auth` (accounts on an Auth server) ships inside the native `_auth` module.
+import _auth as _auth_native
+_auth_module = ModuleType('auth')
+_auth_module.__file__ = '<auth>'
+exec(compile(_auth_native._source, '<auth>', 'exec'), _auth_module.__dict__)
+sys.modules['auth'] = _auth_module
 
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import

@@ -1,0 +1,15 @@
+[package]
+name = "sms"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sms"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }

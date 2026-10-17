@@ -64,14 +64,29 @@ public final class SmartSim {
         return SimAuth.respond(s.key(), challenge);
     }
 
+    /** The card's IMS AKA answer (docs/TELEPHONY.md). */
+    public SimAuth.Response respondIms(byte[] challenge) throws CardException {
+        if (isBlank()) throw new CardException("the card is blank");
+        SimSecret s = storage.secret();
+        if (s == null || !s.known()) throw new CardException("the card has no key");
+        if (challenge == null || challenge.length != SimAuth.CHALLENGE_BYTES)
+            throw new CardException("a challenge is " + SimAuth.CHALLENGE_BYTES + " bytes");
+        return SimAuth.respondIms(s.key(), challenge);
+    }
+
     /** Write a blank card: identity and key. Fails for a written card or a stack of several cards. */
     public SimIdentity write(long imsi, String carrier, byte[] key) throws CardException {
+        return write(imsi, carrier, key, "");
+    }
+
+    /** Write a blank card with its phone number ({@code msisdn}, E.164, may be empty). */
+    public SimIdentity write(long imsi, String carrier, byte[] key, String msisdn) throws CardException {
         if (!isBlank()) throw new CardException("the card is not blank: SIM cards can be written only once");
         if (storage.count() != 1) throw new CardException("one card at a time");
         SimIdentity id;
         SimSecret secret;
         try {
-            id = new SimIdentity(carrier, imsi);
+            id = new SimIdentity(carrier, imsi, msisdn);
             secret = SimSecret.of(key);
         } catch (IllegalArgumentException e) {
             throw new CardException(e.getMessage());

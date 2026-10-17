@@ -1,5 +1,5 @@
 NAME
-    domain - register .ecm names and apply for your own TLD
+    domain - .ecm names, your own TLD and phone number blocks
 
 SYNOPSIS
     domain account create HANDLE PASSWORD
@@ -11,11 +11,15 @@ SYNOPSIS
     domain list
     domain tld apply TLD NS[=ADDRESS]...
     domain tld show TLD | list | revoke TLD
+    domain enum apply BLOCK SIP-DOMAIN [KEY]
+    domain enum port NUMBER SIP-DOMAIN CODE KEY
+    domain enum list
 
 DESCRIPTION
     domain talks to the registrar at http://nic.ring/ (for names under
-    .ecm) and to IANA at http://iana.ring/ (for new top-level domains)
-    over their plain-text web API, and prints what they answer.
+    .ecm) and to IANA at http://iana.ring/ (for new top-level domains
+    and telephone number blocks) over their plain-text web API, and
+    prints what they answer.
 
     A domain is either hosted (its records live in the .ecm zone at the
     registry) or delegated to nameservers you run yourself with named.
@@ -61,6 +65,23 @@ COMMANDS
     tld show TLD, tld list, tld revoke TLD
         One TLD, all delegated TLDs, or give yours up.
 
+    enum apply BLOCK SIP-DOMAIN [KEY]
+        Ask IANA for a block of 10,000 phone numbers (one NPA-NXX,
+        written +1214555) for a carrier's SIP domain. The domain's
+        _sip._udp SRV record or its A record must resolve. The first
+        block prints the domain's ENUM key, once: keep it and give it
+        to cored enum-key. A domain's next blocks need that KEY.
+
+    enum port NUMBER SIP-DOMAIN CODE KEY
+        Port a number in: the gaining carrier gives the port-out code
+        the subscriber got from the old carrier (cored port-code) and
+        its own ENUM key. IANA then points the number at SIP-DOMAIN.
+        Porting a number back to its block's holder ends the port.
+        Each code works once.
+
+    enum list
+        Every block and its domain, and every ported number.
+
 OPTIONS
     --registrar URL
         Another registrar (default http://nic.ring/).
@@ -82,6 +103,8 @@ EXAMPLES
       domain set mybase.ecm @ MX 10 mail.mybase.ecm.
       domain ns mybase.ecm ns1.mybase.ecm=10.200.3.10
       domain tld apply base ns1.base=10.200.4.1 ns2.base=10.200.4.10
+      domain enum apply +1214555 cell-red.ecm
+      domain enum port +12145550142 cell-blue.ecm 3fa2c1-b843a26d KEY
 
 SEE ALSO
-    whois, named, dig, registrard, ianad, networking
+    whois, named, dig, registrard, ianad, cored, networking

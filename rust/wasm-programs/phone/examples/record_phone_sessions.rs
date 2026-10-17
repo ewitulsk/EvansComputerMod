@@ -7,9 +7,13 @@
 //!   (the checked-in copies live in src/test/resources/ui-sessions/)
 //!
 //! Sessions: `phone_home` (home grid, status bar with Wi-Fi, cellular,
-//! battery and an audio indicator, nav bar; a tap on Notes hits its icon),
-//! `phone_sheet` (the notification sheet pulled down over home),
-//! `phone_dialog` (the permission dialog). Same file format as ecm-ui's
+//! battery and the MIC, CALL and AUDIO pills, nav bar; a tap on Notes hits
+//! its icon), `phone_sheet` (the notification sheet pulled down over home:
+//! a Now Playing card with art, the volume slider, the notifications; a tap
+//! on pause hits it), `phone_mixer` (the slider expanded into per-app
+//! strips and the microphone; a tap on Music's Mute hits it),
+//! `phone_background` (the first-time background prompt), `phone_dialog`
+//! (the permission dialog). Same file format as ecm-ui's
 //! `record_ui_sessions`.
 
 use ecm_ui::shell::ShellEvent;
@@ -29,7 +33,7 @@ impl Env for Fixed {
     }
 
     fn status(&mut self) -> Status {
-        Status::parse("state awake\nbattery 76.5\nwifi 3\ncell 2\ncarrier cell-red\nforeground -\nmode dev.ecm.music audio\nhotkey dev.ecm.notes 1 - Add note\n")
+        Status::parse("state awake\nbattery 76.5\nwifi 3\ncell 2\ncarrier cell-red\nforeground -\nmode dev.ecm.music audio\nmode dev.ecm.discord call\nmic dev.ecm.discord\nmedia dev.ecm.music playing\nhotkey dev.ecm.notes 1 - Add note\n")
     }
 
     fn apps(&mut self) -> Vec<AppEntry> {
@@ -44,6 +48,49 @@ impl Env for Fixed {
     fn session(&mut self) -> Vec<String> {
         Vec::new()
     }
+
+    fn mixer(&mut self) -> String {
+        "output left volume=70 mute=0 peak=9000 label=ePhone_speaker\n\
+         app dev.ecm.music volume=80 mute=0 route=- on=left peak=5200 ducked=1 role=media streams=1\n\
+         app dev.ecm.discord volume=120 mute=0 route=- on=left peak=14000 ducked=0 role=voice streams=1\n\
+         app aplay volume=100 mute=1 route=- on=- peak=0 ducked=0 role=media streams=0\n\
+         input top gain=60 level=-24\n"
+            .into()
+    }
+}
+
+/// Music's Now Playing session: a 32x32 cover (a teal-to-violet square with a disc).
+fn music_session(ps: &mut PhoneShell<Fixed>) {
+    let mut art = Vec::with_capacity(32 * 32 * 4);
+    for y in 0..32i32 {
+        for x in 0..32i32 {
+            let d = (x - 16) * (x - 16) + (y - 16) * (y - 16);
+            let px: [u8; 4] = if d < 9 {
+                [20, 24, 30, 255]
+            } else if d < 121 {
+                [230, 236, 242, 255]
+            } else {
+                [(40 + x * 4) as u8, (150 - y * 2) as u8, (140 + y * 3) as u8, 255]
+            };
+            art.extend_from_slice(&px);
+        }
+    }
+    ps.handle(vec![ShellEvent::Message(Message::MediaSessionChanged(proto::MediaSessionChanged {
+        pid: 30,
+        app_id: "dev.ecm.music".into(),
+        info: proto::MediaInfo {
+            title: "Creeper Shuffle".into(),
+            artist: "C418".into(),
+            album: "Overworld".into(),
+            art_w: 32,
+            art_h: 32,
+            art_rgba: art,
+            state: proto::MediaState::Playing,
+            position_ms: 83_000,
+            duration_ms: 214_000,
+            actions: vec!["play".into(), "pause".into(), "next".into(), "previous".into()],
+        },
+    }))]);
 }
 
 struct Session {
@@ -184,10 +231,12 @@ fn main() {
     s.tap(150, 42, hit);
     std::fs::write(format!("{out}/phone_home.session"), &s.out).unwrap();
 
-    // The notification sheet, pulled down over home.
+    // The notification sheet, pulled down over home: Music's Now Playing card, the volume
+    // slider, then the notifications. A tap on pause hits it.
     let mut s = Session::new(240, 400, 1);
     let (mut ps, mock) = start(&mut s);
     notifications(&mut ps);
+    music_session(&mut ps);
     ps.act(Action::PullSheet);
     ps.render().unwrap();
     s.flush(&mock);
@@ -196,7 +245,45 @@ fn main() {
     s.flush(&mock);
     s.advance(40);
     s.snap("phone_sheet");
+    let pause = ps.hit_of(&Action::Media { pid: 30, action: "pause".into() }).expect("pause drawn");
+    // The card is at y 6; its controls row at 6 + 57, the middle button at x 120.
+    s.tap(120, 69, pause);
     std::fs::write(format!("{out}/phone_sheet.session"), &s.out).unwrap();
+
+    // The sheet's mixer expanded: per-app strips (a ducked badge, a muted one) and the microphone.
+    let mut s = Session::new(240, 400, 1);
+    let (mut ps, mock) = start(&mut s);
+    music_session(&mut ps);
+    ps.act(Action::PullSheet);
+    ps.act(Action::ToggleMixer);
+    ps.render().unwrap();
+    s.flush(&mock);
+    configure(&mut ps, 4, 240, 400);
+    ps.render().unwrap();
+    s.flush(&mock);
+    s.advance(40);
+    s.snap("phone_mixer");
+    let mute = ps.hit_of(&Action::Mute(phone_shell::Knob::App("dev.ecm.music".into()))).expect("Music's mute drawn");
+    // Music's strip is the first under the slider row: 6 + 78 (card) + 20 (slider row), mute at +16.
+    s.tap(27, 6 + 78 + 20 + 16, mute);
+    std::fs::write(format!("{out}/phone_mixer.session"), &s.out).unwrap();
+
+    // The first-time background prompt.
+    let mut s = Session::new(240, 400, 1);
+    let (mut ps, mock) = start(&mut s);
+    ps.handle(vec![ShellEvent::Message(Message::PermissionPrompt(proto::PermissionPrompt {
+        req: 2,
+        app_id: "dev.ecm.music".into(),
+        permission: "background:audio".into(),
+    }))]);
+    ps.render().unwrap();
+    s.flush(&mock);
+    configure(&mut ps, 4, 240, 400);
+    ps.render().unwrap();
+    s.flush(&mock);
+    s.advance(40);
+    s.snap("phone_background");
+    std::fs::write(format!("{out}/phone_background.session"), &s.out).unwrap();
 
     // The permission dialog.
     let mut s = Session::new(240, 400, 1);
@@ -214,5 +301,5 @@ fn main() {
     s.advance(40);
     s.snap("phone_dialog");
     std::fs::write(format!("{out}/phone_dialog.session"), &s.out).unwrap();
-    println!("wrote phone_home, phone_sheet, phone_dialog to {out}");
+    println!("wrote phone_home, phone_sheet, phone_mixer, phone_background, phone_dialog to {out}");
 }

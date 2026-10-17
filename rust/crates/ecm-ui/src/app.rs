@@ -58,6 +58,11 @@ pub enum AppEvent {
     Suspend { deadline_ms: u32 },
     /// The surface may draw its next animation frame.
     Frame { window: u32, time_ms: u64 },
+    /// A Now Playing control was pressed (shell card, AirPods, lock screen): `play`,
+    /// `pause`, `next`, `previous` or `seek` (to `position_ms`).
+    Media { action: String, position_ms: u32 },
+    /// Whether the app may keep running for a background mode while hidden (§11).
+    BackgroundModeResult { mode: String, granted: bool },
     /// The player asked to close this window.
     CloseRequested { window: u32 },
     /// The theme changed (windows re-render with it).
@@ -669,6 +674,8 @@ impl Core {
                     }
                 }
                 Message::Hotkey(h) => events.push(AppEvent::Hotkey { slot: h.slot, down: h.down }),
+                Message::MediaAction(a) => events.push(AppEvent::Media { action: a.action, position_ms: a.position_ms }),
+                Message::BackgroundModeResult(r) => events.push(AppEvent::BackgroundModeResult { mode: r.mode, granted: r.granted }),
                 Message::Frame(f) => events.push(AppEvent::Frame { window: f.surface, time_ms: f.time_ms }),
                 Message::CloseRequested(c) => events.push(AppEvent::CloseRequested { window: c.surface }),
                 Message::ThemeChanged(t) => {
@@ -704,6 +711,111 @@ impl Core {
     /// Answer `WillSuspend` with the bytes to keep (§11).
     pub fn save_state(&mut self, data: Vec<u8>) {
         self.send(Message::SaveState(proto::SaveState { data }));
+    }
+
+    /// Start (`on`) or stop a background mode the app declared in app.toml (`audio`,
+    /// `call`, `radio`, `transfer`, `navigation`): while it is on, the app keeps running,
+    /// capped, when hidden or in the pocket. The answer comes as
+    /// [`AppEvent::BackgroundModeResult`] (the first time, after the player answered).
+    pub fn background_mode(&mut self, mode: &str, on: bool) {
+        self.send(Message::BackgroundMode(proto::BackgroundMode { mode: mode.chars().take(32).collect(), on }));
+    }
+
+    /// Tell the shell what is playing (the Now Playing card); `MediaSession::ended()` ends it.
+    pub fn media_session(&mut self, session: &MediaSession) {
+        self.send(Message::MediaSession(proto::MediaSession { info: session.to_wire() }));
+    }
+}
+
+/// Keep the computer awake (an ePhone in the hotbar or pocket) for `ms` from now, at most
+/// `apps.wakelockMaxMs` (10 s): renew it before it runs out, `wakelock(0)` releases it (so does
+/// exiting). An app may hold one only while its `call` or `audio` background mode is on;
+/// the error is the refusal (`gui: wakelock needs an active call or audio mode`).
+pub fn wakelock(ms: u64) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let mut dev = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uictl").map_err(|e| format!("no GUI device ({e})"))?;
+    dev.write_all(format!("wakelock {ms}\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut reply = String::new();
+    let _ = dev.read_to_string(&mut reply);
+    match reply.trim() {
+        "ok" => Ok(()),
+        r => Err(r.to_string()),
+    }
+}
+
+/// What an app is playing, for the Now Playing card (§12 MediaSession).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MediaSession {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    /// Cover art as RGBA8888 (at most 160 x 160): (w, h, pixels).
+    pub art: Option<(u16, u16, Vec<u8>)>,
+    pub state: MediaState,
+    pub position_ms: u32,
+    pub duration_ms: u32,
+    /// What the player may press: "play", "pause", "next", "previous", "seek".
+    pub actions: Vec<String>,
+}
+
+/// A media session's state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MediaState {
+    /// No session (the card goes away).
+    #[default]
+    None,
+    Playing,
+    Paused,
+    Buffering,
+}
+
+impl MediaSession {
+    /// The message that ends the session.
+    pub fn ended() -> MediaSession {
+        MediaSession::default()
+    }
+
+    pub fn to_wire(&self) -> proto::MediaInfo {
+        let (art_w, art_h, art_rgba) = match &self.art {
+            Some((w, h, px)) if *w <= 160 && *h <= 160 && px.len() == *w as usize * *h as usize * 4 => (*w, *h, px.clone()),
+            _ => (0, 0, Vec::new()),
+        };
+        let cut = |s: &str| s.chars().take(200).collect::<String>();
+        proto::MediaInfo {
+            title: cut(&self.title),
+            artist: cut(&self.artist),
+            album: cut(&self.album),
+            art_w,
+            art_h,
+            art_rgba,
+            state: match self.state {
+                MediaState::None => proto::MediaState::None,
+                MediaState::Playing => proto::MediaState::Playing,
+                MediaState::Paused => proto::MediaState::Paused,
+                MediaState::Buffering => proto::MediaState::Buffering,
+            },
+            position_ms: self.position_ms,
+            duration_ms: self.duration_ms,
+            actions: self.actions.iter().take(8).map(|a| a.chars().take(16).collect()).collect(),
+        }
+    }
+
+    pub fn from_wire(i: &proto::MediaInfo) -> MediaSession {
+        MediaSession {
+            title: i.title.clone(),
+            artist: i.artist.clone(),
+            album: i.album.clone(),
+            art: (i.art_w > 0 && i.art_h > 0).then(|| (i.art_w, i.art_h, i.art_rgba.clone())),
+            state: match i.state {
+                proto::MediaState::None => MediaState::None,
+                proto::MediaState::Playing => MediaState::Playing,
+                proto::MediaState::Paused => MediaState::Paused,
+                proto::MediaState::Buffering => MediaState::Buffering,
+            },
+            position_ms: i.position_ms,
+            duration_ms: i.duration_ms,
+            actions: i.actions.clone(),
+        }
     }
 }
 
@@ -902,6 +1014,16 @@ impl Ctx<'_> {
         }));
     }
 
+    /// Start or stop a background mode (see [`Core::background_mode`]).
+    pub fn background_mode(&mut self, mode: &str, on: bool) {
+        self.core.background_mode(mode, on);
+    }
+
+    /// Tell the shell what is playing (see [`Core::media_session`]).
+    pub fn media_session(&mut self, session: &MediaSession) {
+        self.core.media_session(session);
+    }
+
     /// Ask for a `Frame` event at the next refresh (only while visible).
     pub fn request_frame(&mut self) {
         let surface = self.window;
@@ -973,6 +1095,8 @@ pub struct App {
     on_message: Option<Rc<dyn Fn(&mut Ctx, &Message)>>,
     on_key: Option<KeyHook>,
     on_theme: Option<Hook>,
+    on_media: Option<Rc<dyn Fn(&mut Ctx, &str, u32)>>,
+    on_background: Option<Rc<dyn Fn(&mut Ctx, &str, bool)>>,
     tick: Option<(i32, Rc<dyn Fn(&mut Ctx) -> bool>)>,
     last_tick: Option<u64>,
     refresh: bool,
@@ -1007,6 +1131,8 @@ impl App {
             on_message: None,
             on_key: None,
             on_theme: None,
+            on_media: None,
+            on_background: None,
             tick: None,
             last_tick: None,
             refresh: true,
@@ -1089,6 +1215,16 @@ impl App {
         self.on_key = Some(Rc::new(f));
     }
 
+    /// A Now Playing control: `f(cx, action, position_ms)` (play, pause, next, previous, seek).
+    pub fn on_media(&mut self, f: impl Fn(&mut Ctx, &str, u32) + 'static) {
+        self.on_media = Some(Rc::new(f));
+    }
+
+    /// The answer to a background mode: `f(cx, mode, granted)`.
+    pub fn on_background_result(&mut self, f: impl Fn(&mut Ctx, &str, bool) + 'static) {
+        self.on_background = Some(Rc::new(f));
+    }
+
     /// Runs after the theme changed (windows re-render by themselves).
     pub fn on_theme(&mut self, f: impl Fn(&mut Ctx) + 'static) {
         self.on_theme = Some(Rc::new(f));
@@ -1140,6 +1276,18 @@ impl App {
             AppEvent::Suspend { .. } => {
                 let data = self.on_suspend.as_mut().map(|f| f()).unwrap_or_default();
                 self.core.save_state(data);
+            }
+            AppEvent::Media { action, position_ms } => {
+                if let Some(f) = self.on_media.clone() {
+                    let w = self.first_window();
+                    f(&mut Ctx { core: &mut self.core, window: w }, &action, position_ms);
+                }
+            }
+            AppEvent::BackgroundModeResult { mode, granted } => {
+                if let Some(f) = self.on_background.clone() {
+                    let w = self.first_window();
+                    f(&mut Ctx { core: &mut self.core, window: w }, &mode, granted);
+                }
             }
             AppEvent::Frame { window, time_ms } => {
                 if let Some(f) = self.on_frame.clone() {

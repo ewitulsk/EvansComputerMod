@@ -8,9 +8,30 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
-/** Network payloads of Bluetooth audio. */
+/** Network payloads of Bluetooth audio and the AirPods' buttons. */
 public final class BluetoothPackets {
     private BluetoothPackets() {}
+
+    /** Client to server: the player tapped their AirPods ({@code gesture}: BtFrame.GESTURE_DOUBLE_TAP). */
+    public record Tap(int gesture) implements CustomPacketPayload {
+        public static final Type<Tap> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "airpods_tap"));
+        public static final StreamCodec<ByteBuf, Tap> STREAM_CODEC = new StreamCodec<>() {
+            @Override
+            public Tap decode(ByteBuf buf) {
+                return new Tap(buf.readUnsignedByte());
+            }
+
+            @Override
+            public void encode(ByteBuf buf, Tap v) {
+                buf.writeByte(v.gesture);
+            }
+        };
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
 
     /** Largest block accepted (samples). */
     public static final int MAX_SAMPLES = 8192;

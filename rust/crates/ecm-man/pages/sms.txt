@@ -1,0 +1,71 @@
+NAME
+    sms - send and read text and picture messages from the shell
+
+SYNOPSIS
+    sms send <number> <text...>
+
+    sms mms <number[,number...]> [--text T] [--file F]...
+
+    sms [list]
+
+    sms read <number|thread>
+
+    sms delete <id>
+
+    sms watch
+
+DESCRIPTION
+    Talks to telephonyd, the phone's messaging daemon, on 127.0.0.1
+    TCP 7720: the Messages app as commands. telephonyd must be running
+    (an ePhone starts it; on a Terminal with a modem run telephonyd &)
+    and registered with the carrier.
+
+COMMANDS
+    send <number> <text...>
+        Send a text; the rest of the line is the message. A long text
+        goes as several parts (sms says how many) and arrives as one.
+        Prints the message's id.
+
+    mms <number[,number...]> [--text T] [--file F]...
+        Send a picture message: files (.png pictures, .wav voice
+        notes, .vcf contact cards; under /home/ or /tmp/) and text.
+        Words that are not options are added to the text. Several
+        numbers, separated by commas, make a group: everyone gets the
+        whole list, so replies go to the whole group.
+
+    list
+        The default. The conversations, newest first: a * when there
+        are unread messages, the other numbers (group when there are
+        several) and the start of the last message.
+
+    read <number|thread>
+        A conversation, oldest first, and mark it read. Your messages
+        show their status (sending, sent, delivered, failed: why) and
+        a picture message its files. For a group give the numbers in
+        E.164 form, separated by commas, as the thread key.
+
+    delete <id>
+        Delete one message.
+
+    watch
+        Print messages as they arrive, and sent, delivered and failed
+        notices for yours. Ctrl+C stops.
+
+FILES
+    /home/Messages/
+        Pictures and other parts of the messages received.
+
+EXAMPLES
+      sms send +12145550143 On my way
+      sms send 22225 BAL
+      sms list
+      sms read 214-555-0143
+      sms mms +12145550143 --file /home/Pictures/house.png Look
+      sms mms +12145550143,+12145550144 Party at 8
+
+NOTES
+    Texts to a 5 or 6 digit short code go to a program at the carrier
+    (see smscd); 22225 BAL answers with your data balance.
+
+SEE ALSO
+    telephony, messages, telephonyd, tel, contacts, smscd

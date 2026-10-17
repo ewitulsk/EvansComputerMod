@@ -353,6 +353,18 @@ impl Kernel {
             // them through their own host functions.
             _ => {}
         }
+        self.report_wakes();
+    }
+
+    /// Tell the host about wake sockets (SO_ECM_WAKE) that just became readable, so it can
+    /// wake their suspended apps (docs/gui/APPS.md "Wake sockets").
+    fn report_wakes(&mut self) {
+        if !self.ipc.has_wake_sockets() {
+            return;
+        }
+        for pid in self.ipc.wake_check(&self.net.stack, crate::hal::now_ms()) {
+            crate::hal::socket_wake(pid);
+        }
     }
 
     /// A child exited: release its sockets, and if it was an sshd, close
@@ -450,6 +462,7 @@ impl Kernel {
             deadline = min_opt(deadline, Some(now + JOB_POLL_MS));
         }
         deadline = min_opt(deadline, self.ipc.next_deadline());
+        self.report_wakes();
         for &(start, timeout) in self.session_waits.values() {
             deadline = min_opt(deadline, Some(start + timeout));
         }
@@ -482,6 +495,7 @@ impl Kernel {
         // Tun sockets (radio0) are handled beside net::ipc, not inside it.
         if let Some(r) = self.net.tun_ipc(pid, syscall, args, result, now) {
             self.net.flush(now);
+            self.report_wakes();
             return r;
         }
         let mut fx = IpcEffects::default();
@@ -504,6 +518,7 @@ impl Kernel {
         }
         // Socket calls queue frames; send them now rather than next tick.
         self.net.flush(now);
+        self.report_wakes();
         if r == IPC_PENDING {
             IPC_PENDING
         } else {

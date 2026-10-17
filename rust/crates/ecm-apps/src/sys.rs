@@ -83,6 +83,10 @@ pub struct CellState {
     pub roaming: bool,
     /// Cells heard: (text, serving).
     pub cells: Vec<(String, bool)>,
+    /// The phone's number, written `(214) 555-0142` ("" when the network gave none).
+    pub number: String,
+    /// Calls and texts (the IMS bearer, docs/TELEPHONY.md): `VoLTE ready` or why not.
+    pub ims: String,
 }
 
 impl CellState {
@@ -118,6 +122,14 @@ impl CellState {
                 if s.handovers == 1 { "" } else { "s" }
             ),
             roaming: s.roaming,
+            number: ecm_tel::number::E164::parse(&s.msisdn).map(|n| n.display("1")).unwrap_or_else(|| s.msisdn.clone()),
+            ims: if !s.ims_ip.is_empty() {
+                format!("VoLTE ready ({}){}", if s.ims_domain.is_empty() { "IMS" } else { &s.ims_domain }, if s.bearers > 0 { ", in a call" } else { "" })
+            } else if s.on_cell() {
+                "no IMS from this carrier (data only)".into()
+            } else {
+                "-".into()
+            },
             cells: cells
                 .iter()
                 .map(|c| {
@@ -239,6 +251,15 @@ pub trait Sys {
     }
     /// Stop reading microphones for [`mic_level`](Self::mic_level).
     fn mic_level_stop(&mut self) {}
+    /// The Volume Mixer's strips (`/dev/mixer`: speakers, apps, microphones); Err if there is none.
+    fn mixer(&mut self) -> Result<ecm_audio::mixer::Strips, String> {
+        Err("This computer has no Volume Mixer.".into())
+    }
+    /// One Volume Mixer command (`set dev.ecm.music 80`, `mute master.left on`, `route aplay right`,
+    /// `gain top 60`, `reset aplay`); Err says why it was refused.
+    fn mixer_command(&mut self, _cmd: &str) -> Result<(), String> {
+        Err("This computer has no Volume Mixer.".into())
+    }
     /// The Bluetooth radio, its paired devices and what is nearby (`present: false` without one).
     fn bluetooth(&mut self) -> BtState {
         BtState::default()
@@ -719,6 +740,18 @@ mod host {
             METERS.with(|m| m.borrow_mut().clear());
         }
 
+        fn mixer(&mut self) -> Result<ecm_audio::mixer::Strips, String> {
+            ecm_audio::mixer::read().map_err(|e| format!("Can't read the Volume Mixer: {e}"))
+        }
+
+        fn mixer_command(&mut self, cmd: &str) -> Result<(), String> {
+            ecm_audio::mixer::command(cmd).map_err(|e| match e.kind() {
+                std::io::ErrorKind::PermissionDenied => "Changing the Volume Mixer needs the mixer permission.".to_string(),
+                std::io::ErrorKind::InvalidInput => format!("The Volume Mixer refused '{cmd}'."),
+                _ => format!("Volume Mixer: {e}"),
+            })
+        }
+
         fn bluetooth(&mut self) -> BtState {
             let Ok(st) = peripheral::call("bluetooth", "status", &[]) else { return BtState::default() };
             let int = |m: &Value, k: &str| match get(m, k) {
@@ -810,6 +843,10 @@ pub struct MockState {
     pub mic_levels: Vec<(String, i32)>,
     /// The Bluetooth radio.
     pub bluetooth: BtState,
+    /// The Volume Mixer (None: the computer has none); commands change it like /dev/mixer does.
+    pub mixer: Option<ecm_audio::mixer::Strips>,
+    /// Refuse mixer commands as an app without the `mixer` permission.
+    pub mixer_denied: bool,
     /// What `upload_supported` answers (1 = ready).
     pub upload_support: i32,
     /// Polls of the running upload answer these in turn (the last one repeats).
@@ -967,6 +1004,70 @@ impl Sys for MockSys {
     }
     fn mic_level(&mut self, name: &str) -> Option<i32> {
         self.state.borrow().mic_levels.iter().find(|(n, _)| n == name).map(|(_, l)| *l)
+    }
+    fn mixer(&mut self) -> Result<ecm_audio::mixer::Strips, String> {
+        self.state.borrow().mixer.clone().ok_or_else(|| "This computer has no Volume Mixer.".into())
+    }
+    fn mixer_command(&mut self, cmd: &str) -> Result<(), String> {
+        let mut s = self.state.borrow_mut();
+        s.log.push(format!("mixer {cmd}"));
+        if s.mixer_denied {
+            return Err("Changing the Volume Mixer needs the mixer permission.".into());
+        }
+        let refused = || Err(format!("The Volume Mixer refused '{cmd}'."));
+        let Some(m) = s.mixer.as_mut() else { return Err("This computer has no Volume Mixer.".into()) };
+        let w: Vec<&str> = cmd.split_whitespace().collect();
+        let flag = |how: Option<&&str>, now: bool| match how.copied() {
+            None | Some("on") => Some(true),
+            Some("off") => Some(false),
+            Some("toggle") => Some(!now),
+            _ => None,
+        };
+        match w.as_slice() {
+            ["set", t, v] if *t == "master" || t.starts_with("master.") => {
+                let side = t.strip_prefix("master.").unwrap_or("");
+                let v: u32 = v.parse().map_err(|_| format!("The Volume Mixer refused '{cmd}'."))?;
+                match m.outputs.iter_mut().find(|o| side.is_empty() || o.side == side) {
+                    Some(o) if v <= 100 => o.volume = v,
+                    _ => return refused(),
+                }
+            }
+            ["set", app, v] => match (m.apps.iter_mut().find(|a| a.app == *app), v.parse::<u32>()) {
+                (Some(a), Ok(v)) if v <= ecm_audio::mixer::MAX_APP_PERCENT => a.volume = v,
+                _ => return refused(),
+            },
+            [verb @ ("mute" | "unmute"), t, rest @ ..] => {
+                let how = if *verb == "unmute" { Some(&"off") } else { rest.first() };
+                if let Some(side) = (*t == "master" || t.starts_with("master.")).then(|| t.strip_prefix("master.").unwrap_or("")) {
+                    let Some(o) = m.outputs.iter_mut().find(|o| side.is_empty() || o.side == side) else { return refused() };
+                    o.mute = flag(how, o.mute).ok_or_else(|| format!("The Volume Mixer refused '{cmd}'."))?;
+                } else {
+                    let Some(a) = m.apps.iter_mut().find(|a| a.app == *t) else { return refused() };
+                    a.mute = flag(how, a.mute).ok_or_else(|| format!("The Volume Mixer refused '{cmd}'."))?;
+                }
+            }
+            ["route", app, side] => {
+                let to = if *side == "-" { None } else { Some(side.to_string()) };
+                if to.as_ref().is_some_and(|t| !m.outputs.iter().any(|o| &o.side == t)) {
+                    return refused();
+                }
+                let Some(a) = m.apps.iter_mut().find(|a| a.app == *app) else { return refused() };
+                a.route = to;
+            }
+            ["gain", side, v] => match (m.inputs.iter_mut().find(|i| i.side == *side), v.parse::<u32>()) {
+                (Some(i), Ok(v)) if v <= 100 => i.gain = v,
+                _ => return refused(),
+            },
+            ["reset", app] => {
+                if let Some(a) = m.apps.iter_mut().find(|a| a.app == *app) {
+                    a.volume = 100;
+                    a.mute = false;
+                    a.route = None;
+                }
+            }
+            _ => return refused(),
+        }
+        Ok(())
     }
     fn bluetooth(&mut self) -> BtState {
         self.state.borrow().bluetooth.clone()

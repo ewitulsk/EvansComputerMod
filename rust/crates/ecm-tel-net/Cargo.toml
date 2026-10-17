@@ -1,0 +1,17 @@
+[package]
+name = "ecm-tel-net"
+version = "0.1.0"
+edition = "2021"
+description = "The telephony programs' computer side (docs/TELEPHONY.md): UDP, the HSS client, ENUM/SRV/MX lookups, a non-blocking HTTP server and an HTTP client, SMTP for MM4, logs and CDR files. The HTTP and SMTP framing is pure and tested on the host."
+
+[lib]
+name = "ecm_tel_net"
+doctest = false
+
+[dependencies]
+ecm-tel = { workspace = true }
+ecm-cell = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-host-abi = { workspace = true }
+ecm-dns = { workspace = true }

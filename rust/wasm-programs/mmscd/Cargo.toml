@@ -1,0 +1,18 @@
+[package]
+name = "mmscd"
+version = "0.1.0"
+edition = "2021"
+description = "mmscd: the carrier's MMSC (MMS over HTTP, notifications by WAP push, group texts, MM4 to other carriers over SMTP, a web page for phones without MMS). The machine is ecm_tel::mmsc; this is the computer's loop."
+
+[[bin]]
+name = "mmscd"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel-net = { workspace = true }
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }

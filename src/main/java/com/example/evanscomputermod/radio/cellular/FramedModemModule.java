@@ -216,6 +216,7 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
         @Override public double maxTxDbm() { return tech.ueTxDbm; }
         @Override public double noiseFigureDb() { return tech.ueNoiseFigureDb; }
         @Override public void event(String name) { FramedModemModule.this.event(name); }
+        @Override public void page() { host.wakeForPage(); }
     }
 
     private final class Endpoint implements RadioEndpoint {
