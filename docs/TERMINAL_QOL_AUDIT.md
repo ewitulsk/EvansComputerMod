@@ -105,6 +105,7 @@ Legend: **OK** works like a real terminal, **Partial** some of it, **Missing**.
 | Ctrl+C stops the foreground program | Missing | OK | Console: only Ctrl+T works; Ctrl+C is sent to the program, which ignores it. |
 | Full-screen programs get Ctrl+C themselves | n/a | Missing | The app kills on Ctrl+C even while `edit` (alternate screen) uses Ctrl+C for copy. |
 | `&`, `jobs`, `fg`, `ps`, `kill` | OK | OK | |
+| Pipes `|` and redirects `>` `>>` `<` `2>` | Missing (silently) | Missing (silently) | The shell parses them, but the Java host's `pipe_create` and `fd_open` were stubs and `process_spawn` ignored the stdio it was given: `ls > f` printed to the screen and made no file, `a | b` said "Pipes are not supported by this host". `grep` and `wc` (stdin only) could never get input. |
 | Ctrl+Z suspend, `bg` resume | Missing | Missing | `bg` says jobs already run in the background. |
 | Exit status in the prompt / `$?` | Partial | Partial | "Process exited with code N" is printed; no `$?`. |
 | Esc reaches the program | Missing | OK | Console: Esc always closes the screen (kept: players expect Esc to close a GUI). |
@@ -143,3 +144,18 @@ Legend: **OK** works like a real terminal, **Partial** some of it, **Missing**.
    pager (Space/b/arrows/`/` search/`q`) and a `less` program for files.
 6. **VTE fixes**: OSC, 256/truecolor SGR, ICH/DCH/ECH/IL/DL, DECSTBM, multi-mode `?h/l`, UTF-8.
 7. Later: reflow on resize, Ctrl+Z/`bg`, DSR replies, `$?`, bell.
+
+## What this branch built (feature/terminal-qol)
+
+| Area | Where | Done |
+|---|---|---|
+| Line editor | `rust/crates/ecm-lineedit` | Cursor, word jumps, Home/End, Delete, Ctrl+W/U/K/Y, Alt+D/B/F, Ctrl+L, Ctrl+C/D, wrapping redraw, history with Ctrl+P/N/Ctrl+R and `!!`/`!N`/`!-N`/`!text`, Tab completion with listing, bracketed paste. Used by the console, every shell session (GUI Terminal, SSH) and the Python and Lua REPLs (`stdio` module). |
+| Shell | `operating-system/.../lineedit.rs`, `shell.rs` | Completion of commands and paths, `history [N|-c]`, history saved to `/.history` and shared, Ctrl+C stops the foreground program on the console too; a program on the alternate screen or with mode `?7727` gets Ctrl+C as a key. |
+| Console scrollback | `console.rs`, `vte.rs` | Shift+PgUp/PgDn/Up/Down/Home/End and the wheel scroll the 500 rows; "-N" tag; live screen held while scrolled; typing returns. Full-screen programs get the wheel as arrows. |
+| Terminal block screen | `TerminalScreen.java` | Selection drawn, double/triple click, Ctrl+Shift+C / Ctrl+Insert / right click copy, Ctrl+Shift+V / Shift+Insert / right click paste (bracketed), every Ctrl+letter, Alt+letter, xterm sequences with modifiers for arrows, Home/End, PgUp/PgDn, Insert/Delete, F1-F12, Shift+Tab, UTF-8 typing. |
+| GUI Terminal app | `ecm-apps/src/terminal.rs` | Same key sequences, Ctrl+Insert copy, double/triple click, Shift+Up/Down/Home/End, "-N" tag, wheel as arrows in full-screen programs, bracketed paste, replies to cursor/size queries. |
+| Emulator | `ecm-vte` | OSC/DCS skipped, 256/truecolor, ICH/DCH/ECH/IL/DL, DECSTBM, REP/VPA/HPA/CBT/CHT, several `?` modes at once, no scrollback on the alternate screen, DSR/size replies, UTF-8 one cell per character, mode tracking (`Modes`, `ModeScanner`). |
+| Pipes and redirects | `ComputerInstance.java`, `wasi/SharedFd.java`, `ProcessManager.java` | `fd_open`, `pipe_create`, `fd_close` and the stdio of `process_spawn` are real; a pipe's reader gets end of input when the last writer closes; a redirected stdout reports a file / stream type. |
+| Help and manual | `rust/crates/ecm-man`, `wasm-programs/{help,man,less}` | 115 pages (every command and feature), `help` with headings, `help <name>`, `man`, `man -k`, `man -l`, `man -P`, `/usr/share/man` overrides, a pager (Space/b/arrows/g/G//, n/N, h) and `less <file>`. |
+
+Still open: reflow on resize, Ctrl+Z/`bg`, `$?`, the bell, Esc reaching programs on the Terminal block (Esc closes the screen), and `less` at the end of a pipeline (keyboard input goes to a pipeline's first program).

@@ -24,29 +24,39 @@ DESCRIPTION
     the window says so.
 
 KEYS
-    Ctrl+Shift+C
+    The shell's line editing (Left/Right, word jumps, history, Ctrl+R,
+    Tab completion) works here as everywhere: see man keys.
+
+    Ctrl+Shift+C, Ctrl+Insert
         Copy the selected text to the clipboard.
 
     Ctrl+Shift+V, Shift+Insert
-        Paste the clipboard; every newline becomes Enter.
+        Paste the clipboard as typed text (a Tab in it doesn't
+        complete); every newline becomes Enter.
 
-    Shift+PageUp, Shift+PageDown
-        Scroll back through the last 1000 lines, a page at a time. The
-        mouse wheel scrolls 3 lines. A scrolled-back view stays put
-        while output arrives; typing goes back to the bottom.
+    Shift+PageUp, Shift+PageDown, Shift+Up, Shift+Down
+        Scroll back through the last 1000 lines, a page or a line at a
+        time; Shift+Home and Shift+End go to the oldest line and back to
+        the bottom. The mouse wheel scrolls 3 lines. While scrolled back
+        the top-right corner shows how far; the view stays put while
+        output arrives, and typing goes back to the bottom. A
+        full-screen program (edit, man, less) gets the wheel as Up and
+        Down instead.
 
     Ctrl+letter
         Sent to the program as a control character. Ctrl+C or Ctrl+T
-        stops the running program.
+        stops the running program (a full-screen program gets Ctrl+C as
+        a key).
 
     Enter, Backspace, Tab, Esc, arrows, Home, End, PageUp, PageDown,
-    Insert, Delete
-        Sent as the usual terminal (VT100) keys. Holding Alt sends Esc
-        before them.
+    Insert, Delete, F1-F12
+        Sent as the usual xterm keys, with Shift, Alt and Ctrl as the
+        modifier parameter (Ctrl+Left is ESC[1;5D, a word left).
 
 MOUSE
-    Drag with the left button to select text; a click without a drag
-    clears the selection. The right button opens a menu: Copy, Paste,
+    Drag with the left button to select text; double click selects a
+    word, triple click a line; a click without a drag clears the
+    selection. The right button opens a menu: Copy, Paste,
     Clear selection.
 
 NOTES

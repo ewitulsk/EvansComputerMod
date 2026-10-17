@@ -450,7 +450,7 @@ fn terminal_shows_the_session_types_into_it_and_pastes() {
     let out = run(&mut app, &m, &mut t, vec![key(1, 0x19, proto::mods::CTRL | proto::mods::SHIFT)]);
     assert!(out.iter().any(|x| matches!(x, Message::ClipboardRequest(r) if r.mime == TEXT_MIME)));
     run(&mut app, &m, &mut t, vec![Message::ClipboardData(proto::ClipboardData { mime: TEXT_MIME.into(), data: b"echo pasted\n".to_vec() })]);
-    assert!(sys.state.borrow().session_in.ends_with(b"echo pasted\r"));
+    assert!(sys.state.borrow().session_in.ends_with(b"\x1b[200~echo pasted\r\x1b[201~"), "a paste is bracketed");
     // Output arrives and is drawn; selecting a line and Ctrl+Shift+C copies it.
     sys.state.borrow_mut().session_out = b"\r\npasted\r\n/ > ".to_vec();
     run(&mut app, &m, &mut t, vec![]);

@@ -2082,6 +2082,7 @@ version = "0.1.0"
 dependencies = [
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-radio",
  "ecm-ui",
  "ecm-ui-proto",
@@ -2842,6 +2843,7 @@ dependencies = [
  "chrono",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-radio",
  "ecm-ui",
  "ecm-ui-proto",

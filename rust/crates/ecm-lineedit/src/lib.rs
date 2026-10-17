@@ -885,3 +885,5 @@ pub fn expand_history(line: &str, history: &[String]) -> Result<Option<String>, 
 
 #[cfg(test)]
 mod tests;
+
+pub mod stdio;

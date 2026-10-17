@@ -589,6 +589,25 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
                 }
             }
         }
+        if (hasSelection || isSelecting) {
+            int[] sel = normalizedSelection();
+            for (int row = sel[1]; row <= sel[3] && row < termHeight; row++) {
+                int from = row == sel[1] ? sel[0] : 0;
+                int to = row == sel[3] ? sel[2] + 1 : termWidth;
+                if (to > from) {
+                    g.fill(from * baseCharWidth, row * baseCharHeight, to * baseCharWidth, (row + 1) * baseCharHeight, SELECTION_COLOR);
+                }
+            }
+        }
+    }
+
+    /** The selection as {startX, startY, endX, endY}, start before end (end inclusive). */
+    private int[] normalizedSelection() {
+        boolean forward = selectionStartY < selectionEndY
+                || (selectionStartY == selectionEndY && selectionStartX <= selectionEndX);
+        return forward
+                ? new int[]{selectionStartX, selectionStartY, selectionEndX, selectionEndY}
+                : new int[]{selectionEndX, selectionEndY, selectionStartX, selectionStartY};
     }
 
     /**
@@ -733,11 +752,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     }
 
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
-        boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
+        boolean ctrl = (modifiers & 2) != 0;   // GLFW_MOD_CONTROL
+        boolean shift = (modifiers & 1) != 0;  // GLFW_MOD_SHIFT
+        boolean alt = (modifiers & 4) != 0;    // GLFW_MOD_ALT
         sendRawKey(keyCode, modifiers, true);
+        altTyped = false;
 
-        // Handle Escape - close the screen
-        if (keyCode == 256) {  // Escape
+        // Escape closes the screen.
+        if (keyCode == 256) {
             this.onClose();
             return true;
         }
@@ -745,115 +767,110 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         if (isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode))) {
             return true;
         }
-        
-        // Handle Ctrl+key combinations
-        if (ctrlPressed) {
-            // Ctrl+C - Copy to clipboard if there's a selection
-            if (keyCode == 67) {  // C
-                if (hasSelection) {
-                    String selectedText = getSelectedText();
-                    if (!selectedText.isEmpty()) {
-                        Minecraft.getInstance().keyboardHandler.setClipboard(selectedText);
-                        EvansComputerMod.LOGGER.debug("Copied to clipboard: {} chars", selectedText.length());
-                    }
-                    clearSelection();
-                    return true;
-                }
-                // No selection - send Ctrl+C to WASM (for interrupt, etc.)
-                sendInput("\u0003");
-                return true;
-            }
-            
-            // Ctrl+V - Paste from clipboard
-            if (keyCode == 86) {  // V
-                String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
-                if (clipboard != null && !clipboard.isEmpty()) {
-                    // Send clipboard content as input (supports multi-line)
-                    sendInput(clipboard);
-                    EvansComputerMod.LOGGER.debug("Pasted from clipboard: {} chars", clipboard.length());
-                }
-                return true;
-            }
-            
-            // Other Ctrl+key combinations - send as control characters
-            char ctrlChar = getCtrlChar(keyCode);
-            if (ctrlChar != 0) {
-                sendInput(String.valueOf(ctrlChar));
-                return true;
-            }
+
+        // Copy: Ctrl+C (with a selection), Ctrl+Shift+C, Ctrl+Insert.
+        if ((ctrl && keyCode == 67 && (hasSelection || shift)) || (ctrl && keyCode == 260)) {
+            copySelection();
+            return true;
         }
-        
-        // Any key press clears selection (except modifiers)
-        if (keyCode != 341 && keyCode != 345 && keyCode != 340 && keyCode != 344) {  // Not Ctrl/Shift
+        // Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert.
+        if ((ctrl && keyCode == 86) || (shift && keyCode == 260)) {
+            pasteClipboard();
+            return true;
+        }
+
+        // Any other key press clears the selection (not the modifiers themselves).
+        if (keyCode < 340 || keyCode > 347) {
             clearSelection();
         }
-        
-        // Handle Arrow keys (send as ANSI escape sequences)
-        switch (keyCode) {
-            case 265:  // Arrow Up
-                sendInput("\u001b[A");
-                return true;
-            case 264:  // Arrow Down
-                sendInput("\u001b[B");
-                return true;
-            case 262:  // Arrow Right
-                sendInput("\u001b[C");
-                return true;
-            case 263:  // Arrow Left
-                sendInput("\u001b[D");
-                return true;
-            case 261:  // Delete
-                sendInput("\u001b[3~");
-                return true;
-            case 257:  // Enter
-            case 335:  // Numpad Enter
-                sendInput("\n");
-                return true;
-            case 259:  // Backspace
-                sendInput("\b");
-                return true;
-            case 258:  // Tab
-                sendInput("\t");
-                return true;
+
+        String seq = keySequence(keyCode, ctrl, shift, alt);
+        if (seq != null) {
+            altTyped = alt && keyCode >= 65 && keyCode <= 90;
+            sendInput(seq);
+            return true;
         }
-        
         // Let other keys go through to charTyped
         return false;
     }
-    
+
+    /** Set by an Alt+letter press (sent as ESC + letter), so its charTyped isn't sent again. */
+    private boolean altTyped;
+
     /**
-     * Maps a key code to its corresponding Ctrl character.
-     * Returns 0 if the key doesn't have a Ctrl mapping.
-     * Note: Ctrl+C and Ctrl+V are handled separately for clipboard operations.
+     * The bytes a key sends, as xterm does: control characters for
+     * Ctrl+letters, ESC-prefixed letters for Alt, CSI sequences with the
+     * modifier parameter (2 Shift, 3 Alt, 5 Ctrl, ...) for the cursor and
+     * editing keys and F1-F12. Null: a printable key (sent by charTyped).
      */
-    private char getCtrlChar(int keyCode) {
-        // Key codes for A-Z are 65-90 in GLFW
-        // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
-        // Note: C (67) and V (86) are handled separately for copy/paste
-        switch (keyCode) {
-            case 65:  // A - Select All
-                return '\u0001';
-            case 68:  // D - Delete line
-                return '\u0004';
-            case 69:  // E - Exit
-                return '\u0005';
-            case 70:  // F - Find
-                return '\u0006';
-            case 75:  // K - Clear line
-                return '\u000b';
-            case 82:  // R - Run
-                return '\u0012';
-            case 83:  // S - Save
-                return '\u0013';
-            case 84:  // T - Terminate/kill program
-                return '\u0014';
-            case 88:  // X - Cut
-                return '\u0018';
-            default:
-                return 0;
+    static String keySequence(int keyCode, boolean ctrl, boolean shift, boolean alt) {
+        int mod = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
+        if (ctrl && !alt && keyCode >= 65 && keyCode <= 90) {
+            return String.valueOf((char) (keyCode - 64));
+        }
+        if (alt && !ctrl && keyCode >= 65 && keyCode <= 90) {
+            char c = (char) (shift ? keyCode : keyCode + 32);
+            return "\u001b" + c;
+        }
+        String csi = switch (keyCode) {
+            case 265 -> "A"; // Up
+            case 264 -> "B"; // Down
+            case 262 -> "C"; // Right
+            case 263 -> "D"; // Left
+            case 268 -> "H"; // Home
+            case 269 -> "F"; // End
+            default -> null;
+        };
+        if (csi != null) return mod == 1 ? "\u001b[" + csi : "\u001b[1;" + mod + csi;
+        String tilde = switch (keyCode) {
+            case 260 -> "2";  // Insert
+            case 261 -> "3";  // Delete
+            case 266 -> "5";  // Page Up
+            case 267 -> "6";  // Page Down
+            case 294 -> "15"; // F5
+            case 295 -> "17";
+            case 296 -> "18";
+            case 297 -> "19";
+            case 298 -> "20";
+            case 299 -> "21";
+            case 300 -> "23";
+            case 301 -> "24"; // F12
+            default -> null;
+        };
+        if (tilde != null) return mod == 1 ? "\u001b[" + tilde + "~" : "\u001b[" + tilde + ";" + mod + "~";
+        if (keyCode >= 290 && keyCode <= 293) { // F1-F4
+            char c = (char) ('P' + keyCode - 290);
+            return mod == 1 ? "\u001bO" + c : "\u001b[1;" + mod + c;
+        }
+        return switch (keyCode) {
+            case 257, 335 -> "\n";                       // Enter
+            case 259 -> alt ? "\u001b\b" : "\b";       // Backspace (Alt: delete a word)
+            case 258 -> shift ? "\u001b[Z" : "\t";      // Tab / Shift+Tab
+            default -> null;
+        };
+    }
+
+    private void copySelection() {
+        if (!hasSelection) return;
+        String selectedText = getSelectedText();
+        if (!selectedText.isEmpty()) {
+            Minecraft.getInstance().keyboardHandler.setClipboard(selectedText);
+        }
+        clearSelection();
+    }
+
+    /** Paste as typed text, marked as a paste (bracketed paste) so a Tab or key in it is only text. */
+    private void pasteClipboard() {
+        String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
+        if (clipboard != null && !clipboard.isEmpty()) {
+            sendInput(pasteSequence(clipboard));
         }
     }
-    
+
+    static String pasteSequence(String text) {
+        return "\u001b[200~" + text.replace("\r\n", "\n").replace('\r', '\n').replace("\u001b", "") + "\u001b[201~";
+    }
+
     //? if >=26.1 {
     @Override
     public boolean charTyped(CharacterEvent event) {
@@ -869,9 +886,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private boolean handleCharTyped(int cp) {
         char codePoint = (char) cp;
         if (isControllerChar(codePoint)) return true;
+        if (altTyped) return true;
         if (cp >= 32 && cp != 127) sendText(Character.toString(cp));
-        if (codePoint >= 32 && codePoint < 127) {
-            sendInput(String.valueOf(codePoint));
+        if (cp >= 32 && cp != 127) {
+            // UTF-8 text is fine: the terminal shows the nearest character it can draw.
+            sendInput(Character.toString(cp));
             return true;
         }
         return false;
@@ -944,7 +963,13 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
                 return true;
             }
         }
-        // Scrollback is now managed by the Rust VTE (TODO: send scroll input to WASM)
+        // The kernel scrolls its scrollback (Shift+Up/Down), or turns them into
+        // arrows for a full-screen program.
+        if (scrollY != 0) {
+            clearSelection();
+            String one = scrollY > 0 ? "\u001b[1;2A" : "\u001b[1;2B";
+            sendScroll(one.repeat(3));
+        }
         return true;
     }
 
@@ -1160,9 +1185,25 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             }
         }
 
+        if (button == 1 && mouseToCharPos(mouseX, mouseY) != null) {
+            // Right click: copy the selection, or paste when there is none.
+            if (hasSelection) copySelection();
+            else pasteClipboard();
+            return true;
+        }
         if (button == 0) {
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
+                long now = System.currentTimeMillis();
+                boolean again = now - lastClickMs < 400 && charPos[0] == lastClickX && charPos[1] == lastClickY;
+                clickCount = again ? clickCount % 3 + 1 : 1;
+                lastClickMs = now;
+                lastClickX = charPos[0];
+                lastClickY = charPos[1];
+                if (clickCount >= 2) {
+                    selectWordOrLine(charPos[0], charPos[1], clickCount == 3);
+                    return true;
+                }
                 isSelecting = true;
                 hasSelection = false;
                 selectionStartX = charPos[0];
@@ -1216,6 +1257,37 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         return superCall.getAsBoolean();
     }
     
+    private long lastClickMs;
+    private int lastClickX = -1, lastClickY = -1, clickCount;
+
+    /** Double click: the word under the pointer; triple click: the whole row. */
+    private void selectWordOrLine(int col, int row, boolean line) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+        int w = display.getWidth();
+        int a = 0, b = w - 1;
+        if (!line) {
+            if (!isWordChar(display.getCharAt(col, row))) return;
+            a = col;
+            b = col;
+            while (a > 0 && isWordChar(display.getCharAt(a - 1, row))) a--;
+            while (b < w - 1 && isWordChar(display.getCharAt(b + 1, row))) b++;
+        }
+        isSelecting = false;
+        hasSelection = true;
+        selectionStartX = a;
+        selectionStartY = row;
+        selectionEndX = b;
+        selectionEndY = row;
+    }
+
+    /** Characters a double click takes as part of a word: letters, digits and path/address punctuation. */
+    private static boolean isWordChar(byte ch) {
+        return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+                || ch == '_' || ch == '-' || ch == '.' || ch == '/' || ch == ':' || ch == '~' || ch == '@';
+    }
+
     /**
      * Clears the current selection.
      */
@@ -1300,7 +1372,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private void sendInput(String input) {
         // Auto-scroll to bottom when user types
         scrollOffset = 0;
-        
+        sendScroll(input);
+    }
+
+    /** Send keys without leaving the scrollback (the wheel). */
+    private void sendScroll(String input) {
+
         // Send to server via packet
         ClientPacketDistributor.sendToServer(new TerminalInputPacket(
                 menu.getBlockEntity().getComputerId(),

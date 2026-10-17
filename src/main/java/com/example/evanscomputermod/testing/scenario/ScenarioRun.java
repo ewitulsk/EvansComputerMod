@@ -495,6 +495,18 @@ public final class ScenarioRun {
         return moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
     }
 
+    private final java.util.Map<String, String> notes = new java.util.HashMap<>();
+
+    /** Remember a value between steps (for a later step's check). */
+    public void note(String key, String value) {
+        notes.put(key, value);
+    }
+
+    /** A value {@link #note noted} earlier ("" if none). */
+    public String noted(String key) {
+        return notes.getOrDefault(key, "");
+    }
+
     public String screen(String node) {
         TerminalBlockEntity be = be(node);
         return be == null ? "" : screen(be.getDisplay());
