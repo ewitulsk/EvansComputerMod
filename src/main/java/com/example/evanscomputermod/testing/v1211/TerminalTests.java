@@ -47,5 +47,11 @@ public final class TerminalTests {
     public static void repl_line_editing(GameTestHelper h) {
         TestDriver.scenario(h, NS, TerminalScenarios.ALL.get("repl_line_editing"), true);
     }
+
+    /** Ctrl+Z/jobs/bg/fg, $? and variables, --help, a pager at the end of a pipeline, the bell; control: no bell before. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".terminal_jobs_vars")
+    public static void terminal_jobs_vars(GameTestHelper h) {
+        TestDriver.scenario(h, NS, TerminalScenarios.ALL.get("terminal_jobs_vars"), true);
+    }
 }
 //?}

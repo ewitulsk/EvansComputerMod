@@ -83,17 +83,30 @@ BACKGROUND JOBS
     the terminal. When it ends, "[1]+ Done    command" is printed before
     the next prompt. Background programs do not get your typing.
 
-    jobs lists this shell's background jobs, fg %1 (or fg <pid>) brings
-    one back to the foreground, ps lists every process on the computer
-    and kill <pid> stops one. bg does nothing: background jobs never
-    pause.
+    Ctrl+Z pauses the foreground program ("[1]+  Stopped    command")
+    and gives you the prompt back; bg lets it run on in the background,
+    fg brings it back. jobs lists this shell's jobs (Running or
+    Stopped), fg %1 (or fg <pid>) brings one to the foreground, ps lists
+    every process on the computer and kill <pid> stops one.
 
 STOPPING A PROGRAM
     While a program runs in the foreground, everything you type goes to
-    it. Ctrl+T stops it at once ("^T - Program terminated") and brings
-    back the prompt; background jobs keep running. In a Terminal window
-    and over SSH, Ctrl+C does the same, and Ctrl+C at the prompt throws
-    away the line being typed.
+    it. Ctrl+C stops it ("^C") and Ctrl+T stops it at once ("^T -
+    Program terminated"); background jobs keep running. Full-screen
+    programs (edit, man, less) get Ctrl+C as a key instead. Ctrl+C at
+    the prompt throws away the line being typed.
+
+    In a pipeline your typing goes to the first program, or to less at
+    the end of one (ls | less), which reads the keyboard itself.
+
+VARIABLES
+    NAME=value sets a shell variable; $NAME or ${NAME} in a command line
+    is replaced by its value, and $? by the last command's exit status.
+    See set.
+
+GETTING HELP
+    help lists every command; help <name> or <name> --help sums one up;
+    man <name> shows its manual page.
 
     exit closes a Terminal window's or SSH session's shell; on the
     computer's own console it only reminds you of Ctrl+T.
@@ -102,7 +115,7 @@ EXIT CODES
     Every program ends with an exit code: 0 means success, anything else
     a failure. When a foreground program ends with a code other than 0
     the shell prints "Process exited with code N". For a pipeline this
-    is the code of the last program.
+    is the code of the last program. $? holds the last code.
 
 FILES AND STARTUP
     Paths starting with / start at the root of the computer's storage;

@@ -18,6 +18,9 @@ DESCRIPTION
     "On this computer". A list longer than the screen opens in the
     pager (q quits).
 
+    Any command followed by --help alone (ls --help, ping --help) shows
+    the same summary as help <command>.
+
 EXAMPLES
       help
       help networking

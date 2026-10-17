@@ -40,6 +40,13 @@ WHAT PROGRAMS CAN USE
     The size is in the COLUMNS and LINES environment variables when a
     program starts, and ESC[18t asks for it at any time.
 
+BELL AND RESIZING
+    The bell character (Ctrl+G, BEL, \a) makes the Terminal block chime.
+    When a new display panel changes the screen's width, the text is
+    re-wrapped: lines that wrapped at the old edge are joined and wrapped
+    at the new one, the scrollback included, and the line being typed is
+    drawn again where it belongs.
+
 FULL-SCREEN PROGRAMS
     A program that switches to full-screen mode (ESC[?1049h), like edit,
     man and less, gets a screen of its own; the shell's text comes back

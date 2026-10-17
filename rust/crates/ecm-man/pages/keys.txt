@@ -85,6 +85,10 @@ PROGRAMS
         programs (edit, man, less) get Ctrl+C as a key instead, as do the
         python and lua prompts while they wait for a line.
 
+    Ctrl+Z
+        Pauses the foreground program as a stopped job: bg lets it run
+        on in the background, fg brings it back.
+
     Ctrl+T
         Always stops the foreground program and returns to the prompt.
 

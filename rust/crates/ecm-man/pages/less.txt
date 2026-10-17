@@ -4,8 +4,11 @@ NAME
 SYNOPSIS
     less <file>
 
+    command | less
+
 DESCRIPTION
-    Shows a text file in the pager, full screen: scroll with Space and b
+    Shows a text file, or the output of a pipeline, in the pager, full
+    screen: scroll with Space and b
     (or PageDown and PageUp), the arrows or the mouse wheel, find text
     with /text and n, and quit with q. h shows every key. Long lines
     wrap onto the next row.
@@ -22,13 +25,14 @@ KEYS
       n / N                next / previous match
 
 NOTES
-    less reads its keys from the keyboard, so it can't be the end of a
-    pipeline (ls | less): write the output to a file first
-    (ls > /home/out.txt) and open that.
+    At the end of a pipeline less reads the text from its input and the
+    keys from the keyboard (/dev/tty): the shell sends your typing to it
+    instead of the first program.
 
 EXAMPLES
       less /etc/dhcpd.conf
       less notes.txt
+      man -P shell | less
 
 SEE ALSO
     cat, man, edit

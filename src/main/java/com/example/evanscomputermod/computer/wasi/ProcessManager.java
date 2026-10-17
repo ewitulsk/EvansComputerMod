@@ -577,6 +577,7 @@ public class ProcessManager {
         }
 
         WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
+        state.keyboard = childInputPipes.get(pid);
         state.pid = pid;
         state.sandbox = sandbox;
         WasmInstance instance = null;

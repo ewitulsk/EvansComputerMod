@@ -1,19 +1,24 @@
 NAME
-    bg - continue a job in the background
+    bg - let a stopped job run on in the background
 
 SYNOPSIS
-    bg
+    bg [%job | pid]
 
 DESCRIPTION
-    Exists for people used to other shells. Programs are never paused in
-    Terminal OS, so a background job is always already running; bg only
-    prints "Background jobs already run independently."
+    A program paused with Ctrl+Z is a stopped job. bg lets it go on
+    running in the background, as if it had been started with &; the
+    prompt stays yours. Without an argument it takes the newest job.
+    It prints the job as "[1]+ command &".
 
-    To start a program in the background, put & at the end of its
-    command line.
+    "bg: no such job" means there is no job by that name, and "bg: job
+    already in background" that it is already running.
 
 EXAMPLES
-      httpd 8080 &
+      sleep 600000
+      (Ctrl+Z)
+      [1]+  Stopped    sleep 600000
+      bg
+      [1]+ sleep 600000 &
 
 SEE ALSO
-    jobs, fg, shell
+    fg, jobs, keys, shell

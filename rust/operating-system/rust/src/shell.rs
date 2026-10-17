@@ -175,7 +175,14 @@ impl Shell {
             self.status = 0;
             return Outcome::Done;
         }
-        let line = expand(line, self.status, &self.vars);
+        let mut line = expand(line, self.status, &self.vars);
+        // `<command> --help` works for every command: it shows the command's
+        // manual summary (`help <command>`).
+        if let Some(cmd) = line.strip_suffix(" --help").map(str::trim) {
+            if !cmd.is_empty() && !cmd.contains([' ', '|', '<', '>', '&']) && self.resolve_program("help").is_some() {
+                line = format!("help {cmd}");
+            }
+        }
         let pipeline = parse::parse_pipeline(&line);
         let Some(first) = pipeline.stages.first() else {
             return Outcome::Done;
@@ -441,6 +448,36 @@ mod tests {
             sh.execute("switch on", &mut con),
             Outcome::Switch(SwitchCmd::StartDetached)
         ));
+    }
+
+    #[test]
+    fn variables_status_and_help_flag() {
+        let _g = crate::hal::test_lock();
+        ffi::FILES.with(|f| {
+            let mut f = f.borrow_mut();
+            f.insert("bin/hello.wasm".into(), vec![0]);
+            f.insert("server-bin/help.wasm".into(), vec![0]);
+        });
+        let mut con = Console::new();
+        let mut sh = Shell::new();
+        assert!(matches!(sh.execute("nosuchcmd", &mut con), Outcome::Done));
+        assert_eq!(sh.status, 127);
+        sh.execute("NAME=world", &mut con);
+        sh.execute("GREETING=\"hi $NAME\"", &mut con);
+        assert_eq!(sh.vars["GREETING"], "hi world");
+        match sh.execute("hello $GREETING '$NAME' $? ${NAME}x", &mut con) {
+            Outcome::Foreground(_, desc) => assert_eq!(desc, "hello hi world $NAME 0 worldx"),
+            _ => panic!("expected a job"),
+        }
+        sh.execute("unset NAME", &mut con);
+        assert!(!sh.vars.contains_key("NAME"));
+        // `--help` alone runs `help <command>`.
+        sh.execute("hello --help", &mut con);
+        let spawned = ffi::SPAWNED.with(|s| s.borrow().last().cloned()).unwrap();
+        assert_eq!(spawned.1, "server-bin/help.wasm\nhello");
+        sh.execute("cd --help", &mut con);
+        let spawned = ffi::SPAWNED.with(|s| s.borrow().last().cloned()).unwrap();
+        assert_eq!(spawned.1, "server-bin/help.wasm\ncd");
     }
 
     #[test]

@@ -18,6 +18,21 @@ pub struct Job {
     pub command: String,
     /// Paused with Ctrl+Z (waits for `fg` or `bg`).
     pub stopped: bool,
+    /// The stage that gets the keyboard: the first, or a pager at the end
+    /// (`ls | less`, which reads its keys from /dev/tty).
+    input: usize,
+}
+
+/// Programs that read the keyboard (from /dev/tty) at the end of a pipeline.
+const PAGERS: &[&str] = &["less", "more"];
+
+fn input_stage(pids: usize, command: &str) -> usize {
+    let last = command.rsplit('|').next().unwrap_or("").split_whitespace().next().unwrap_or("");
+    if pids > 1 && PAGERS.contains(&last) {
+        pids - 1
+    } else {
+        0
+    }
 }
 
 impl Job {
@@ -62,7 +77,8 @@ impl Jobs {
         let id = self.next_id;
         self.next_id += 1;
         let exit_codes = vec![None; pids.len()];
-        Job { id, pids, exit_codes, command, stopped: false }
+        let input = input_stage(pids.len(), &command);
+        Job { id, pids, exit_codes, command, stopped: false, input }
     }
 
     pub fn start_foreground(&mut self, pids: Vec<i32>, command: String) {
@@ -81,7 +97,7 @@ impl Jobs {
     /// Keyboard input for the foreground job goes to its first stage.
     pub fn send_input(&mut self, data: &[u8]) {
         if let Some(job) = &self.fg {
-            if let Some(&pid) = job.pids.first() {
+            if let Some(&pid) = job.pids.get(job.input) {
                 hal::proc::write_input(pid, data);
             }
         }

@@ -16,7 +16,7 @@ pub const LOCAL_DIR: &str = "/usr/share/man";
 pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Getting started", &["intro", "shell", "keys", "terminal", "filesystem", "help", "man", "less", "history"]),
     ("Files", &["ls", "cd", "pwd", "cat", "cp", "mv", "rm", "mkdir", "touch", "echo", "grep", "wc", "edit", "upload", "git"]),
-    ("Programs and jobs", &["ps", "kill", "jobs", "fg", "bg", "sleep", "clear", "exit", "passwd"]),
+    ("Programs and jobs", &["ps", "kill", "jobs", "fg", "bg", "set", "sleep", "clear", "exit", "passwd"]),
     ("Scripting", &["scripting", "python", "lua", "peripheral", "peripherals"]),
     ("Desktop and apps", &["gui", "desktop", "terminal-app", "files", "editor", "notes", "settings", "store", "pkg", "picker", "chooser", "visual"]),
     ("ePhone", &["phone-guide", "phone"]),

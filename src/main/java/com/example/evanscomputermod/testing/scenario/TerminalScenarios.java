@@ -48,6 +48,14 @@ import java.util.regex.Pattern;
  *   Terminal at (0,1,0) facing north.
  * </pre>
  *
+ * <p>{@code terminal_jobs_vars}: Ctrl+Z stops {@code sleep}, {@code jobs}
+ * shows it Stopped, {@code bg} runs it on, {@code fg} brings it back and
+ * Ctrl+C ends it; {@code $?} after an unknown command is 127; a variable set
+ * with {@code NAME=value} expands (not inside single quotes; an unknown one
+ * is empty); {@code ls --help} shows the manual summary; {@code man -P
+ * shell | less} pages a pipeline's output with keys from the keyboard;
+ * {@code echo -e "\a"} rings the bell (control: no bell before).
+ *
  * <p>Not covered here: drawing the selection, double/triple click and the
  * clipboard happen in the player's own client ({@code TerminalScreen}); the
  * scenario player has no client. The bytes those keys send are checked in
@@ -58,7 +66,7 @@ public final class TerminalScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
-        for (Scenario s : List.of(lineEditing(), scrollback(), manual(), pipes(), repl())) ALL.put(s.name, s);
+        for (Scenario s : List.of(lineEditing(), scrollback(), manual(), pipes(), repl(), jobsAndVariables())) ALL.put(s.name, s);
     }
 
     private TerminalScenarios() {
@@ -325,6 +333,66 @@ public final class TerminalScenarios {
                 .expect("pc", "^  2 4 24$", "wc counts 2 lines, 4 words, 24 bytes")
                 .send("pc", "wc < /home/out.txt")
                 .expect("pc", "^  2 4 24$", "and reads the file with <")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    // ------------------------------------------------------------ terminal_jobs_vars
+
+    private static int bells(ScenarioRun r) {
+        var c = r.computer("pc");
+        return c == null ? -1 : c.bellsRung();
+    }
+
+    private static Scenario jobsAndVariables() {
+        return Scenario.builder("terminal_jobs_vars",
+                        "Ctrl+Z, jobs, bg, fg; $? and variables; <cmd> --help; command | less; the bell")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .note("Ctrl+Z pauses a running program")
+                .send("pc", "sleep 600000")
+                .waitMs(1000, "let it run")
+                .mutate(r -> ctrl(r, 'z'), "press Ctrl+Z")
+                .expect("pc", "^\\[1\\]\\+  Stopped    sleep 600000$", "it is a stopped job")
+                .expect("pc", PlayerKit.PROMPT, "and the prompt is back")
+                .send("pc", "jobs")
+                .expect("pc", "^\\[1\\]  Stopped\\s+sleep 600000$", "jobs lists it Stopped")
+                .send("pc", "bg")
+                .expect("pc", "^\\[1\\]\\+ sleep 600000 &$", "bg lets it run on")
+                .send("pc", "jobs")
+                .expect("pc", "^\\[1\\]  Running\\s+sleep 600000$", "now Running")
+                .send("pc", "fg")
+                .expect("pc", "^sleep 600000$", "fg brings it back")
+                .waitMs(500, "it runs in the foreground")
+                .mutate(r -> ctrl(r, 'c'), "press Ctrl+C")
+                .expect("pc", "^\\^C$", "Ctrl+C ends it")
+                .expect("pc", PlayerKit.PROMPT, "and the prompt is back")
+                .note("$? and variables")
+                .send("pc", "nosuchcmd")
+                .expect("pc", PlayerKit.PROMPT, "unknown command")
+                .send("pc", "echo status=$?")
+                .expect("pc", "^status=127$", "$? is 127 after an unknown command")
+                .send("pc", "NAME=world")
+                .expect("pc", PlayerKit.PROMPT, "set a variable")
+                .send("pc", "echo hello $NAME '$NAME' [$NOTSET]")
+                .expect("pc", "^hello world \\$NAME \\[\\]$", "expanded, not in single quotes, unknown is empty")
+                .note("<command> --help shows its manual summary")
+                .send("pc", "ls --help")
+                .expect("pc", "^ls - list the files in a directory$", "the summary")
+                .expect("pc", "^More: man ls$", "and where to read more")
+                .expect("pc", PlayerKit.PROMPT, "and ends")
+                .note("A pager at the end of a pipeline reads the keyboard")
+                .send("pc", "man -P shell | less")
+                .await(r -> shows(r, " \\(stdin\\) 1-\\d+/\\d+"), "less shows the pipeline's output", 10_000)
+                .mutate(r -> type(r, "G"), "press G")
+                .await(r -> shows(r, "\\(END\\)"), "the keys reach less: the end", 10_000)
+                .mutate(r -> type(r, "q"), "press q")
+                .await(r -> shows(r, LIVE_PROMPT), "back at the prompt", 10_000)
+                .note("The bell")
+                .await(r -> bells(r) == 0 ? null : "bells: " + bells(r), "control: no bell yet", 1_000)
+                .send("pc", "echo -e ring\\a")
+                .expect("pc", "^ring$", "echo printed")
+                .await(r -> bells(r) >= 1 ? null : "no bell", "the bell rang", 5_000)
                 .timeLimit(60_000)
                 .build();
     }

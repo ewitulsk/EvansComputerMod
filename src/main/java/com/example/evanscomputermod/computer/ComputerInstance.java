@@ -451,6 +451,12 @@ public class ComputerInstance implements AutoCloseable {
      */
     /** The framebuffer's bell counter last seen (MIN_VALUE: not read yet). */
     private int lastBellCounter = Integer.MIN_VALUE;
+    private final java.util.concurrent.atomic.AtomicInteger bellsRung = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** How many times the console's bell rang since boot (for checks). */
+    public int bellsRung() {
+        return bellsRung.get();
+    }
 
     private void checkFramebufferDirty() {
         if (memory == null) return;
@@ -476,6 +482,7 @@ public class ComputerInstance implements AutoCloseable {
                 boolean first = lastBellCounter == Integer.MIN_VALUE;
                 lastBellCounter = bells;
                 IComputerHost h = host;
+                if (!first) bellsRung.incrementAndGet();
                 if (!first && h != null && h.getServer() != null) h.getServer().execute(h::bell);
             }
 

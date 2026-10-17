@@ -497,6 +497,12 @@ public final class ScenarioRun {
 
     private final java.util.Map<String, String> notes = new java.util.HashMap<>();
 
+    /** {@code node}'s computer (to check its state), or null. */
+    public com.example.evanscomputermod.computer.ComputerInstance computer(String node) {
+        TerminalBlockEntity t = be(node);
+        return t == null ? null : t.getComputer();
+    }
+
     /** Remember a value between steps (for a later step's check). */
     public void note(String key, String value) {
         notes.put(key, value);

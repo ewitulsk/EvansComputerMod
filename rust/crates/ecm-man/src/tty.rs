@@ -34,9 +34,16 @@ pub fn is_terminal(fd: i32) -> bool {
 /// Print `lines`, or page them full screen when they don't fit and both
 /// ends are the terminal (`force_plain`: always print).
 pub fn show(title: &str, lines: Vec<String>, force_plain: bool) {
+    let keys_are_terminal = is_terminal(0);
+    show_with_keys(title, lines, force_plain || !keys_are_terminal, &mut std::io::stdin().lock());
+}
+
+/// [`show`] with the keys read from `keys` (`/dev/tty` when stdin is the
+/// text being paged).
+pub fn show_with_keys(title: &str, lines: Vec<String>, force_plain: bool, keys_in: &mut dyn Read) {
     let (w, h) = size();
     let mut out = std::io::stdout().lock();
-    if force_plain || lines.len() < h || !is_terminal(0) || !is_terminal(1) {
+    if force_plain || lines.len() < h || !is_terminal(1) {
         for l in &lines {
             let _ = writeln!(out, "{l}");
         }
@@ -48,10 +55,9 @@ pub fn show(title: &str, lines: Vec<String>, force_plain: bool) {
     let _ = write!(out, "\x1b[?1049h\x1b[?25l{}", pager.draw(w, h));
     let _ = out.flush();
     let mut keys = KeyReader::default();
-    let mut stdin = std::io::stdin().lock();
     let mut buf = [0u8; 64];
     'run: loop {
-        let n = match stdin.read(&mut buf) {
+        let n = match keys_in.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
