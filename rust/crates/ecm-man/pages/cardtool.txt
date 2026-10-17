@@ -1,0 +1,74 @@
+NAME
+    cardtool - read, write and print bank, NFC and SIM cards
+
+SYNOPSIS
+    cardtool [info]
+
+    cardtool stripe read | write <t1> <t2> <t3>
+
+    cardtool bank write <issuer> <pan> [--key <hex>|--random]
+        [--pin <digits>] [--pin-required]
+
+    cardtool bank pin <pin> | sign <nonce-hex> [amount]
+
+    cardtool nfc poll | select <uid> | auth <sector> <key> | read <sector>
+
+    cardtool nfc write <sector> <hex> | setkey <sector> <key>
+
+    cardtool nfc field on|off | raw <hex> | rssi
+
+    cardtool print <file.card> | cost <file.card>
+
+    cardtool eject | wait [seconds]
+
+    cardtool sim [info|write|auth|eject|wait] ...
+
+DESCRIPTION
+    Works with the cards in the blocks and modules next to this computer:
+    a Card Reader/Writer (or card reader module), an NFC Reader (or NFC
+    module) and a Card Printer. With no arguments it shows the card in
+    the reader: its kind, its applets and their public state.
+
+    --reader <name>, --nfc <name> and --printer <name> pick a device
+    when there are several (the first of each type otherwise). The nfc
+    verbs use an NFC Reader when one is attached, else the Card
+    Reader/Writer's contact fallback. Bytes are hex strings.
+
+COMMANDS
+    stripe read, stripe write t1 t2 t3
+        The three magnetic stripe tracks ("" for an empty track).
+
+    bank write issuer pan
+        Write a blank bank chip. The key (32 bytes) is --key, or random
+        (the default) and printed once: the card never gives it back.
+        --pin sets a PIN, --pin-required asks for it before signing.
+
+    bank pin, bank sign nonce [amount]
+        Open a PIN session; sign an 8-byte nonce: prints {ctr, tag}.
+
+    nfc poll, select, auth, read, write, setkey
+        The NFC sector lattice: the UIDs in the field, address one card,
+        open a sector with its 16-byte key, read or write its 64 bytes,
+        rekey it.
+
+    print file.card, cost file.card
+        Print a design (made with the Card Designer or the cards module)
+        on the card in the printer; or only list the dyes it would take.
+
+    eject, wait
+        Done with the card (Auto Eject pushes it out); wait for the next
+        card to be inserted or removed.
+
+    sim ...
+        The SIM verbs (info, write imsi carrier, auth challenge, eject,
+        wait), as simtool had them.
+
+EXAMPLES
+      cardtool
+      cardtool bank write VBANK 4000123412341234 --pin 1234
+      cardtool nfc poll
+      cardtool print /home/mycard.card
+      cardtool sim write 310260000000001 Ringtel
+
+SEE ALSO
+    cards, cellular, peripherals, scripting

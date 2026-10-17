@@ -1,0 +1,19 @@
+NAME
+    passwd - set the root password for SSH logins
+
+SYNOPSIS
+    passwd
+
+DESCRIPTION
+    Asks for a new password, then asks for it again. If both match it
+    becomes the password of the user root, which sshd checks when
+    someone logs in to this computer, and passwd prints
+    "Password updated." If they differ it prints "Passwords don't match."
+    and nothing changes. An empty first answer leaves the password as it
+    is ("Password not changed.").
+
+EXAMPLES
+      passwd
+
+SEE ALSO
+    sshd, ssh

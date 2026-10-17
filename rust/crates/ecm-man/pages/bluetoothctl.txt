@@ -1,0 +1,47 @@
+NAME
+    bluetoothctl - the Bluetooth radio from the console
+
+SYNOPSIS
+    bluetoothctl [show]
+
+    bluetoothctl devices | scan [SECONDS]
+
+    bluetoothctl pair DEVICE | connect DEVICE | remove DEVICE
+
+    bluetoothctl disconnect | power on|off
+
+DESCRIPTION
+    Works the computer's bluetooth peripheral (an ePhone has one), as
+    Settings > Bluetooth does. DEVICE is an address or part of a name.
+
+COMMANDS
+    show
+        The radio: its name and address, what is connected and where
+        the sound goes.
+
+    devices
+        The paired devices.
+
+    scan [SECONDS]
+        Devices nearby (default 5 s): open an AirPods case's lid to see
+        them.
+
+    pair DEVICE
+        Pair (then it connects).
+
+    connect DEVICE, disconnect
+        Connect a paired device; disconnect it (it stays paired).
+
+    remove DEVICE
+        Forget a paired device.
+
+    power on, power off
+        Switch the radio.
+
+EXAMPLES
+      bluetoothctl scan
+      bluetoothctl pair AirPods
+      bluetoothctl
+
+SEE ALSO
+    bluetooth, voice, settings

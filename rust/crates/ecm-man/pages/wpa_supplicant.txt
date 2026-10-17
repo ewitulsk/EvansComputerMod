@@ -1,0 +1,62 @@
+NAME
+    wpa_supplicant - keep wlan0 connected to Wi-Fi networks (daemon)
+
+SYNOPSIS
+    wpa_supplicant [-B] [-d] -i wlan0 [-c config] [-f logfile]
+        [-D packet|ctl]
+
+DESCRIPTION
+    Reads the networks in its config file and keeps wlan0 joined to
+    the best one in range: it scans, associates, does the WPA2 4-way
+    handshake (or joins an open network), and scans again and
+    reconnects when the link drops. Its state is in
+    /run/wpa_supplicant.wlan0.status; control it with wpa_cli.
+
+    It does not configure an address: get one with dhclient wlan0 (or
+    an iface wlan0 dhcp line in /network.cfg).
+
+    For a quick one-off connection, wifi connect is simpler.
+
+OPTIONS
+    -B
+        Run in the background; the shell returns to the prompt.
+        Without -f, it logs nothing then.
+
+    -d
+        Debug log lines.
+
+    -i wlan0
+        The interface (required; only wlan0 exists).
+
+    -c config
+        The config file (default /etc/wpa_supplicant.conf).
+
+    -f logfile
+        Append the log to this file.
+
+    -D packet|ctl
+        How EAPOL frames are sent: a packet socket, or the kernel's
+        Wi-Fi control channel. Default: a packet socket if possible.
+
+FILES
+    /etc/wpa_supplicant.conf
+        Global key=value lines and network blocks:
+
+      network={
+          ssid="ecm-lab"
+          psk="correct horse"
+          priority=5
+      }
+
+        In a block: ssid ("name" or hex), psk (a passphrase of 8-63
+        characters in quotes, or 64 hex digits), key_mgmt (NONE for an
+        open network; WPA-PSK is the default when psk is set), bssid
+        (only that Access Point), priority (higher wins), disabled=1.
+
+EXAMPLES
+      wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+      dhclient wlan0
+      wpa_cli status
+
+SEE ALSO
+    wpa_cli, wifi, iw, dhclient, networking

@@ -1,0 +1,35 @@
+NAME
+    resolvectl - test name resolution
+
+SYNOPSIS
+    resolvectl query <hostname>
+    resolvectl status
+
+DESCRIPTION
+    resolvectl query looks a name up exactly the way every program does
+    (/etc/hosts, then the DNS servers and search domains of
+    /etc/resolv.conf, or the kernel's DNS server) and prints the
+    address, or Resolution failed.
+
+    resolvectl status only prints a short reminder; to see the DNS
+    settings, read /etc/resolv.conf.
+
+FILES
+    /etc/resolv.conf
+        nameserver lines (up to three, tried in order), search domains
+        and options ndots:N. The kernel writes it from DHCP; once you
+        edit it (removing the kernel's first line) it is yours and is
+        left alone.
+
+    /etc/hosts
+        address name [aliases] lines, checked first.
+
+    /network.cfg
+        A dns line sets the DNS server when there is no resolv.conf.
+
+EXAMPLES
+      resolvectl query web.v4.ring
+      resolvectl query web
+
+SEE ALSO
+    nslookup, dig, dhclient, networking

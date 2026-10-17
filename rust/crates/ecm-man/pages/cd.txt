@@ -1,0 +1,26 @@
+NAME
+    cd - change the current directory
+
+SYNOPSIS
+    cd [dir]
+
+DESCRIPTION
+    Makes dir the current directory: the place relative paths start
+    from, and the directory shown in the prompt. With no argument, or
+    with /, cd goes back to the root of the computer's storage.
+
+    dir can be relative to the current directory or start with / to
+    start at the root. .. means the parent directory and . the current
+    one. If dir is not an existing directory, cd prints
+    "cd: dir: No such directory" and stays where it is.
+
+    cd is built into the shell, so it cannot be used in a pipeline.
+
+EXAMPLES
+      cd home
+      cd ..
+      cd /home/projects
+      cd
+
+SEE ALSO
+    pwd, ls, mkdir, shell, filesystem

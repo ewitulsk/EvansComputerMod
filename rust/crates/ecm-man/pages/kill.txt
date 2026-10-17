@@ -1,0 +1,24 @@
+NAME
+    kill - stop a process by its PID
+
+SYNOPSIS
+    kill pid
+
+DESCRIPTION
+    Stops the process with the given process id at once. Find the PID
+    with ps, or in the "[job] pid" line the shell prints when you start a
+    program with &. kill prints "Process killed." on success and
+    "Failed to kill process." if there is no such process. There are no
+    signals: the process is always terminated.
+
+    To stop the program in the foreground, press Ctrl+T instead.
+
+    kill is built into the shell, so it cannot be used in a pipeline.
+
+EXAMPLES
+      httpd 8080 &
+      [1] 4
+      kill 4
+
+SEE ALSO
+    ps, jobs, fg, shell

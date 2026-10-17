@@ -1,0 +1,24 @@
+NAME
+    bg - let a stopped job run on in the background
+
+SYNOPSIS
+    bg [%job | pid]
+
+DESCRIPTION
+    A program paused with Ctrl+Z is a stopped job. bg lets it go on
+    running in the background, as if it had been started with &; the
+    prompt stays yours. Without an argument it takes the newest job.
+    It prints the job as "[1]+ command &".
+
+    "bg: no such job" means there is no job by that name, and "bg: job
+    already in background" that it is already running.
+
+EXAMPLES
+      sleep 600000
+      (Ctrl+Z)
+      [1]+  Stopped    sleep 600000
+      bg
+      [1]+ sleep 600000 &
+
+SEE ALSO
+    fg, jobs, keys, shell

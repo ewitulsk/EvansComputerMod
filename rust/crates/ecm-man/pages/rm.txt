@@ -1,0 +1,24 @@
+NAME
+    rm - delete files or directories
+
+SYNOPSIS
+    rm [-r] file ...
+
+DESCRIPTION
+    Deletes each file named. There is no trash: deleted files are gone.
+    A name that does not exist prints
+    "rm: file: No such file or directory" and rm goes on with the rest.
+    A directory is only deleted with -r.
+
+OPTIONS
+    -r
+        Also delete directories, with everything inside them. -rf and
+        -fr are accepted as the same thing.
+
+EXAMPLES
+      rm old.txt
+      rm a.txt b.txt c.txt
+      rm -r /home/scratch
+
+SEE ALSO
+    mkdir, mv, ls, filesystem

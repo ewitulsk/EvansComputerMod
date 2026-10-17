@@ -1,0 +1,28 @@
+NAME
+    ls - list the files in a directory
+
+SYNOPSIS
+    ls [-l] [path]
+
+DESCRIPTION
+    Lists the files and directories in path (the current directory if
+    none is given), sorted by name, one per line. Directories end with a
+    slash. An empty directory prints (empty).
+
+OPTIONS
+    -l
+        Long listing: a d (directory) or f (file) column, and the size of
+        each file (B, KB or MB).
+
+EXAMPLES
+      ls
+      ls -l /home
+      ls bin
+
+NOTES
+    Paths are relative to the current directory (see cd and pwd); a path
+    starting with / starts at the root of the computer's storage.
+    Programs you can run live in /bin and /server-bin.
+
+SEE ALSO
+    cd, pwd, cat, mkdir, rm, files

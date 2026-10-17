@@ -1,0 +1,87 @@
+NAME
+    cellular - mobile phone networks: towers, carrier cores, SIM cards
+
+DESCRIPTION
+    Cell networks are built by players from ordinary parts, and all
+    the logic runs as programs on computers, as in real networks:
+
+      ePhone / Terminal         cell site                carrier core
+      modem + SIM + celld  ~~>  antenna, Advanced SDR,  --IP-->  cored
+                                computer: celld-site
+
+    A phone attaches to a cell site of its SIM's carrier. The site
+    relays the phone's traffic, in an encrypted tunnel over any IP
+    network, to the carrier core, which checks the SIM, gives the phone
+    its IP address and connects it to the rest of your network. When
+    the phone moves to another site the core switches the tunnel, so
+    the phone keeps its address.
+
+CELL SITES (TOWERS)
+    A cell site is an LTE Sector Antenna (or mmWave Array Antenna) on a
+    mast, connected by Coax Cable to its bottom jack from an Advanced
+    SDR, which touches a computer running celld-site. The SDR runs in
+    framed mode, where the radio itself does the cellular signal work.
+    The sector panel sends where it faces. LTE (channels 1-6, around
+    700-840 MHz) goes through a few walls and far; mmWave (28 GHz,
+    channels 1-4) is fast but stopped by a block of stone. Give
+    neighbouring sites different channels. The Cell Site app (cellsite)
+    shows a site in a window.
+
+THE CARRIER CORE
+    One computer per carrier runs cored. Its database file holds the
+    carrier's name, the phones' address pool, the registered sites
+    (each with a secret credential) and the subscribers (each SIM's
+    IMSI and key, quota, revoked or not). The core needs an IP route
+    to every site (cables, routers, anything). The Carrier Console app
+    (carrier) manages it in a window.
+
+SIM CARDS
+    A SIM card is blank until written. Writing gives it a carrier, an
+    IMSI (its number) and a secret key that is stored on the card and
+    in the core's database and can never be read back. Write SIMs in a
+    Card Reader/Writer placed against the core's computer: put a blank
+    SIM in (right-click the reader with it) and run cored sim new; the
+    card is then released for you to take (or pushed into a chest when
+    the reader's Auto Eject is on). cardtool writes cards by hand.
+
+PHONES
+    An ePhone needs an LTE Modem (or mmWave Modem) in a module slot and
+    a written SIM in its SIM tray (sneak + right-click the phone for
+    its slot screen). It then runs celld by itself and its status bar
+    shows the carrier and signal bars. A Terminal can be a phone too:
+    fit a modem in a module bay (right-click the computer with a Module
+    Expansion Card, then the modem), right-click the modem's bay with
+    the SIM, and run celld &. celld makes the interface wwan0; check it
+    with cell, cell scan, or Settings > Cellular.
+
+BUILDING A NETWORK
+    1. Cable the core's computer to the site's computer (or route
+    between them) and give both addresses (ifconfig).
+
+    2. On the core: cored init cell-red 100.65.2.0/24, then
+    cored site add site-a (note the secret it prints), then
+    cored start &.
+
+    3. On the site: celld-site config set site_id site-a secret
+    <secret> carrier cell-red core <core address> cell_id 1
+    channel 3, then celld-site start &. celld-site status should
+    show the link up; cored sites lists site-a as connected.
+
+    4. A blank SIM in the core's Card Reader/Writer, then
+    cored sim new --label alice; take the card.
+
+    5. Put an LTE Modem and the SIM in an ePhone and walk within range
+    of the antenna: cell shows connected, and the phone can ping the
+    core.
+
+    6. To reach other machines, let the core forward (the router
+    service's ip routing) and route the pool to the core on your
+    LAN (ip route add 100.65.2.0/24 via <core address>).
+
+    celld-site enable and cored enable start them at boot. Tech
+    Villages come with a carrier network already built, and their
+    Phone Store has ready ePhones and free SIM cards.
+
+SEE ALSO
+    cell, celld, celld-site, cored, cellsite, carrier, cardtool, framed,
+    radio, phone

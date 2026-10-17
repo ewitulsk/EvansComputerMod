@@ -1,0 +1,33 @@
+NAME
+    beep - play a tone on a speaker
+
+SYNOPSIS
+    beep [hz] [ms] [--wave type] [--volume n] [--speaker side]
+
+DESCRIPTION
+    Plays one tone on a Speaker next to the computer: hz is the pitch
+    (20 to 20000, default 440) and ms the length in milliseconds (1 to
+    60000, default 200). The tone fades in and out over 5 ms so it does
+    not click. Without a speaker, beep says
+    "place a Speaker next to the computer." and exits with code 1.
+
+OPTIONS
+    --wave type
+        The sound of the tone: square (the default), sine, triangle or
+        saw.
+
+    --volume n
+        The speaker's volume, 0 to 100.
+
+    --speaker side
+        Which speaker to use when there are several, by the side it is
+        attached on (left, right, ..., or a module bay such as
+        left_bay_1). Default: the first speaker.
+
+EXAMPLES
+      beep
+      beep 880 500
+      beep 262 1000 --wave sine --volume 50
+
+SEE ALSO
+    aplay, peripherals

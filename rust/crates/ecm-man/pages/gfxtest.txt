@@ -1,0 +1,35 @@
+NAME
+    gfxtest - graphics demo for the terminal or a Screen wall
+
+SYNOPSIS
+    gfxtest [size]
+    gfxtest screen [size]
+
+DESCRIPTION
+    Runs a short graphics test: color bars, rectangles, an animation, a
+    bouncing ball and finally text drawn over the graphics (overlay
+    mode), then prints "Graphics test complete." It starts one second
+    after you run it. Press Ctrl+T to stop it at any time.
+
+    Without screen it draws on the terminal's own graphics layer, 320x200
+    by default. With screen (or monitor) it draws on the Screen wall
+    attached to the computer, at the wall's own pixel size by default; if
+    none is attached it says so.
+
+    gfxtest is built into the shell. It only works on the computer's own
+    console, not over SSH.
+
+OPTIONS
+    size
+        The resolution: 320 (320x200), 640 (640x400) or WxH, for example
+        480x270. Too large a size for the display stops the test with
+        "Resolution too large for this display."
+
+EXAMPLES
+      gfxtest
+      gfxtest 640
+      gfxtest screen
+      gfxtest screen 256x144
+
+SEE ALSO
+    player, video, shell

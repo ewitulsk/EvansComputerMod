@@ -2,9 +2,13 @@
 //! (`ipc_spawn_shell`, the same sessions `sshd` uses). Output goes through
 //! `ecm-vte`, the console's own VT100 parser, and is drawn with the `mono`
 //! font as text nodes (one per run of equal colours), with a scrollback,
-//! mouse selection, and copy / paste through the clipboard service:
-//! Ctrl+Shift+C / Ctrl+Shift+V (Shift+Insert pastes too), or the right-click
-//! menu. The window's size sets the session's size (`session_resize`).
+//! mouse selection (drag, double click a word, triple click a line), and
+//! copy / paste through the clipboard service: Ctrl+Shift+C or Ctrl+Insert /
+//! Ctrl+Shift+V or Shift+Insert, or the right-click menu. Shift+PgUp/PgDn,
+//! Shift+Up/Down, Shift+Home/End and the wheel scroll back (a full-screen
+//! program gets the wheel as arrows). The line editing itself is the shell
+//! session's (`ecm-lineedit`). The window's size sets the session's size
+//! (`session_resize`).
 
 use crate::sys::Sys;
 use ecm_ui::diff::SceneNode;
@@ -59,13 +63,15 @@ pub struct Term {
     sent_size: Option<(u16, u16)>,
     /// The grid's padding in the current window (`pad_for`).
     pub pad: i32,
+    /// The last left click (time in ms, cell) and how many came in a row.
+    last_click: (i64, Pos, u8),
 }
 
 impl Term {
     pub fn new(session: i32, cols: u16, rows: u16) -> Term {
         let mut vte = Vte::new_virtual(cols, rows);
         vte.set_scrollback_max(SCROLLBACK);
-        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false, sent_size: None, pad: PAD }
+        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false, sent_size: None, pad: PAD, last_click: (0, (0, 0), 0) }
     }
 
     /// The absolute number of the first line still in the scrollback.
@@ -131,6 +137,29 @@ impl Term {
         let top = self.top() as i64 + rows;
         let top = top.clamp(self.first_line() as i64, self.screen_top() as i64) as u64;
         self.view_top = if top >= self.screen_top() { None } else { Some(top) };
+    }
+
+    /// Select the word at `p` (letters, digits and `_-./:~@`), or with
+    /// `line` the whole line.
+    pub fn select_word(&mut self, p: Pos, line: bool) {
+        let cells = self.line(p.0);
+        let word = |c: u8| c.is_ascii_alphanumeric() || b"_-./:~@".contains(&c);
+        if line {
+            self.sel = Some(((p.0, 0), (p.0, self.cols as usize)));
+            return;
+        }
+        let x = p.1.min(cells.len().saturating_sub(1));
+        if !cells.get(x).is_some_and(|c| word(c.0)) {
+            return;
+        }
+        let (mut a, mut b) = (x, x + 1);
+        while a > 0 && word(cells[a - 1].0) {
+            a -= 1;
+        }
+        while b < cells.len() && word(cells[b].0) {
+            b += 1;
+        }
+        self.sel = Some(((p.0, a), (p.0, b)));
     }
 
     /// Change the grid; returns true if it changed.
@@ -247,6 +276,17 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
             ));
         }
     }
+    if t.view_top.is_some() {
+        let tag = format!(" -{} ", t.screen_top() - top);
+        let tw = tag.len() as i32 * CELL_W;
+        let x = w - pad - tw;
+        out.push(SceneNode::new("scrolltagb", NodeKind::Rect, vec![Prop::X(x), Prop::Y(pad), Prop::W(tw), Prop::H(CELL_H), Prop::Fill(theme.text)]));
+        out.push(SceneNode::new(
+            "scrolltag",
+            NodeKind::Text,
+            vec![Prop::X(x), Prop::Y(pad), Prop::Text(tag), Prop::Font(proto::Font::Mono), Prop::Size(16), Prop::Color(theme.bg)],
+        ));
+    }
     if t.exited {
         let msg = "[session ended - close the window]";
         out.push(SceneNode::new(
@@ -258,42 +298,53 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
     out
 }
 
-/// Bytes a key sends to the session (None: not a terminal key).
+/// Bytes a key sends to the session (None: not a terminal key), as xterm
+/// does: Ctrl+letters as control characters, the cursor and editing keys
+/// with the modifier parameter (`ESC[1;5D` is Ctrl+Left), F1-F12.
 pub fn key_bytes(key: u16, mods: u16) -> Option<Vec<u8>> {
     let ctrl = mods & proto::mods::CTRL != 0;
     let alt = mods & proto::mods::ALT != 0;
+    let shift = mods & proto::mods::SHIFT != 0;
     if ctrl && (0x04..=0x1d).contains(&key) {
         // Ctrl+A .. Ctrl+Z
         return Some(vec![(key - 0x04 + 1) as u8]);
     }
-    let seq: &[u8] = match key {
-        keys::ENTER | keys::KP_ENTER => b"\r",
-        keys::BACKSPACE => b"\x7f",
-        keys::TAB => b"\t",
-        keys::ESCAPE => b"\x1b",
-        keys::UP => b"\x1b[A",
-        keys::DOWN => b"\x1b[B",
-        keys::RIGHT => b"\x1b[C",
-        keys::LEFT => b"\x1b[D",
-        keys::HOME => b"\x1b[H",
-        keys::END => b"\x1b[F",
-        keys::INSERT => b"\x1b[2~",
-        keys::DELETE => b"\x1b[3~",
-        keys::PAGE_UP => b"\x1b[5~",
-        keys::PAGE_DOWN => b"\x1b[6~",
+    let m = 1 + shift as u8 + 2 * alt as u8 + 4 * ctrl as u8;
+    let csi = |fin: &str| if m == 1 { format!("\x1b[{fin}") } else { format!("\x1b[1;{m}{fin}") };
+    let tilde = |n: &str| if m == 1 { format!("\x1b[{n}~") } else { format!("\x1b[{n};{m}~") };
+    let seq: String = match key {
+        keys::ENTER | keys::KP_ENTER => "\r".into(),
+        keys::BACKSPACE if alt => "\x1b\x7f".into(),
+        keys::BACKSPACE => "\x7f".into(),
+        keys::TAB if shift => "\x1b[Z".into(),
+        keys::TAB => "\t".into(),
+        keys::ESCAPE => "\x1b".into(),
+        keys::UP => csi("A"),
+        keys::DOWN => csi("B"),
+        keys::RIGHT => csi("C"),
+        keys::LEFT => csi("D"),
+        keys::HOME => csi("H"),
+        keys::END => csi("F"),
+        keys::INSERT => tilde("2"),
+        keys::DELETE => tilde("3"),
+        keys::PAGE_UP => tilde("5"),
+        keys::PAGE_DOWN => tilde("6"),
+        // F1-F4 (HID 0x3a-0x3d), F5-F12.
+        0x3a..=0x3d => {
+            let c = (b'P' + (key - 0x3a) as u8) as char;
+            if m == 1 { format!("\x1bO{c}") } else { format!("\x1b[1;{m}{c}") }
+        }
+        0x3e..=0x45 => tilde(["15", "17", "18", "19", "20", "21", "23", "24"][(key - 0x3e) as usize]),
         _ => return None,
     };
-    let mut v = Vec::new();
-    if alt {
-        v.push(0x1b);
-    }
-    v.extend_from_slice(seq);
-    Some(v)
+    Some(seq.into_bytes())
 }
 
-/// Clipboard text as session input (newlines become Enter).
+/// Clipboard text as session input: newlines become Enter, and the whole
+/// is marked as a paste (bracketed paste) so a Tab or key in it is only text.
 pub fn paste_bytes(s: &str) -> Vec<u8> {
-    s.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+    let body = s.replace("\r\n", "\r").replace('\n', "\r").replace('\x1b', "");
+    format!("\x1b[200~{body}\x1b[201~").into_bytes()
 }
 
 type TermRef = Rc<RefCell<Term>>;
@@ -334,6 +385,11 @@ pub fn pump(term: &TermRef, sys: &SysRef) -> bool {
         // A scrolled-back view stays where it was.
         t.view_top = top_before;
         changed = true;
+        // Answers to the program's queries (cursor position, size).
+        let replies = t.vte.take_responses();
+        if !replies.is_empty() {
+            sys.borrow_mut().session_write(id, &replies);
+        }
     }
     if !changed {
         let id = t.session;
@@ -343,6 +399,11 @@ pub fn pump(term: &TermRef, sys: &SysRef) -> bool {
         }
     }
     changed
+}
+
+/// Wall-clock milliseconds (for double clicks).
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 fn cell_at(t: &Term, p: &PointerEv) -> Pos {
@@ -435,7 +496,7 @@ fn on_key(cx: &mut Ctx, term: &TermRef, sys: &SysRef, e: &ecm_ui::UiEvent) {
     let EventValue::Key { key, mods, down: true, .. } = e.value else { return };
     let ctrl = mods & proto::mods::CTRL != 0;
     let shift = mods & proto::mods::SHIFT != 0;
-    if ctrl && shift && key == keys::C {
+    if (ctrl && shift && key == keys::C) || (ctrl && key == keys::INSERT) {
         let s = term.borrow().selected_text();
         if !s.is_empty() {
             cx.copy(&s);
@@ -446,12 +507,22 @@ fn on_key(cx: &mut Ctx, term: &TermRef, sys: &SysRef, e: &ecm_ui::UiEvent) {
         cx.paste_into("term");
         return;
     }
-    if shift && (key == keys::PAGE_UP || key == keys::PAGE_DOWN) {
+    if shift && !ctrl && matches!(key, keys::PAGE_UP | keys::PAGE_DOWN | keys::UP | keys::DOWN | keys::HOME | keys::END) {
         let mut t = term.borrow_mut();
-        let page = t.rows as i64 - 1;
-        t.scroll(if key == keys::PAGE_UP { -page } else { page });
-        cx.invalidate();
-        return;
+        if !t.vte.alternate_screen() {
+            let page = t.rows as i64 - 1;
+            let by = match key {
+                keys::PAGE_UP => -page,
+                keys::PAGE_DOWN => page,
+                keys::UP => -1,
+                keys::DOWN => 1,
+                keys::HOME => i64::MIN / 2,
+                _ => i64::MAX / 2,
+            };
+            t.scroll(by);
+            cx.invalidate();
+            return;
+        }
     }
     if let Some(b) = key_bytes(key, mods) {
         send(term, sys, &b);
@@ -464,8 +535,17 @@ fn on_pointer(cx: &mut Ctx, term: &TermRef, sys: &SysRef, p: &PointerEv) {
         proto::PointerKind::Down if p.button == proto::Button::Left => {
             let mut t = term.borrow_mut();
             let at = cell_at(&t, p);
-            t.sel = Some((at, at));
-            t.selecting = true;
+            let now = now_ms();
+            let (last, pos, n) = t.last_click;
+            let n = if now - last < 400 && pos == at { n % 3 + 1 } else { 1 };
+            t.last_click = (now, at, n);
+            if n >= 2 {
+                t.select_word(at, n == 3);
+                t.selecting = false;
+            } else {
+                t.sel = Some((at, at));
+                t.selecting = true;
+            }
             cx.invalidate();
         }
         proto::PointerKind::Down if p.button == proto::Button::Right => {
@@ -508,6 +588,12 @@ fn on_pointer(cx: &mut Ctx, term: &TermRef, sys: &SysRef, p: &PointerEv) {
             }
         }
         proto::PointerKind::Scroll => {
+            if term.borrow().vte.alternate_screen() {
+                // A full-screen program scrolls itself: three arrows.
+                let arrow: &[u8] = if p.scroll_y < 0 { b"\x1b[A" } else { b"\x1b[B" };
+                send(term, sys, &arrow.repeat(3));
+                return;
+            }
             term.borrow_mut().scroll(p.scroll_y as i64 * 3);
             cx.invalidate();
         }
@@ -526,7 +612,25 @@ mod tests {
         assert_eq!(key_bytes(keys::UP, 0).unwrap(), b"\x1b[A");
         assert_eq!(key_bytes(keys::BACKSPACE, 0).unwrap(), b"\x7f");
         assert!(key_bytes(0x04, 0).is_none(), "letters come as text");
-        assert_eq!(paste_bytes("ls\necho hi\r\n"), b"ls\recho hi\r");
+        assert_eq!(paste_bytes("ls\necho hi\r\n"), b"\x1b[200~ls\recho hi\r\x1b[201~");
+        assert_eq!(key_bytes(keys::LEFT, proto::mods::CTRL).unwrap(), b"\x1b[1;5D", "Ctrl+Left: word left");
+        assert_eq!(key_bytes(keys::PAGE_UP, proto::mods::SHIFT).unwrap(), b"\x1b[5;2~");
+        assert_eq!(key_bytes(keys::HOME, 0).unwrap(), b"\x1b[H");
+        assert_eq!(key_bytes(0x3a, 0).unwrap(), b"\x1bOP", "F1");
+        assert_eq!(key_bytes(0x45, 0).unwrap(), b"\x1b[24~", "F12");
+    }
+
+    #[test]
+    fn double_click_selects_a_word_and_triple_a_line() {
+        let mut t = Term::new(1, 30, 3);
+        t.vte.write(b"ping 10.0.0.2 now");
+        t.select_word((0, 7), false);
+        assert_eq!(t.selected_text(), "10.0.0.2");
+        t.select_word((0, 7), true);
+        assert_eq!(t.selected_text(), "ping 10.0.0.2 now");
+        t.sel = None;
+        t.select_word((0, 4), false);
+        assert_eq!(t.sel, None, "a space selects nothing");
     }
 
     #[test]

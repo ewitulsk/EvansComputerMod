@@ -1,0 +1,63 @@
+NAME
+    video - show, list and play video files
+
+SYNOPSIS
+    video info file
+    video ls [dir ...]
+    video play file [--screen] [--size WxH] [--start seconds] [--loop]
+               [--mute]
+
+DESCRIPTION
+    Works with video files from the command line. The host decodes the
+    video (FFmpeg), so the server needs the evanscomputermod-ffmpeg
+    add-on; without it video says video isn't installed. The desktop
+    has the same player as an app, Video Player (videoplayer).
+
+COMMANDS
+    info file
+        The video's size, frame rate, number of frames, length and its
+        sound (rate and mono or stereo, or none).
+
+    ls [dir ...]
+        The video files (.mp4 .m4v .mkv .webm .mov .avi) in the given
+        directories, default /home and /home/videos, with their file
+        size, length, picture size and whether they have sound.
+
+    play file
+        Plays the video on the terminal's graphics layer, with its sound
+        on the computer's first speaker if there is one. It prints what
+        it plays first and, at the end, how many frames it showed (and
+        how many came late). Ctrl+T stops it.
+
+OPTIONS
+    --screen
+        Play on the Screen wall attached to the computer, at the wall's
+        size, instead of the terminal.
+
+    --size WxH
+        The box the picture is fitted into on the terminal, each side 2
+        to 4096 (default 320x200).
+
+    --start seconds
+        Start that far into the video.
+
+    --loop
+        Start again from the beginning at the end, until Ctrl+T.
+
+    --mute
+        No sound.
+
+NOTES
+    File names are taken from the root of the computer's storage, not
+    from the current directory: write /home/clip.mp4 even when you are
+    in /home.
+
+EXAMPLES
+      video ls
+      video info /home/videos/trailer.mp4
+      video play /home/videos/trailer.mp4
+      video play /home/clip.mp4 --screen --loop --mute
+      video play /home/clip.mp4 --start 90 --size 160x90
+
+SEE ALSO
+    videoplayer, player, aplay, upload

@@ -1,0 +1,59 @@
+NAME
+    wifi - join a Wi-Fi network the easy way
+
+SYNOPSIS
+    wifi [status]
+    wifi scan
+    wifi connect <ssid> [password]
+    wifi disconnect
+    wifi mode wifi|controller
+
+DESCRIPTION
+    wifi uses the computer's Wi-Fi Module (wlan0) to join the networks
+    of Access Points. It does everything in order and, when something
+    is missing, stops and says what is wrong and how to fix it.
+
+COMMANDS
+    status (or nothing)
+        What wlan0 is doing: the network, signal and address.
+
+    scan
+        The networks in range, with signal, channel and security.
+
+    connect <ssid> [password]
+        Join a network and get an address. It checks that there is a
+        Wi-Fi Module in a bay, that it is in Wi-Fi mode, that wlan0 is
+        not in monitor mode, that the network is in range, that a
+        password is given if the network needs one and that the Access
+        Point accepts it (WPA2), then gets an address by DHCP from the
+        network. Put a password with spaces in quotes. The network is
+        saved in /etc/wpa_supplicant.conf. If the link drops later, run
+        it again, or use wpa_supplicant -B for a daemon that
+        reconnects by itself.
+
+    disconnect
+        Leave the network (stopping a wpa_supplicant daemon) and
+        release the address.
+
+    mode wifi|controller
+        Switch the Wi-Fi Module between Wi-Fi and being a receiver for
+        Wireless Controllers.
+
+FILES
+    /etc/wpa_supplicant.conf
+        Networks you joined (see wpa_supplicant).
+
+EXAMPLES
+      wifi scan
+      wifi connect ecm-lab "correct horse"
+      wifi connect CoffeeShop
+      wifi
+      wifi disconnect
+
+NOTES
+    A Wi-Fi Module goes in a module bay: hold a Module Expansion Card
+    and right-click a side of the computer (not the screen) to fit a
+    bay, then right-click the same side with the Wi-Fi Module.
+
+SEE ALSO
+    iw, wpa_supplicant, wpa_cli, dhclient, networking

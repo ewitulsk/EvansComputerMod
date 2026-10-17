@@ -87,6 +87,8 @@ pub fn core_apps() -> Vec<LaunchItem> {
         item("Settings", "settings", "settings"),
         item("Notes", "notes", "notes"),
         item("Visual Programmer", "visual", "visual"),
+        // Not an app: the compositor goes back to the console (the GUI keeps running).
+        item("Console", "console", "terminal"),
     ]
 }
 

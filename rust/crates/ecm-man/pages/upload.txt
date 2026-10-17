@@ -1,0 +1,30 @@
+NAME
+    upload - copy a file from your real computer into this one
+
+SYNOPSIS
+    upload [dir]
+    upload status
+
+DESCRIPTION
+    Opens your own system's file picker in your game. The file you pick
+    is copied into dir on this computer (/home if no dir is given),
+    keeping its name; if that name is taken, " (1)", " (2)", ... is
+    added. While the file arrives upload shows how much has been
+    received, then prints "upload: saved path". Ctrl+T stops waiting.
+
+    Uploading needs the evanscomputermod-upload add-on, both on the
+    server and in your game. The server may limit the file size and who
+    may upload; upload prints the reason when it is not allowed.
+
+COMMANDS
+    status
+        Say whether you can upload to this computer right now (exit code
+        0 if you can, 1 if not).
+
+EXAMPLES
+      upload
+      upload /home/videos
+      upload status
+
+SEE ALSO
+    filesystem, files, video, aplay

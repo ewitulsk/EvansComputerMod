@@ -1,0 +1,62 @@
+NAME
+    ifconfig - show or set up network interfaces
+
+SYNOPSIS
+    ifconfig
+    ifconfig <iface> <ip>/<prefix>
+    ifconfig <iface> dhcp
+    ifconfig <iface> up|down
+    ifconfig <iface> vlan <id>|off
+
+DESCRIPTION
+    With no arguments, lists every network interface: its name (eth0,
+    eth1, ..., wlan0), whether it is UP or DOWN, its MAC address (ether),
+    its 802.1Q VLAN tag if it has one, and its IPv4 address with prefix
+    length (inet).
+
+    With an interface name and a setting, changes that interface. The
+    kernel saves every change in /network.cfg, so it is still there
+    after a reboot.
+
+    ifconfig <iface> on its own currently lists every interface, the
+    same as ifconfig with no arguments.
+
+OPTIONS
+    <ip>/<prefix>
+        Give the interface this address, for example 10.0.0.5/24. The
+        route to the attached subnet is added automatically.
+
+    dhcp
+        Start the kernel's DHCP client on the interface. It keeps
+        running (and renewing) in the background; follow it with
+        dhclient -s <iface>.
+
+    up, down
+        Turn the interface on or off.
+
+    vlan <id>
+        Tag every frame the interface sends with VLAN id (1-4094) and
+        accept only frames with that tag. Plug a tagged interface into
+        a switch trunk port that allows the VLAN, not an access port.
+
+    vlan off
+        Send and accept untagged frames again (the default).
+
+FILES
+    /network.cfg
+        Saved interface settings, read at boot (see networking).
+
+EXAMPLES
+      ifconfig
+      ifconfig eth0 192.168.1.20/24
+      ifconfig eth1 dhcp
+      ifconfig eth2 down
+      ifconfig eth0 vlan 10
+
+NOTES
+    A terminal's network ports are its faces: eth0 is the DOWN face and
+    eth1 the UP face; use the Interface Probe on a face to see its name.
+    To add a default route use ip route add.
+
+SEE ALSO
+    ip, dhclient, ping, networking, switch
