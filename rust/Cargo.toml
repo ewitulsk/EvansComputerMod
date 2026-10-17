@@ -17,6 +17,7 @@ members = [
     "crates/ecm-cards",
     "crates/ecm-cell-net",
     "crates/ecm-cell-ui",
+    "crates/ecm-tel-ui",
     "crates/ecm-chat",
     "crates/ecm-discord",
     "crates/ecm-auth",
@@ -185,6 +186,7 @@ ecm-js = { path = "crates/ecm-js" }
 ecm-tel = { path = "crates/ecm-tel" }
 ecm-rtp = { path = "crates/ecm-rtp" }
 ecm-tel-net = { path = "crates/ecm-tel-net" }
+ecm-tel-ui = { path = "crates/ecm-tel-ui" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

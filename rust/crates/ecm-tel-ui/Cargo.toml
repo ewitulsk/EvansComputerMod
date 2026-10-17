@@ -1,0 +1,18 @@
+[package]
+name = "ecm-tel-ui"
+version = "0.1.0"
+edition = "2021"
+description = "The phone's telephony apps on ecm-ui: Phone (dev.ecm.dialer), Messages (dev.ecm.messages) and Contacts (dev.ecm.contacts), all over telephonyd's control socket. Logic and windows, tested on the host; the programs dialer, messages and contacts run them."
+
+[lib]
+name = "ecm_tel_ui"
+doctest = false
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell-net = { path = "../ecm-cell-net" }
+ecm-host-abi = { workspace = true }

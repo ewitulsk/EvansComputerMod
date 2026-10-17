@@ -534,6 +534,12 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
             if (vpath.equals("/etc/pkg/signing.key")) return false;
             return decide(i, "packages", true, pid);
         }
+        // the address book (Contacts, docs/TELEPHONY.md): its own permission, not documents'
+        if (under(vpath, "/home/.contacts")) {
+            return declared.contains("contacts") && decide(i, "contacts", true, pid);
+        }
+        // the phone's texts and call history belong to telephonyd (apps ask it, with phone / sms)
+        if (under(vpath, "/var/telephony")) return false;
         boolean documents = under(vpath, "/home");
         if (documents && declared.contains("files:documents") && decide(i, "files:documents", true, pid)) return true;
         if (declared.contains("files:all")) {
