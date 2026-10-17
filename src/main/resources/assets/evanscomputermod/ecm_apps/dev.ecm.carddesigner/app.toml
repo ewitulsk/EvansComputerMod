@@ -1,0 +1,10 @@
+# A system app: installed by the computer itself (SystemApps). Python, run by the python program.
+id          = "dev.ecm.carddesigner"
+name        = "Card Designer"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Draw a card's faces, name it, write its stripe and print it on a Card Printer."
+publisher   = "ECM"
+icon        = "icon.png"
+# /var/apps/dev.ecm.carddesigner (its .card files) is always the app's own (APPS.md "Files").
+permissions = ["peripherals:card_printer"]

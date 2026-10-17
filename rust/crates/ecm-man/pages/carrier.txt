@@ -22,4 +22,4 @@ DESCRIPTION
     /etc/cored.toml), reconnecting when the core restarts.
 
 SEE ALSO
-    cored, cellsite, simtool, cellular, gui
+    cored, cellsite, cardtool, cellular, gui

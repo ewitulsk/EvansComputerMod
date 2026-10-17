@@ -11,7 +11,7 @@
 //!   shell       — terminal I/O, files and redstone (`terminal` is the same module)
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
 //!   peripheral  — attached blocks and bay modules (lua/peripheral.lua over `_peripheral`)
-//!   sensors, controller, audio — lidars, Xbox controllers, the Speaker
+//!   sensors, controller, audio, cards — lidars, Xbox controllers, the Speaker, card readers and printers
 //!   radio       — SDR flowgraphs (lua/radio.lua over `_radio`)
 //!   ui          — GUI apps (lua/ui.lua over `_ui` and ecm-ui)
 //! `require` also finds the computer's own files (a/b.lua or a/b/init.lua).
@@ -193,7 +193,7 @@ fn compile(lua: &Lua, code: &str) -> Chunk {
 fn repl(lua: &Lua) {
     println!("{} (PUC-Rio, via mlua)", lua.globals().get::<String>("_VERSION").unwrap_or_default());
     println!("Type 'exit' or Ctrl+D to exit.");
-    println!("Modules: shell, net, peripheral, sensors, controller, audio, radio, ui (as in Python).");
+    println!("Modules: shell, net, peripheral, sensors, controller, audio, cards, radio, ui (as in Python).");
     println!();
 
     let mut buffer = String::new();

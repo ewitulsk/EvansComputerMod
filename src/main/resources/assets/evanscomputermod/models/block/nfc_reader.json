@@ -1,0 +1,79 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:block/nfc_reader",
+    "particle": "evanscomputermod:block/nfc_reader"
+  },
+  "elements": [
+    {
+      "name": "pad",
+      "from": [
+        1,
+        0,
+        1
+      ],
+      "to": [
+        15,
+        4,
+        15
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            8.0,
+            7.0,
+            10.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            8.0,
+            7.0,
+            10.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            8.0,
+            7.0,
+            10.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            8.0,
+            7.0,
+            10.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.5,
+            0.5,
+            7.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.5,
+            8.5,
+            15.5,
+            15.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

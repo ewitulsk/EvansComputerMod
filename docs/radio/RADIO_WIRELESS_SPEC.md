@@ -84,6 +84,7 @@ Seven bands form a progression from slow, far-reaching radio to fast, short-rang
 | Wi‑Fi 2.4 GHz | Channels 1–13, 22 MHz wide, 5 MHz spacing | 1–150 Mbps adaptive | Real IP networking via APs | Walls and water; channel overlap, so 1/6/11 is the right plan |
 | Wi‑Fi 5 GHz | UNII channels, 20/40 MHz | Up to \~300 Mbps | Fast short-range networking | Worse through walls, more channels |
 | Microwave link | 10–60 GHz | Gbps | Point-to-point backhaul with dishes | Precise aiming; rain fade in Minecraft rain |
+| Near field (NFC/RFID) | 13.553–13.567 MHz (a carve-out inside HF) | 106 kbps | Cards, tags and readers; passive tags answer only while a reader's field powers them | Inductive coupling, 60 dB per decade of distance: a reader wakes a card to ~1.5 m and reads it to ~1 m; no ground wave, skywave or fading; conductive blocks shield |
 
 Adjacent-channel interference uses each standard's spectral mask, so overlapping channels interfere partly rather than all or nothing. Wi‑Fi rate adaptation follows a real MCS table, so `iw dev wlan0 link` shows RSSI and bitrate dropping as a player walks away.
 

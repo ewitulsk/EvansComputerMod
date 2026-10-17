@@ -886,6 +886,17 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         return "100." + (64 + chat) + ".0.20";
     }
 
+    /**
+     * The /etc/browser.conf of village {@code i}'s house PCs: the Browser's default home page is
+     * the village's own website, by name where the ring has DNS (docs/gui/BROWSER.md). A home
+     * page the player sets in the Browser wins over it.
+     */
+    public static String browserConf(int i, DnsPlan dns) {
+        String home = dns == null ? "http://100." + (64 + i) + ".0.10/" : "http://web.v" + i + ".ring/";
+        return "# The Browser's home page (the Home button, and where it opens): this village's website.\n"
+                + "# Menu > Set as home page in the Browser overrides it for that computer's player.\nhome " + home + "\n";
+    }
+
     /** The /etc/chat.conf every village computer gets. */
     public static String chatConf(int chat, String nick) {
         return "# Tech Village chat: run 'chat' (see 'chat --help')\nserver " + chatAddress(chat) + "\nport "
@@ -1015,6 +1026,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         } else {
             files.put("network.cfg", "iface eth1 dhcp\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace(".pc", "")));
+            if (role.endsWith(".pc")) files.put("etc/browser.conf", browserConf(i, dns));
         }
         return files;
     }

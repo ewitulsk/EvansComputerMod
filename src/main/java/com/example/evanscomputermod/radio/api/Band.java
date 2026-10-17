@@ -12,7 +12,12 @@ public enum Band {
     UHF(300e6, 1e9),
     WIFI_2G4(2.400e9, 2.4835e9),
     WIFI_5G(5.150e9, 5.895e9),
-    MICROWAVE(10e9, 60e9);
+    MICROWAVE(10e9, 60e9),
+    /**
+     * 13.56 MHz inductive coupling (RFID/NFC): a carve-out inside {@link #HF} with its own medium
+     * shard and path model ({@code phys.NearField}); never ground wave or skywave.
+     */
+    NEAR_FIELD(13.553e6, 13.567e6);
 
     public final double minHz;
     public final double maxHz;
@@ -26,8 +31,9 @@ public enum Band {
         return hz >= minHz && hz <= maxHz;
     }
 
-    /** The band a frequency falls in, or null outside every band (e.g. 1–2.4 GHz). */
+    /** The band a frequency falls in, or null outside every band (e.g. 1–2.4 GHz). Near field wins over HF. */
     public static Band of(double hz) {
+        if (NEAR_FIELD.contains(hz)) return NEAR_FIELD;
         for (Band b : values()) if (b.contains(hz)) return b;
         return null;
     }

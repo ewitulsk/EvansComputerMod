@@ -63,4 +63,4 @@ NOTES
     127.0.0.1:7710 (is celld already running?)".
 
 SEE ALSO
-    cell, cellular, framed, simtool
+    cell, cellular, framed, cardtool

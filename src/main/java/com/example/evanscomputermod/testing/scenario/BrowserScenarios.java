@@ -59,7 +59,9 @@ public final class BrowserScenarios {
     static final String PROMPT = PlayerKit.PROMPT;
     /** The protocol's Ctrl modifier bit. */
     static final int CTRL = 0x2;
-    static final int HID_A = 0x04, HID_ENTER = 0x28;
+    static final int HID_A = 0x04, HID_ENTER = 0x28, HID_BACKSPACE = 0x2A, HID_F4 = 0x3D;
+    /** Ctrl+Alt: with Backspace, between the console and the desktop. */
+    static final int SWITCH_MODS = 0x2 | 0x4;
 
     private BrowserScenarios() {}
 
@@ -173,23 +175,66 @@ public final class BrowserScenarios {
     /** {@code gui} at the console; the desktop connects. */
     static void startGui(Scenario.Builder b, Pc pc) {
         b.mutate(r -> {
+            if (pc.comp(r) != null && pc.comp(r).shellConnected()) {
+                // The desktop is still running from before: Ctrl+Alt+Backspace shows it again.
+                pc.key(r, HID_BACKSPACE, SWITCH_MODS, null);
+                return;
+            }
             pc.type(r, "gui");
             pc.key(r, HID_ENTER, 0, "\n");
-        }, "type gui on " + pc.name + " (the desktop)");
+        }, "type gui on " + pc.name + " (the desktop; Ctrl+Alt+Backspace if it is already running)");
         b.await(r -> pc.comp(r) != null && pc.comp(r).shellConnected() ? null : "no desktop yet: " + pc.screen(r).strip(),
                 "the desktop is up on " + pc.name, 20_000);
     }
 
-    /** The Browser from the taskbar's launcher: the Apps button, then Browser. */
+    /**
+     * The console, as a player gets back to it: Ctrl+Alt+Backspace when the desktop is showing (a house PC another
+     * scenario left in the GUI).
+     */
+    static void toConsole(Scenario.Builder b, Pc pc) {
+        b.mutate(r -> {
+            var ui = pc.be().apply(r) == null || pc.be().apply(r).getComputer() == null ? null : pc.be().apply(r).getComputer().getUiManager();
+            if (ui != null && ui.guiVisible()) pc.key(r, HID_BACKSPACE, SWITCH_MODS, null);
+        }, "if the desktop is showing on " + pc.name + ", Ctrl+Alt+Backspace: the console");
+        b.await(r -> {
+            var ui = pc.be().apply(r) == null || pc.be().apply(r).getComputer() == null ? null : pc.be().apply(r).getComputer().getUiManager();
+            return ui == null || !ui.guiVisible() ? null : "the desktop is still showing";
+        }, "the console is showing", 5_000);
+    }
+
+    /** Close the Browser (click its window, Alt+F4) if it is open. */
+    static void closeBrowser(Scenario.Builder b, Pc pc) {
+        b.mutate(r -> {
+            Compositor.WindowInfo w = pc.window(r);
+            if (w == null) return;
+            pc.click(r, new int[]{w.x() + w.w() / 2, w.y() + 8});
+            pc.key(r, HID_F4, 0x4, null);
+        }, "if the Browser is open on " + pc.name + ": click its title bar, Alt+F4");
+        b.await(r -> pc.window(r) == null ? null : "the Browser is still open", "the Browser is closed", 10_000);
+    }
+
+    /** Leave the house PC as it was found: the Browser closed (Alt+F4), the console showing (Ctrl+Alt+Backspace). */
+    static void leave(Scenario.Builder b, Pc pc) {
+        b.note("Done: close the Browser and go back to the console");
+        closeBrowser(b, pc);
+        toConsole(b, pc);
+    }
+
+    /** The Browser from the taskbar's launcher: the Apps button, then Browser; it opens on its start page. */
     static void openBrowser(Scenario.Builder b, Pc pc) {
+        openBrowserTo(b, pc, r -> pc.shows(r, "Tech Village sites"), "the start page lists the Tech Village sites");
+    }
+
+    /** {@link #openBrowser} where the Browser opens on {@code opened} (a Tech Village house PC: its village's website). */
+    static void openBrowserTo(Scenario.Builder b, Pc pc, Function<ScenarioRun, String> opened, String what) {
         b.await(r -> pc.comp(r) != null && pc.comp(r).locateLayerText("taskbar", "Apps", false) != null ? null : "no taskbar yet",
                 "the taskbar's Apps button is drawn", 10_000);
         b.mutate(r -> pc.click(r, pc.comp(r).locateLayerText("taskbar", "Apps", false)), "click Apps on the taskbar");
         b.await(r -> pc.comp(r).locatePopupText("Browser", false) != null ? null : "the launcher has no Browser",
                 "the launcher lists Browser (a system app)", 5_000);
         b.mutate(r -> pc.click(r, pc.comp(r).locatePopupText("Browser", false)), "click Browser");
-        b.await(r -> pc.window(r) != null ? null : "no Browser window yet", "the Browser opens (its start page)", 20_000);
-        b.await(r -> pc.shows(r, "Tech Village sites"), "the start page lists the Tech Village sites", 10_000);
+        b.await(r -> pc.window(r) != null ? null : "no Browser window yet", "the Browser opens", 20_000);
+        b.await(opened, what, 30_000);
     }
 
     /** Click the address bar, select its text (Ctrl+A), type an address, Enter. */
@@ -398,7 +443,11 @@ public final class BrowserScenarios {
             return "no reply yet:\n" + s.strip();
         }, "ping 100.(64+n).0.10 (the village web server) answers", 30_000);
         startGui(b, pc);
-        openBrowser(b, pc);
+        openBrowserTo(b, pc, r -> {
+            Compositor.WindowInfo w = pc.window(r);
+            String want = "Tech Village " + vil(r).n + " - AS";
+            return w != null && w.title().startsWith(want) ? null : "window title " + (w == null ? "-" : w.title());
+        }, "the Browser opens on the village's website (the house PC's /etc/browser.conf)");
         addressFn(b, pc, r -> "100." + (64 + vil(r).n) + ".0.10", "the village site's address, 100.(64+n).0.10");
         b.await(r -> {
             Compositor.WindowInfo w = pc.window(r);
@@ -981,9 +1030,12 @@ public final class BrowserScenarios {
                 .timeLimit(90_000)
                 .locate(DnsScenarios::housePc);
         b.host("pc", BlockPos.ZERO, null);
+        toConsole(b, pc);
         DnsScenarios.ringReady(b);
         startGui(b, pc);
-        openBrowser(b, pc);
+        closeBrowser(b, pc);
+        openBrowserTo(b, pc, r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"),
+                "the Browser opens on the village's website (its home page)");
         b.note("By name: another village's site, then this village's through the search domain (resolv.conf: search vN.ring)");
         addressFn(b, pc, r -> "web.v" + DnsScenarios.ring(r).target + ".ring", "web.vN.ring (another village)");
         b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).target + " - AS"), "another village's site, found by name", 30_000);
@@ -1038,7 +1090,63 @@ public final class BrowserScenarios {
         reach(b, pc, r -> "Register", "click Register");
         b.await(r -> titled(r, pc, "That didn't work - nic.ring"), "refused", 20_000);
         b.await(r -> pc.shows(r, "already registered"), "it is already registered", 2_000);
+        leave(b, pc);
         return b.build();
+    }
+
+    // ================================================================ browser_home
+
+    static Scenario home() {
+        Pc pc = Pc.node("pc");
+        var b = Scenario.builder("browser_home",
+                        "a Tech Village house PC's Browser opens on its village's website (/etc/browser.conf, written when the village"
+                                + " was built), and Home goes back there; the start page is still about:home; a home page the player sets"
+                                + " (Menu > Set as home page) wins over the village's")
+                .asPlayer()
+                .timeLimit(90_000)
+                .locate(DnsScenarios::housePc);
+        b.host("pc", BlockPos.ZERO, null);
+        toConsole(b, pc);
+        DnsScenarios.ringReady(b);
+        b.note("The house PC came with /etc/browser.conf: its village's website, by name");
+        DnsScenarios.typeExpect(b, "pc", r -> "cat /etc/browser.conf",
+                r -> "^home http://web\\.v" + DnsScenarios.ring(r).village + "\\.ring/$", "cat /etc/browser.conf: home http://web.vN.ring/", 10_000);
+        startGui(b, pc);
+        closeBrowser(b, pc);
+        openBrowserTo(b, pc, r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"),
+                "the Browser opens on the village's own website");
+        b.await(r -> pc.shows(r, "http://web.v" + DnsScenarios.ring(r).village + ".ring/"), "its address, by name", 2_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_home"), "snapshot: the Browser on the village site");
+        b.note("Somewhere else, then Home");
+        addressFn(b, pc, r -> "web.v" + DnsScenarios.ring(r).target + ".ring", "another village's site");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).target + " - AS"), "another village's site", 30_000);
+        reach(b, pc, r -> "Home", "click Home");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"), "Home: the village's website again", 30_000);
+        b.note("Control: the start page is still there, at about:home");
+        address(b, pc, "about:home");
+        b.await(r -> pc.loaded(r, "Tech Village sites"), "about:home: the start page and its list of the village sites", 10_000);
+        b.note("The player's own home page wins: Menu > Set as home page on another village's site");
+        addressFn(b, pc, r -> "web.v" + DnsScenarios.ring(r).target + ".ring", "another village's site");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).target + " - AS"), "another village's site", 30_000);
+        setAsHome(b, pc);
+        address(b, pc, "about:home");
+        b.await(r -> pc.loaded(r, "Tech Village sites"), "away to the start page", 10_000);
+        reach(b, pc, r -> "Home", "click Home");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).target + " - AS"), "Home: the page the player set", 30_000);
+        b.note("Put it back: the village's site as home again");
+        addressFn(b, pc, r -> "web.v" + DnsScenarios.ring(r).village + ".ring", "the village's site");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"), "the village's site", 30_000);
+        setAsHome(b, pc);
+        leave(b, pc);
+        return b.build();
+    }
+
+    /** Menu > Set as home page. */
+    static void setAsHome(Scenario.Builder b, Pc pc) {
+        reach(b, pc, r -> "Menu", "click Menu");
+        b.await(r -> pc.comp(r).locatePopupText("Set as home page", false) != null ? null : "no menu", "the menu opens", 5_000);
+        b.mutate(r -> pc.click(r, pc.comp(r).locatePopupText("Set as home page", false)), "click Set as home page");
+        pause(b, 500);
     }
 
     static void snapshot(ScenarioRun r, String name) {
@@ -1046,7 +1154,7 @@ public final class BrowserScenarios {
     }
 
     static {
-        for (Scenario s : List.of(localSite(), village(), phone(), form(), js(), dns())) ALL.put(s.name, s);
+        for (Scenario s : List.of(localSite(), village(), phone(), form(), js(), dns(), home())) ALL.put(s.name, s);
     }
 }
 //?}

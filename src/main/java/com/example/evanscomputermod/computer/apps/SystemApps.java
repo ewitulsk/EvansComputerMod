@@ -34,16 +34,45 @@ import java.util.function.Function;
  * socket is TCP on 127.0.0.1). {@code celld-site config set} and {@code cored init}
  * ask the app manager to reindex, so the app shows up at once.
  *
- * <p>A system app is copied again when its program changes size or its
- * folder is missing; {@code pkg remove} of one lasts until the next boot.
+ * <p>The <b>Card Designer</b> ({@code dev.ecm.carddesigner}, docs/cards/CARDS.md) is a Python app:
+ * its {@code app.toml}, {@code main.py} and icon ship in the mod's resources
+ * ({@code assets/evanscomputermod/ecm_apps/dev.ecm.carddesigner}) and the app manager runs it
+ * with the {@code python} program, like any {@code .py} package.
+ *
+ * <p>A system app is copied again when its program changes size (a Python entry: when its
+ * text changes) or its folder is missing; {@code pkg remove} of one lasts until the next boot.
  */
 public final class SystemApps {
 
-    /** One system app: its manifest fields, its program and its icon resource. */
+    /**
+     * One system app: its manifest fields, its program and its icon resource. A Python app
+     * ({@link #python}) ships whole in the mod's resources instead: {@code resourceDir} holds
+     * its {@code app.toml} (the manifest as written), {@code main.py} (the entry, run by the
+     * {@code python} program) and {@code icon.png}.
+     */
     record App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith,
-               String iconResource, List<String> requires) {
+               String iconResource, List<String> requires, String resourceDir) {
+        App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith,
+            String iconResource, List<String> requires) {
+            this(id, name, program, summary, permissions, openWith, iconResource, requires, null);
+        }
+
         App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith, String iconResource) {
             this(id, name, program, summary, permissions, openWith, iconResource, List.of());
+        }
+
+        /**
+         * A Python system app from {@code /assets/evanscomputermod/ecm_apps/<id>/} ({@code app.toml},
+         * {@code main.py}, {@code icon.png}); {@code permissions} are the ones its manifest declares,
+         * allowed once at install like the others. It needs the {@code python} program.
+         */
+        static App python(String id, String name, String summary, List<String> permissions) {
+            String dir = "/assets/evanscomputermod/ecm_apps/" + id;
+            return new App(id, name, "python", summary, permissions, List.of(), dir + "/icon.png", List.of(), dir);
+        }
+
+        boolean isPython() {
+            return resourceDir != null;
         }
 
         /** Installed on this computer: always, or when one of the {@code requires} files exists. */
@@ -53,7 +82,21 @@ public final class SystemApps {
             return false;
         }
 
+        /** A resource of this app's folder (Python apps), or null when the mod doesn't ship it. */
+        byte[] resource(String name) {
+            if (resourceDir == null) return null;
+            try (InputStream in = SystemApps.class.getResourceAsStream(resourceDir + "/" + name)) {
+                return in == null ? null : in.readAllBytes();
+            } catch (IOException e) {
+                return null;
+            }
+        }
+
         String manifest() {
+            if (isPython()) {
+                byte[] toml = resource("app.toml");
+                return toml == null ? "" : new String(toml, StandardCharsets.UTF_8);
+            }
             StringBuilder p = new StringBuilder();
             for (String s : permissions) p.append(p.isEmpty() ? "" : ", ").append('"').append(s).append('"');
             StringBuilder o = new StringBuilder();
@@ -107,7 +150,13 @@ public final class SystemApps {
                     List.of("network"), List.of(), "/evanscomputermod/apps/cellsite.png", List.of("etc/celld-site.toml")),
             new App("dev.ecm.carrier", "Carrier Console", "carrier",
                     "This computer's carrier core: subscribers and SIMs, sites, phones, handovers.",
-                    List.of("network"), List.of(), "/evanscomputermod/apps/carrier.png", List.of("etc/cored.db", "etc/cored.toml")));
+                    List.of("network"), List.of(), "/evanscomputermod/apps/carrier.png", List.of("etc/cored.db", "etc/cored.toml")),
+            // Cards (docs/cards/CARDS.md "Programs and apps"): the Card Designer, a Python app on ecm-ui
+            // shipped in the mod's resources (ecm_apps/dev.ecm.carddesigner: app.toml, main.py, icon.png).
+            // It is a printer client only; its .card files live in its own /var/apps folder.
+            App.python("dev.ecm.carddesigner", "Card Designer",
+                    "Draw a card's faces, name it, write its stripe and print it on a Card Printer.",
+                    List.of("peripherals:card_printer")));
 
     private SystemApps() {}
 
@@ -137,19 +186,24 @@ public final class SystemApps {
                 continue;
             }
             if (!a.wanted(root)) continue;
+            // A Python app needs the python program; a .wasm app is the program itself.
             Path program = programs == null ? null : programs.apply(a.program());
             if (program == null || !Files.isRegularFile(program)) continue;
+            byte[] entry = a.isPython() ? a.resource("main.py") : null;
+            if (a.isPython() && (entry == null || a.manifest().isEmpty())) continue;
             Path dir = root.resolve("apps").resolve(a.id());
             try {
-                Path main = dir.resolve("main.wasm");
+                Path main = dir.resolve(a.isPython() ? "main.py" : "main.wasm");
                 Path toml = dir.resolve("app.toml");
                 String manifest = a.manifest();
                 boolean fresh = !Files.isRegularFile(toml);
-                boolean stale = fresh || !Files.isRegularFile(main) || Files.size(main) != Files.size(program)
+                boolean stale = fresh || !Files.isRegularFile(main)
+                        || (a.isPython() ? !java.util.Arrays.equals(Files.readAllBytes(main), entry) : Files.size(main) != Files.size(program))
                         || !Files.readString(toml, StandardCharsets.UTF_8).equals(manifest);
                 if (!stale) continue;
                 Files.createDirectories(dir);
-                Files.copy(program, main, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                if (a.isPython()) Files.write(main, entry);
+                else Files.copy(program, main, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 Files.writeString(toml, manifest, StandardCharsets.UTF_8);
                 try (InputStream in = SystemApps.class.getResourceAsStream(a.iconResource())) {
                     if (in != null) Files.write(dir.resolve("icon.png"), in.readAllBytes());

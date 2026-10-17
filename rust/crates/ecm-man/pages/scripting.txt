@@ -125,6 +125,15 @@ UI
     [...] and the window updates on the next turn. Handlers get an
     event with kind, value and widget. A ui program needs the GUI.
 
+CARDS
+      cards.Reader.find()        the card reader; reader.card()
+      card.bank.sign(nonce, n)   card.stripe.read()
+      cards.Nfc.find().poll()    nfc.session(uid, sector, key)
+      cards.Printer.find()       printer.print(cards.Design.load(p))
+      cards.Design               .card files: set_pixel, fill, text
+
+    See cards.
+
 WEB
       web.serve(port, handler)   a web server of its own (until Ctrl+C)
       web.cgi(handler)           answer the request httpd --cgi gives

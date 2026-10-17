@@ -1,10 +1,10 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
-import com.example.evanscomputermod.api.module.IBayUseItem;
+import com.example.evanscomputermod.card.CardItem;
+import com.example.evanscomputermod.card.CardKind;
 import com.example.evanscomputermod.card.SimIdentity;
 import com.example.evanscomputermod.card.SimSecret;
-import com.example.evanscomputermod.item.TooltipItem;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
@@ -19,10 +19,10 @@ import java.util.function.Consumer;
  * key, saved but never sent to a client). Right-click an installed LTE / mmWave modem's
  * bay with it to put it in (any SIM already there comes back out).
  */
-public class SimCardItem extends TooltipItem implements IBayUseItem {
+public class SimCardItem extends CardItem {
 
     public SimCardItem(Properties properties) {
-        super(properties);
+        super(CardKind.SIM, properties);
     }
 
     /** The public identity of a written card, or null for a blank card (works on clients too). */
@@ -79,12 +79,8 @@ public class SimCardItem extends TooltipItem implements IBayUseItem {
     }
 
     @Override
-    public boolean isFoil(ItemStack stack) {
-        return false;
-    }
-
-    @Override
     protected void addTooltip(ItemStack stack, Consumer<Component> lines) {
+        super.addTooltip(stack, lines);
         SimIdentity s = identity(stack);
         if (s == null) {
             lines.accept(Component.translatable("item.evanscomputermod.sim_card.blank").withStyle(ChatFormatting.GRAY));

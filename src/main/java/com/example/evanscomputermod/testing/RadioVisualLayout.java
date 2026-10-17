@@ -56,7 +56,9 @@ public final class RadioVisualLayout {
     /** Access point: stand it on a network_cable so its port goes active. */
     CABLE_BELOW,
     /** Card Reader/Writer: put a SIM card in it (card=true is then its real state). */
-    CARD
+    CARD,
+    /** NFC Reader: switch its field on (field=true is then its real state). */
+    FIELD
   }
 
   public record Spec(String group, String id, String props, Setup setup) {}
@@ -142,7 +144,10 @@ public final class RadioVisualLayout {
           new Spec("amplifier", "power_amplifier", "", Setup.NONE),
           new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE),
           new Spec("misc", "card_reader", "card=false", Setup.NONE),
-          new Spec("misc", "card_reader", "card=true", Setup.CARD));
+          new Spec("misc", "card_reader", "card=true", Setup.CARD),
+          new Spec("misc", "card_printer", "lit=false", Setup.NONE),
+          new Spec("misc", "nfc_reader", "field=false", Setup.NONE),
+          new Spec("misc", "nfc_reader", "field=true", Setup.FIELD));
 
   /**
    * Items shown in frames besides the block items of the row: the radio items, then the
@@ -168,7 +173,13 @@ public final class RadioVisualLayout {
           "color_lcd_panel",
           "hd_panel",
           "phosphor_screen",
-          "hd_screen");
+          "hd_screen",
+          "bank_card",
+          "nfc_card",
+          "hybrid_card",
+          "sim_card",
+          "card_reader_module",
+          "nfc_module");
 
   /**
    * Terminal items with components, framed after {@link #ITEM_SPECS}: the item model shows

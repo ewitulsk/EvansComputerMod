@@ -696,7 +696,8 @@ Templates contain role markers, not computer UUIDs. The provisioning processor (
 Data Center) and the village network piece (houses) derive stable identities from
 world seed, village number and role (`isp.router`, `datacenter.web`,
 `datacenter.chat`, `house<k>.router`, `house<k>.pc`), write missing configuration
-files (including `/etc/chat.conf`), and set `wasRunning`. Existing configuration files
+files (including `/etc/chat.conf`, and a house PC's `/etc/browser.conf`: the Browser's home page, the village's
+website), and set `wasRunning`. Existing configuration files
 are kept. Regenerate the five ISP and Data Center templates, pools and structures with
 `py -3 scripts/gen-tech-village.py`; generate models/recipes with
 `py -3 scripts/gen-tech-assets.py`.

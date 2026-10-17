@@ -1,0 +1,8 @@
+# Card example (docs/cards/CARDS.md "Programs and apps"): a stripe copier in Python.
+id          = "dev.ecm.skimmer"
+name        = "skimmer"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Example stripe copier: reads the magnetic stripe of one card and writes it onto a blank (a stripe is plain text)."
+publisher   = "ECM"
+permissions = ["peripherals:card_reader"]

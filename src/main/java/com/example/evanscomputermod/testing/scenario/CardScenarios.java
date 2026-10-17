@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  * {@code /ecm scenario spawn card_writer} and run by the {@code ecm_cards} GameTest.
  *
  * <p>{@code card_writer}: a player builds a computer with a Card Reader/Writer on its east side
- * and a chest beyond that, and writes SIM cards with {@code simtool}:
+ * and a chest beyond that, and writes SIM cards with {@code cardtool sim}:
  * <ol>
  *   <li>Auto Eject Sim = true (set in the reader's screen): a blank SIM clicked into the reader,
  *       {@code simtool write ... --random} prints the key once and the written SIM lands in the
@@ -88,26 +88,26 @@ public final class CardScenarios {
                 .note("Part 1: Auto Eject Sim = true. Open the reader (right-click it empty-handed), set Auto Eject Sim to true")
                 .mutate(r -> setAutoEject(r, true), "reader screen: Auto Eject Sim = true")
                 .mutate(r -> insert(r, new ItemStack(CellularContent.SIM_CARD.get())), "right-click the reader with a blank SIM card")
-                .send("pc", "simtool")
-                .expect("pc", "blank SIM$", "simtool sees a blank SIM")
-                .expect("pc", PROMPT, "simtool finished")
-                .send("pc", "simtool write " + IMSI_1 + " cell-red --random")
-                .expectOrFail("pc", "^card ejected into an adjacent inventory$", "written and ejected", "^simtool:")
-                .expect("pc", PROMPT, "simtool finished")
-                .await(r -> chestHolds(r, IMSI_1), "the written SIM is in the chest, with the key simtool printed", 5_000)
+                .send("pc", "cardtool sim")
+                .expect("pc", "blank SIM$", "cardtool sees a blank SIM")
+                .expect("pc", PROMPT, "cardtool finished")
+                .send("pc", "cardtool sim write " + IMSI_1 + " cell-red --random")
+                .expectOrFail("pc", "^card ejected into an adjacent inventory$", "written and ejected", "^cardtool:")
+                .expect("pc", PROMPT, "cardtool finished")
+                .await(r -> chestHolds(r, IMSI_1), "the written SIM is in the chest, with the key cardtool printed", 5_000)
                 .note("Control: a written SIM can't be written again")
                 .mutate(CardScenarios::takeFromChestAndInsert, "take the SIM out of the chest, right-click the reader with it")
-                .send("pc", "simtool write 310150000000009 cell-blue --random")
-                .expectOrFail("pc", "^simtool: the card is not blank", "simtool refuses: the card is not blank", "^wrote SIM")
-                .expect("pc", PROMPT, "simtool finished")
+                .send("pc", "cardtool sim write 310150000000009 cell-blue --random")
+                .expectOrFail("pc", "^cardtool: the card is not blank", "cardtool refuses: the card is not blank", "^wrote SIM")
+                .expect("pc", PROMPT, "cardtool finished")
                 .await(r -> readerHolds(r, IMSI_1, "cell-red"), "the card is unchanged (IMSI 1, cell-red)", 2_000)
-                .send("pc", "simtool auth " + CHALLENGE)
-                .expectOrFail("pc", "^ks  [0-9a-f]{64}$", "the card answers a challenge", "^simtool: (no card|the card is blank|the card has no key)")
-                .expect("pc", PROMPT, "simtool finished")
+                .send("pc", "cardtool sim auth " + CHALLENGE)
+                .expectOrFail("pc", "^ks  [0-9a-f]{64}$", "the card answers a challenge", "^cardtool: (no card|the card is blank|the card has no key)")
+                .expect("pc", PROMPT, "cardtool finished")
                 .await(CardScenarios::authMatchesServer, "its answer is HMAC-SHA256 of the stored key (SimAuth)", 2_000)
-                .send("pc", "simtool eject")
-                .expectOrFail("pc", "^card ejected into an adjacent inventory$", "simtool eject pushes it out", "^simtool: no card")
-                .expect("pc", PROMPT, "simtool finished")
+                .send("pc", "cardtool sim eject")
+                .expectOrFail("pc", "^card ejected into an adjacent inventory$", "cardtool sim eject pushes it out", "^cardtool: no card")
+                .expect("pc", PROMPT, "cardtool finished")
                 .await(r -> chestHolds(r, IMSI_1), "back in the chest", 5_000)
                 .note("Part 2: Auto Eject Sim = false, a hopper under the reader")
                 .mutate(r -> setAutoEject(r, false), "reader screen: Auto Eject Sim = false")
@@ -116,9 +116,9 @@ public final class CardScenarios {
                 .mutate(r -> insert(r, new ItemStack(CellularContent.SIM_CARD.get())), "right-click the reader with a blank SIM card")
                 .waitMs(1_500, "the hopper must not take a card the computer hasn't used")
                 .await(r -> heldBlank(r), "the blank SIM is still in the reader, the hopper is empty", 1_000)
-                .send("pc", "simtool write " + IMSI_2 + " cell-red --key " + KEY_2)
-                .expectOrFail("pc", "^card released: waiting to be taken or pulled out$", "written and released", "^simtool:")
-                .expect("pc", PROMPT, "simtool finished")
+                .send("pc", "cardtool sim write " + IMSI_2 + " cell-red --key " + KEY_2)
+                .expectOrFail("pc", "^card released: waiting to be taken or pulled out$", "written and released", "^cardtool:")
+                .expect("pc", PROMPT, "cardtool finished")
                 .await(r -> hopperHolds(r, IMSI_2), "the hopper pulled the written SIM", 5_000)
                 .await(CardScenarios::keyNotOnTheWire, "the SIM as a client receives it carries no key", 1_000)
                 .note("Part 3: a hopper on top, fed by a chest")
@@ -126,14 +126,14 @@ public final class CardScenarios {
                     r.player().place(Blocks.HOPPER, r.abs(HOPPER_TOP), Direction.NORTH, s -> s.getValue(HopperBlock.FACING) == Direction.DOWN);
                     r.player().place(Blocks.CHEST, r.abs(FEED), Direction.NORTH, s -> s.getBlock() instanceof ChestBlock);
                 }, "place a hopper on top of the reader and a chest on that hopper")
-                .send("pc", "simtool wait 30")
-                .expect("pc", "^waiting for a card", "simtool waits for a card")
+                .send("pc", "cardtool sim wait 30")
+                .expect("pc", "^waiting for a card", "cardtool sim waits for a card")
                 .mutate(CardScenarios::dropBlankIntoFeed, "put a blank SIM card into the top chest")
-                .expectOrFail("pc", "^event card_inserted sim blank=true$", "the computer hears card_inserted", "^simtool:")
-                .expect("pc", PROMPT, "simtool finished")
-                .send("pc", "simtool write " + IMSI_3 + " cell-red --random")
-                .expectOrFail("pc", "^card released: waiting to be taken or pulled out$", "written and released", "^simtool:")
-                .expect("pc", PROMPT, "simtool finished")
+                .expectOrFail("pc", "^event card_inserted sim blank=true$", "the computer hears card_inserted", "^cardtool:")
+                .expect("pc", PROMPT, "cardtool finished")
+                .send("pc", "cardtool sim write " + IMSI_3 + " cell-red --random")
+                .expectOrFail("pc", "^card released: waiting to be taken or pulled out$", "written and released", "^cardtool:")
+                .expect("pc", PROMPT, "cardtool finished")
                 .await(r -> hopperHolds(r, IMSI_3), "the hopper below pulled it too", 5_000)
                 .timeLimit(60_000)
                 .build();
@@ -226,9 +226,9 @@ public final class CardScenarios {
         if (secret == null || !secret.known()) return "the SIM in the chest has no key";
         if (imsi == IMSI_1) {
             String printed = lastMatch(r.screen("pc"), "^key ([0-9a-f]{32})\\s*$");
-            if (printed == null) return "simtool printed no key";
+            if (printed == null) return "cardtool printed no key";
             if (!printed.equals(secret.keyHex()) || printed.equals("0".repeat(32))) {
-                r.fail("simtool printed key " + printed + " but the card holds another key (or an all-zero key)");
+                r.fail("cardtool printed key " + printed + " but the card holds another key (or an all-zero key)");
                 return "failed";
             }
         }
@@ -254,7 +254,7 @@ public final class CardScenarios {
         if (res == null) return "no res on the screen";
         String want = SimAuth.respond(s.key(), HexFormat.of().parseHex(CHALLENGE)).resHex();
         if (!want.equals(res)) {
-            r.fail("simtool auth printed res " + res + ", the server computes " + want);
+            r.fail("cardtool sim auth printed res " + res + ", the server computes " + want);
             return "failed";
         }
         r.say("§7  RES " + res + " matches the server's HMAC of the stored key");

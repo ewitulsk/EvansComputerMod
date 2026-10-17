@@ -68,7 +68,7 @@ COMMANDS
         when the reader's Auto Eject Sim is on, else take it).
 
     add <imsi> <key> [quota [label]]
-        Add a subscriber for a SIM written elsewhere (simtool write
+        Add a subscriber for a SIM written elsewhere (cardtool sim write
         prints the key).
 
     revoke, unrevoke
@@ -113,4 +113,4 @@ NOTES
     ip route add 100.65.2.0/24 via <core address>.
 
 SEE ALSO
-    celld-site, carrier, simtool, cellular, ip
+    celld-site, carrier, cardtool, cellular, ip

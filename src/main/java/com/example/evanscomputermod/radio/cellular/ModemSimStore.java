@@ -43,7 +43,7 @@ public final class ModemSimStore extends SavedData {
     }
 
     /** Keep one card of {@code sim}; returns its new slot id, or null without a server. */
-    static @Nullable String put(ItemStack sim) {
+    public static @Nullable String put(ItemStack sim) {
         ModemSimStore s = get();
         if (s == null || sim.isEmpty()) return null;
         String id = UUID.randomUUID().toString();
@@ -53,14 +53,14 @@ public final class ModemSimStore extends SavedData {
     }
 
     /** The card in slot {@code id} (do not change it), or EMPTY. */
-    static ItemStack peek(@Nullable String id) {
+    public static ItemStack peek(@Nullable String id) {
         ModemSimStore s = id == null ? null : get();
         if (s == null) return ItemStack.EMPTY;
         return s.slots.getOrDefault(id, ItemStack.EMPTY);
     }
 
     /** Take the card out of slot {@code id} (EMPTY if it isn't there). */
-    static ItemStack take(@Nullable String id) {
+    public static ItemStack take(@Nullable String id) {
         ModemSimStore s = id == null ? null : get();
         if (s == null) return ItemStack.EMPTY;
         ItemStack out = s.slots.remove(id);
@@ -72,7 +72,7 @@ public final class ModemSimStore extends SavedData {
     // ------------------------------------------------------------ the reference in the module state
 
     /** {@code {carrier, imsi, slot}}: what a modem's (client-visible) state says about its SIM. */
-    static CompoundTag writeRef(SimIdentity id, String slot) {
+    public static CompoundTag writeRef(SimIdentity id, String slot) {
         CompoundTag t = new CompoundTag();
         t.putString("carrier", id.carrier());
         t.putLong("imsi", id.imsi());
@@ -81,7 +81,7 @@ public final class ModemSimStore extends SavedData {
     }
 
     /** The slot id in a {@link #writeRef} tag, or null. */
-    static @Nullable String slotOf(@Nullable CompoundTag t) {
+    public static @Nullable String slotOf(@Nullable CompoundTag t) {
         return t == null || !t.contains("slot") ? null : t.getString("slot");
     }
 

@@ -42,7 +42,7 @@ SIM CARDS
     Card Reader/Writer placed against the core's computer: put a blank
     SIM in (right-click the reader with it) and run cored sim new; the
     card is then released for you to take (or pushed into a chest when
-    the reader's Auto Eject Sim is on). simtool writes cards by hand.
+    the reader's Auto Eject is on). cardtool writes cards by hand.
 
 PHONES
     An ePhone needs an LTE Modem (or mmWave Modem) in a module slot and
@@ -83,5 +83,5 @@ BUILDING A NETWORK
     Phone Store has ready ePhones and free SIM cards.
 
 SEE ALSO
-    cell, celld, celld-site, cored, cellsite, carrier, simtool, framed,
+    cell, celld, celld-site, cored, cellsite, carrier, cardtool, framed,
     radio, phone

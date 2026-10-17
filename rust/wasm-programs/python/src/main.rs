@@ -802,7 +802,10 @@ struct PythonRepl {
 
 impl PythonRepl {
     fn new() -> Self {
-        let settings = Settings::default();
+        let mut settings = Settings::default();
+        // Like CPython: sys.argv is the script's path and its arguments
+        // (`python /apps/dev.ecm.bankd/main.py serve 7000` -> ["/apps/.../main.py", "serve", "7000"]).
+        settings.argv = std::env::args().skip(1).collect();
 
         let interpreter = Interpreter::with_init(settings, |vm| {
             vm.add_native_module("shell".to_owned(), Box::new(shell_module::make_module));

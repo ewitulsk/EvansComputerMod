@@ -1,0 +1,34 @@
+{
+  "variants": {
+    "field=false,facing=north": {
+      "model": "evanscomputermod:block/nfc_reader"
+    },
+    "field=true,facing=north": {
+      "model": "evanscomputermod:block/nfc_reader_field"
+    },
+    "field=false,facing=east": {
+      "model": "evanscomputermod:block/nfc_reader",
+      "y": 90
+    },
+    "field=true,facing=east": {
+      "model": "evanscomputermod:block/nfc_reader_field",
+      "y": 90
+    },
+    "field=false,facing=south": {
+      "model": "evanscomputermod:block/nfc_reader",
+      "y": 180
+    },
+    "field=true,facing=south": {
+      "model": "evanscomputermod:block/nfc_reader_field",
+      "y": 180
+    },
+    "field=false,facing=west": {
+      "model": "evanscomputermod:block/nfc_reader",
+      "y": 270
+    },
+    "field=true,facing=west": {
+      "model": "evanscomputermod:block/nfc_reader_field",
+      "y": 270
+    }
+  }
+}

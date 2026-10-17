@@ -24,7 +24,8 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Names and the web", &["browser", "nslookup", "dig", "named", "resolvectl", "domain", "whois", "registrard", "registryd", "ianad", "httpd", "curl", "disco"]),
     ("Remote login and chat", &["ssh", "sshd", "ssh-keygen", "chat", "chatd", "chatapp"]),
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
-    ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier", "simtool"]),
+    ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
+    ("Cards", &["cards", "cardtool"]),
     ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "player", "video", "videoplayer"]),
 ];
 
