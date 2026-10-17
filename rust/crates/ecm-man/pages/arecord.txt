@@ -1,0 +1,40 @@
+NAME
+    arecord - record from a microphone into a WAV file
+
+SYNOPSIS
+    arecord FILE.wav [-d SECONDS] [-r RATE] [-b 8|16] [-c 1|2]
+        [--mic SIDE] [--gain 0-100]
+
+    arecord --level [-d SECONDS] [--mic SIDE]
+
+DESCRIPTION
+    Records the microphone (a Microphone block next to the computer, or
+    an ePhone's own) into FILE.wav, until stopped with Ctrl+C unless -d
+    gives the length. The file is a valid WAV after every block, so
+    stopping early keeps what was recorded. At the end it prints the
+    length, the peak level and any overruns (audio lost because the
+    program fell behind).
+
+    --level shows a live level meter and saves nothing.
+
+OPTIONS
+    -d SECONDS
+        Stop after this long.
+
+    -r RATE, -b 8|16, -c 1|2
+        Sample rate (default 16000 Hz), bits (default 16) and channels
+        (default mono).
+
+    --mic SIDE
+        Which microphone (default: the one Settings > Sound picked).
+
+    --gain 0-100
+        The input volume (50 is the capsule's own level).
+
+EXAMPLES
+      arecord /home/note.wav -d 5
+      aplay /home/note.wav
+      arecord --level
+
+SEE ALSO
+    voice, aplay, radio_station, scripting

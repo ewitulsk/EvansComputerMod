@@ -1,0 +1,29 @@
+NAME
+    ping - check that another computer answers on the network
+
+SYNOPSIS
+    ping <ip_or_hostname> [-n <count>]
+
+DESCRIPTION
+    Sends an ICMP echo request to the target once a second and prints
+    each reply with its size, round-trip time and sequence number. A
+    request with no reply prints Request timed out; an ICMP error from a
+    router on the way (unreachable, time exceeded) prints its type and
+    code. At the end it prints how many packets were sent and received.
+
+    Names are looked up like every program does (/etc/hosts, then DNS);
+    if that fails ping says why (not found, no answer, server failure).
+
+    Without -n, ping runs until you stop it with Ctrl+T.
+
+OPTIONS
+    -n <count>
+        Send count requests, then stop.
+
+EXAMPLES
+      ping 192.168.1.1 -n 2
+      ping web.v4.ring -n 3
+      ping 100.72.0.10
+
+SEE ALSO
+    traceroute, ifconfig, ip, nslookup, networking

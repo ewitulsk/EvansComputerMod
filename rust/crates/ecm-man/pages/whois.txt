@@ -1,0 +1,21 @@
+NAME
+    whois - show who holds a domain
+
+SYNOPSIS
+    whois NAME.ecm [-h SERVER]
+
+DESCRIPTION
+    Asks a whois server (TCP port 43) about a domain and prints its
+    answer about the domain, such as its registrant and registrar.
+    The default server is the registrar's, whois.nic.ring.
+
+OPTIONS
+    -h SERVER
+        Ask this whois server (a name or an address) instead.
+
+EXAMPLES
+      whois mybase.ecm
+      whois mybase.ecm -h 100.71.0.56
+
+SEE ALSO
+    domain, registrard, dig, networking

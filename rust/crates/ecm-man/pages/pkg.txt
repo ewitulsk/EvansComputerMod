@@ -1,0 +1,102 @@
+NAME
+    pkg - install, run and publish apps
+
+SYNOPSIS
+    pkg command [args]
+
+DESCRIPTION
+    The package manager. Apps come in .ecmpkg files from repositories:
+    plain HTTP servers with an index.json (pkg serve is one). Installed
+    apps live in /apps/<id>/ and keep their data in /var/apps/<id>/.
+    After an install or removal pkg tells the app manager, which also
+    launches apps and keeps track of their permissions. The App Store on
+    the desktop uses the same repositories. Run pkg with no command for
+    a short list.
+
+COMMANDS
+    repo add name url [--key hex]
+        Add a repository. With --key (the publisher's public key) its
+        packages must be signed with that key.
+
+    repo list
+    repo remove name
+        List the repositories, or remove one.
+
+    update
+        Refresh every repository's index and upgrade the installed apps
+        that have a newer version.
+
+    search [term]
+        Find apps in the repositories: id, version, name, repository,
+        signed or unsigned, summary and the permissions they ask for.
+
+    install id [--force]
+    install file.ecmpkg
+        Install an app from a repository, or from a package file. An app
+        already installed at the same or a newer version is skipped
+        unless --force is given.
+
+    remove id [--purge]
+        Uninstall an app. --purge also deletes its data in
+        /var/apps/<id>.
+
+    list
+        The installed apps.
+
+    info id
+        An installed app's manifest, where it came from, the
+        permissions it asks for and your decisions about them.
+
+    run id [args]
+        Launch an app and show its output until it exits. If it was
+        denied a permission, pkg says how to grant it.
+
+    perm list [id]
+    perm grant|deny|reset id permission
+        Show, or change, the permission decisions of apps.
+
+    open path [--with id]
+        Open a file with the app that opens its type, or with the app
+        named.
+
+    build dir [out-dir] [--sign keyfile]
+        Make <id>-<version>.ecmpkg from a folder holding an app.toml and
+        the app's files (hidden files are skipped), in out-dir (default
+        the current directory). --sign also writes a .sig file and
+        publisher.pub next to it.
+
+    keygen [file]
+        Make a signing key (default /etc/pkg/signing.key) and print its
+        public key.
+
+    serve dir [port] [--name name]
+        Host dir as a repository on port 8080 (or port): pkg writes its
+        index.json from the .ecmpkg files there and answers requests.
+        With disco serve running on this computer it is found on the
+        network.
+
+    discover
+        List the repositories found on the network, with the repo add
+        command for each new one.
+
+FILES
+    /etc/pkg/repos
+        The repositories added with repo add.
+
+    /etc/pkg/signing.key
+        The default signing key made by keygen.
+
+    /apps, /var/apps
+        Installed apps and their data.
+
+EXAMPLES
+      pkg repo add village http://10.0.0.5:8080/
+      pkg search notes
+      pkg install dev.example.notes
+      pkg run dev.example.notes
+      pkg perm grant dev.example.notes network
+      pkg build /home/myapp
+      pkg serve /home/repo &
+
+SEE ALSO
+    disco, gui, filesystem

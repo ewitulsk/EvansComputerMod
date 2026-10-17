@@ -1,0 +1,48 @@
+NAME
+    browser - the Browser: visit web pages on the in-game network
+
+SYNOPSIS
+    browser [address]
+
+DESCRIPTION
+    Opens the Browser window (it needs the GUI: start it with gui), at
+    address if one is given. Pages come over the computer's network
+    (http://, HTTP/1.0; there is no TLS in the game, so https:// is
+    taken as http://) and from its disk (file://). The Browser draws
+    HTML with CSS (the cascade, flexbox, positioning, tables, images,
+    forms) and runs JavaScript. It is a system app on every computer and
+    on the ePhone's home grid; open it from the desktop's launcher or
+    type browser in a Terminal window. In the console use curl instead.
+
+ADDRESSES
+      100.65.0.10              http:// that address
+      10.0.0.5:8080/page.html  with a port and a path
+      web.v4.ring              a name, looked up in DNS
+      /home/site/index.html    a file on this computer
+      file:///home/site/       a folder (its index.html or a list)
+      about:home               the start page
+
+KEYS
+    Alt+Left, Alt+Right, Backspace
+        Back and forward.
+
+    F5
+        Reload.
+
+    Ctrl+L
+        Go to the address bar.
+
+    In a form field: Left/Right/Home/End, Backspace/Delete, Tab to the
+    next field, Enter sends the form.
+
+FILES
+    /var/apps/dev.ecm.browser/browser.json
+        Bookmarks, history (the last 100 pages) and the home page,
+        saved from the Menu.
+
+NOTES
+    Write a site with edit, preview it with browser /home/site/, and
+    serve it to other computers with httpd 80 /home/site &.
+
+SEE ALSO
+    httpd, curl, gui, desktop, scripting

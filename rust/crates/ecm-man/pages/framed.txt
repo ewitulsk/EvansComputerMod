@@ -1,0 +1,106 @@
+NAME
+    framed - use an Advanced SDR's framed (cellular) PHY mode
+
+SYNOPSIS
+    framed [--sdr NAME] status
+
+    framed [--sdr NAME] config [--phy lte|mmwave] [--role bs|ue]
+    [--channel N] [--bw HZ] [--power DBM] [--addr HEX]
+    [--promisc on|off] [--iq]
+
+    framed [--sdr NAME] send <dst|bcast> <text...> [--ack] [--count N]
+    [--interval MS] [--slot N|+N] [--cqi N] [--sub N]
+
+    framed [--sdr NAME] recv [--count N] [--seconds S] [--quiet]
+
+    framed [--sdr NAME] beacon <period_ms|off> [text...] [--index I]
+
+DESCRIPTION
+    In framed mode the radio itself is the modem, as in a real base
+    station: a program picks a PHY profile (LTE or mmWave) and sends
+    and receives whole frames, and the radio measures each one (RSSI,
+    SINR, CQI), picks the modulation, retransmits and keeps slot
+    timing. This is how cell sites and phones talk (see cellular).
+    framed tries the mode from the shell: set it up, send frames, watch
+    what arrives.
+
+    Only the Advanced SDR has framed mode, and an SDR is in one mode at
+    a time: in framed mode the IQ programs (rx_fm, ...) can't use it.
+    An LTE or mmWave Modem module is also a framed radio.
+
+    Profiles: lte, channels 1-6 (downlink 791-841 MHz, uplink 703-753
+    MHz), 1 ms slots; mmwave, channels 1-4 (28.05-28.35 / 27.55-27.85
+    GHz), 125 us slots. Role bs (base station) transmits on the
+    downlink and hears the uplink; ue (phone) the reverse.
+
+COMMANDS
+    status
+        The settings and counters, one "key value" per line.
+
+    config
+        Switch to framed mode and change the given settings, then print
+        the profile, role, channel, frequencies, bandwidth, power and
+        address. With --iq: switch back to IQ mode.
+
+    send <dst|bcast> <text...>
+        Send the text to the radio with hex address dst, or to every
+        radio (bcast). Prints one line per frame: sent, acked, failed
+        or rejected, with attempts, CQI, slot and airtime.
+
+    recv
+        Print each frame received (source, destination, RSSI, SINR,
+        CQI, slot, time, text) for --seconds (default 10), then a
+        summary with the mean levels and the beacon period.
+
+    beacon <period_ms|off> [text...]
+        Have the radio repeat a frame every period_ms (5-10000) on its
+        own, without the program sending each one; off stops it.
+
+OPTIONS
+    --sdr NAME
+        The radio: empty (the first SDR), sdr_N, or an attachment name
+        (an Advanced SDR's side, or a modem module's bay).
+
+    --phy lte|mmwave, --role bs|ue, --channel N
+        Profile, role and channel. Setting the profile resets the
+        radio to channel 1, full bandwidth, the role's default power.
+
+    --bw HZ
+        Bandwidth: lte 1.4M, 3M, 5M or 10M; mmwave 50M or 100M.
+
+    --power DBM
+        Transmit power (lte base station 43 dBm by default, capped by
+        the SDR's 37 dBm; phones 23 dBm).
+
+    --addr HEX, --promisc on|off
+        This radio's 32-bit frame address; promiscuous receives frames
+        addressed to anyone.
+
+    --ack
+        Ask for an acknowledgement (HARQ): unanswered frames are sent
+        again, up to 3 more times, then reported failed.
+
+    --count N, --interval MS
+        send: N frames, MS apart (default 100). recv: stop after N.
+
+    --slot N|+N, --cqi N, --sub N
+        Send in slot N (or N slots from now, up to 1 s ahead), at a
+        forced CQI, on uplink sub-channel 1-4.
+
+    --quiet
+        recv: only the summary.
+
+    --index I
+        beacon: which of the 4 beacons (0-3). Default 0.
+
+EXAMPLES
+      framed config --phy lte --role bs --channel 3 --power 0 --addr 1
+      framed config --phy lte --role ue --channel 3 --power 0 --addr 2
+      framed send bcast hello --count 3
+      framed recv --count 3
+      framed send 1 ack me --ack
+      framed beacon 100 cell A
+      framed config --iq
+
+SEE ALSO
+    cellular, celld-site, celld, radio

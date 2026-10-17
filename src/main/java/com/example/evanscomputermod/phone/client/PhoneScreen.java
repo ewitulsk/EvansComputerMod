@@ -160,6 +160,12 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
      */
     private void rawKey(int key, int mods, boolean down) {
         if (phone == null) return;
+        if (down && (((mods & 2) != 0 && key == 86) || ((mods & 1) != 0 && key == 260))) {
+            // A paste key: the phone's paste reads the player's real clipboard, sent first.
+            String clip = net.minecraft.client.Minecraft.getInstance().keyboardHandler.getClipboard();
+            if (clip != null) PacketDistributor.sendToServer(new com.example.evanscomputermod.network.ClipboardPackets.Push(
+                    phone, (byte) IComputerHost.DISPLAY_OWN, clip));
+        }
         int hid = com.example.evanscomputermod.computer.ui.HidKeys.fromGlfw(key);
         byte action;
         if (down) {

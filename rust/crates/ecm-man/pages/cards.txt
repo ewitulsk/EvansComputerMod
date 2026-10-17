@@ -1,0 +1,56 @@
+NAME
+    cards - bank, NFC, hybrid and SIM cards: readers, printer, programs
+
+DESCRIPTION
+    Cards are items with chips and stripes that programs read and write
+    through blocks next to a computer. Kinds: bank (a chip that signs
+    payments, plus a stripe), NFC (sectors with keys, read over the air),
+    hybrid (both) and SIM (for phones). Every card has two pixel-art
+    faces that a Card Printer prints.
+
+HARDWARE
+    Card Reader/Writer
+        A slot for one card (by hand or hopper). Right-click with a card
+        to insert it, empty-handed to take it out. Auto Eject pushes a
+        card out when a program is done. The card reader module is the
+        same reader in a computer's bay.
+
+    NFC Reader
+        A pad that energises a near-field radio field and talks to cards
+        held near it (an NFC module does the same from a bay, and follows
+        a phone's holder).
+
+    Card Printer
+        Prints a design on a card, using one dye per colour. Hoppers feed
+        blank cards and take printed ones.
+
+PROGRAMS
+    cardtool works every device from the shell. The Card Designer app
+    (on the desktop and the ePhone) draws faces with a pencil, fill,
+    eyedropper, line and mirror, edits the printed fields and stripe,
+    and saves .card files or prints them.
+
+    The village App Store has example apps: bankd (a bank: writes cards,
+    checks signatures, keeps balances), pos (a point of sale), doord (an
+    NFC door), skimmer and rx_nfc (to show what a careless design
+    allows).
+
+SCRIPTING
+    The cards module (import cards / require("cards")):
+      cards.Reader.find()          the reader; reader.card()
+      card.bank.sign(nonce, n)     a payment signature
+      card.stripe.read()           the stripe tracks
+      cards.Nfc.find().poll()      cards in the NFC field
+      nfc.session(uid, sector, key)  read and write a sector
+      cards.Printer.find().print(cards.Design.load(path))
+      cards.Design                 load/save .card, set_pixel, fill, text
+      cards.verify_tag(...)        check a signature (a bank's side)
+
+FILES
+    *.card
+        A design: kind, palette, both faces and the printed fields, as
+        JSON. The Card Designer keeps them in
+        /var/apps/dev.ecm.carddesigner/.
+
+SEE ALSO
+    cardtool, cellular, scripting, peripherals, store

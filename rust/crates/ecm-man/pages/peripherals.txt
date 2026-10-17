@@ -1,0 +1,26 @@
+NAME
+    peripherals - list the peripherals attached to this computer
+
+SYNOPSIS
+    peripherals
+    peripherals name
+
+DESCRIPTION
+    Without an argument, lists every peripheral the computer can use, in
+    a NAME and TYPE table: blocks placed next to the computer and
+    modules installed in its module bays. Programs (Python, Lua, ...)
+    address a peripheral by its NAME.
+
+    With a name, shows that peripheral's type and the methods programs
+    can call on it, one per line.
+
+    If nothing is attached it says so and reminds you how to add one:
+    place a peripheral block next to the computer, or right-click the
+    computer with a Module Expansion Card and then a module.
+
+EXAMPLES
+      peripherals
+      peripherals left
+
+SEE ALSO
+    beep, aplay, filesystem

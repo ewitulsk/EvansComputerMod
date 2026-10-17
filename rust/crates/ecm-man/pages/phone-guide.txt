@@ -1,0 +1,104 @@
+NAME
+    phone-guide - using the ePhone: states, hotkeys, SIM, battery, apps
+
+DESCRIPTION
+    The ePhone is a computer you carry. It is crafted from 6 iron, a
+    glass pane, a Color LCD panel and a Wi-Fi Module, and comes with the
+    panel and the Wi-Fi Module fitted and a full battery. It always runs
+    the GUI: a home screen of apps (see phone).
+
+HOLDING IT
+    Main hand or off hand
+        Awake: it runs and its screen shows in your hand. The first time
+        it boots.
+
+    In the hotbar, not selected
+        Asleep: everything is paused, but its modules stay on (Wi-Fi
+        stays connected). Apps may get short background wakes.
+
+    Anywhere else (inventory, chest, the ground, the dock)
+        Off: paused, radios off the air. Picked up again it carries on
+        where it was.
+
+    Logging out, an empty battery or a server restart stop the phone:
+    it boots again next time, and the apps that were open come back in
+    the background with the state they saved.
+
+USING IT
+    Right-click
+        Open it full screen. Every key and the mouse go to the phone;
+        the mouse is your finger. Esc closes it.
+
+    Sneak + right-click
+        The slot screen: the display panel (Tier 1 to 3), two module
+        slots, the SIM tray, and the toggles Share screen and Others'
+        phones.
+
+HOTKEYS
+    Controls > ePhone has ePhone slot 1 to 6 and ePhone: switch app,
+    all unbound at first. They work while a phone is in your main or
+    off hand and no screen is open, so you can use the phone while you
+    walk. A slot goes to the app on screen, if it claimed it (Notes:
+    slot 1 adds a note; GBA: slots 1-6 are A, B, Left, Right, Up,
+    Start; Video Player: play/pause, back and forward 10 s). switch app
+    shows the next open app. The phone's Controls entry lists the
+    slots each app claimed. A key used for walking still walks.
+
+    With the phone open: Alt+H home, Alt+Backspace back, Alt+Tab next
+    app, Alt+N notifications.
+
+SIM AND CELLULAR
+    Put a SIM card in the SIM tray and an LTE or mmWave modem in a
+    module slot: the phone joins a carrier's cell network and shows its
+    bars and carrier name in the status bar. Taking the SIM out drops
+    the link at once. Settings > Cellular shows the details.
+
+BATTERY AND DOCK
+    The battery drains while the phone is awake (more with a bigger
+    panel), slowly while asleep, and more for each radio module in
+    use. At 0 % the phone turns off and stays off until charged. The
+    item shows a charge bar below 100 %.
+
+    The Charging Dock (2 gold nuggets, redstone, 3 iron): right-click
+    it with the phone to dock it, with an empty hand to take it back.
+    Its lamp is lit while it charges. It also takes FE from any side;
+    a server may make charging need FE. Server owners set the rates in
+    serverconfig/evanscomputermod-phone-server.toml.
+
+APPS
+    Built in: Terminal (a shell, 30 columns wide), Notes, GBA, Settings,
+    Files (your documents, /home), the App Store, the Text Editor, and
+    the Video Player where the server has it. Install more from the App
+    Store or with pkg in the Terminal app.
+
+    One app is on screen at a time. An app you leave is suspended: it
+    saves its state and stops. Exceptions, which you allow per app in
+    Settings > Apps or with pkg perm: background refresh (a short wake
+    every few minutes, e.g. Discord fetching messages) and background
+    audio (music keeps playing).
+
+    A program can read the phone's battery: peripheral.find("ephone")
+    gives battery(), state() and info().
+
+OTHERS SEEING IT
+    Players near you may see your screen, a plain glow or nothing,
+    depending on the server, your Share screen toggle and their Others'
+    phones toggle (both saved in
+    config/evanscomputermod-phone-client.toml). Only you can type on
+    your phone.
+
+MICROPHONE AND AIRPODS
+    The phone has a microphone at your hand (/dev/mic; turn on
+    Microphone Input in Minecraft's Music & Sounds options). Paired
+    AirPods in your ears take over its sound and microphone, so only you
+    hear it: open the case's lid and pair them in Settings > Bluetooth
+    (see bluetooth and voice).
+
+WIRELESS CONTROLLER
+    Hold the phone in one hand and right-click with a Wireless Xbox
+    Controller in the other: it pairs with the phone, and apps see it as
+    controller_1 to controller_4.
+
+SEE ALSO
+    phone, gba-app, notes, settings, store, terminal-app, peripheral,
+    bluetooth, voice

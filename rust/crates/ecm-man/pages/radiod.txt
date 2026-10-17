@@ -1,0 +1,70 @@
+NAME
+    radiod - IP networking over packet radio (the radio0 interface)
+
+SYNOPSIS
+    radiod <iface> up <sdr> <freq> --call CALL[-SSID]
+    [--ip A.B.C.D/N] [--rate SPS] [--power DBM] [--txdelay MS]
+    [--gain DB] [--seconds S] [-v]
+
+DESCRIPTION
+    Turns an SDR into a network interface (usually radio0) that carries
+    IP over 1200-baud packet radio, like Linux kissattach with IP over
+    AX.25. Two or more computers running radiod on the same frequency
+    can ping, and connect to, each other with no cable.
+
+      ping/ssh -> kernel -> radio0 -> radiod
+      radiod: Ethernet <-> AX.25 <-> AFSK1200 over NBFM <-> SDR
+
+    The interface exists while radiod runs; Ctrl+T or kill takes it
+    down. Every station needs its own callsign-SSID and an address in
+    the same subnet. Needs a Standard or Advanced SDR.
+
+    The radio is half duplex: queued packets go out as one burst once
+    the channel has been quiet for 100-250 ms (random, so two stations
+    don't key up together). Every 60 seconds it prints how many packets
+    went each way and how many stations it has heard.
+
+OPTIONS
+    <iface>
+        Interface name, 1-15 letters, digits or _ (e.g. radio0).
+
+    <sdr>
+        The SDR: sdr_0, 0, a side of the computer, or a /dev/sdr path.
+
+    --call CALL[-SSID]
+        Required. This station's AX.25 address, e.g. N0CALL-1. The
+        interface's MAC address is derived from it.
+
+    --ip A.B.C.D/N
+        The interface's address (/24 if no prefix is given).
+
+    --txdelay MS
+        Preamble before each burst, 10-2000 ms. Default 300.
+
+    --gain DB
+        Fixed receiver gain. Default: automatic gain (AGC).
+
+    --power DBM
+        Transmit power. Default the SDR's maximum (37 dBm).
+
+    --rate SPS
+        Sample rate, at least 9600. Default 12000 (all AFSK1200 needs).
+
+    --seconds S
+        Stop after S seconds (for tests). Default: run until stopped.
+
+    -v, --verbose
+        Log every frame sent and received and channel busy/clear.
+
+EXAMPLES
+      radiod radio0 up sdr_0 144.39M --call N0CALL-1 --ip 10.44.0.1/24 &
+      radiod radio0 up sdr_0 144.39M --call N0CALL-2 --ip 10.44.0.2/24 &
+      ping 10.44.0.2
+
+NOTES
+    It is slow: about 0.5-0.75 s per packet, a ping round trip about
+    1.7 s, and the first ping usually times out while ARP resolves.
+    Packets over 256 bytes are split into several frames.
+
+SEE ALSO
+    afsk1200, ifconfig, ping, radio

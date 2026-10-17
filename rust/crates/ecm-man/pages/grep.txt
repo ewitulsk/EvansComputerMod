@@ -1,0 +1,22 @@
+NAME
+    grep - print the lines that contain a text
+
+SYNOPSIS
+    grep pattern
+
+DESCRIPTION
+    Reads its input line by line and prints the lines that contain
+    pattern. The match is plain text and case-sensitive (pattern is not a
+    regular expression). Put spaces inside quotes to search for more
+    than one word.
+
+    grep only reads its input, not files named on the command line: feed
+    it with a pipe or a < redirect.
+
+EXAMPLES
+      cat notes.txt | grep todo
+      grep "out of" < log.txt
+      ls -l bin | grep .wasm
+
+SEE ALSO
+    cat, wc, shell

@@ -1,0 +1,11 @@
+[package]
+name = "ecm-lineedit"
+version = "0.1.0"
+edition = "2021"
+description = "The line editor shared by the shell (console, GUI Terminal, SSH) and the Python and Lua REPLs: cursor movement, word jumps, kill/yank, history with reverse search and ! expansion, Tab completion, bracketed paste."
+
+[lib]
+name = "ecm_lineedit"
+
+[dev-dependencies]
+ecm-vte = { workspace = true }

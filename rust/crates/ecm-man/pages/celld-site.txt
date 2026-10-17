@@ -1,0 +1,90 @@
+NAME
+    celld-site - run a cell site (a cell tower) on this computer
+
+SYNOPSIS
+    celld-site start [--wait]
+
+    celld-site stop | restart | status | log [n]
+
+    celld-site config
+
+    celld-site config set <key> <value> [<key> <value>...]
+
+    celld-site config keys
+
+    celld-site enable | disable
+
+DESCRIPTION
+    A cell site is an Advanced SDR next to this computer, fed by coax
+    from an LTE Sector Antenna or mmWave Array Antenna on a mast.
+    celld-site drives the SDR in framed base-station mode: it sends the
+    cell's beacons, schedules the phones, and relays their traffic to
+    the carrier's core (cored) on another computer, over any IP
+    network, through an encrypted tunnel. The site must be registered
+    at the core (cored site add) and given that credential.
+
+    Set it up with config set, then start it in the background. The
+    running site answers on its admin socket (127.0.0.1, TCP port
+    7710), which the other commands and the Cell Site app use.
+
+COMMANDS
+    start [--wait]
+        Run the site (background it: celld-site start &). It prints the
+        site, cell, profile, channel and core, then keeps connecting to
+        the core. --wait waits for the SDR instead of failing (used at
+        boot).
+
+    stop, restart
+        Stop the running site, or restart it with the saved settings
+        (config changes apply on restart; phones are released).
+
+    status
+        The site, its radio, the core link (up, registering, down, with
+        the last error), the phones (IMSI, state, address, signal,
+        bytes) and the neighbour cells.
+
+    log [n]
+        The last n log lines (default 50).
+
+    config
+        Show /etc/celld-site.toml, and which required keys are missing.
+
+    config set <key> <value>...
+        Change settings (every value is checked). Restart applies them.
+
+    config keys
+        Every key with its meaning and default.
+
+    enable, disable
+        Start (or stop starting) the site at boot: the line
+        "celld-site start --wait &" in /services.cfg.
+
+FILES
+    /etc/celld-site.toml
+        Required: site_id (the name the core knows), secret (32 hex
+        digits, from cored site add), carrier, core (the core
+        computer's IP address), cell_id (unique in the carrier).
+        Optional: profile (lte or mmwave, default lte), channel (lte
+        1-6, mmwave 1-4, default 1), power (dBm, or auto for the
+        profile's base-station power), area, radio (empty = the first
+        SDR), address (frame address in hex, auto = a0000000 + cell
+        id), core_port 7700, core_tunnel_port 7701, tunnel_port 7701,
+        neighbours (cell:channel[:profile],...), idle_after (seconds,
+        0 = never), admin_port 7710.
+
+EXAMPLES
+      celld-site config set site_id site-a secret <secret>
+      celld-site config set carrier cell-red core 10.0.1.1
+      celld-site config set cell_id 1 channel 3
+      celld-site start &
+      celld-site status
+      celld-site enable
+
+NOTES
+    "no framed radio": place an Advanced SDR next to the computer.
+    "core refused this site: authentication failed": site_id or secret
+    don't match what cored site add printed. "can't reach the core":
+    check the core address, the cables and that cored is running.
+
+SEE ALSO
+    cored, cellsite, cellular, framed, antenna

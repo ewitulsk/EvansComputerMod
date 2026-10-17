@@ -1,0 +1,16 @@
+NAME
+    touch - create empty files
+
+SYNOPSIS
+    touch file ...
+
+DESCRIPTION
+    Creates each file that does not exist yet as an empty file. Files
+    that already exist are left as they are.
+
+EXAMPLES
+      touch notes.txt
+      touch a.txt b.txt
+
+SEE ALSO
+    edit, rm, ls, filesystem

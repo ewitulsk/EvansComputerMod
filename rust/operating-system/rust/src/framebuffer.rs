@@ -10,7 +10,8 @@
 //! 0x0A    u8    cursor_visible
 //! 0x0B    u8    cursor_shape (0=block, 1=underline, 2=bar)
 //! 0x0C    u32   dirty_counter
-//! 0x10..0x3F    reserved
+//! 0x10    u32   bell_counter (the host beeps when it changes)
+//! 0x14..0x3F    reserved
 //! 0x40..        cells (4 bytes each: char, attr, flags, reserved)
 //! ```
 //! Attribute byte: low nibble = fg colour, high nibble = bg colour.
@@ -39,6 +40,7 @@ const OFF_CURSOR_Y: usize = 0x08;
 const OFF_CURSOR_VISIBLE: usize = 0x0A;
 const OFF_CURSOR_SHAPE: usize = 0x0B;
 const OFF_DIRTY: usize = 0x0C;
+const OFF_BELL: usize = 0x10;
 
 fn fb() -> &'static mut [u8] {
     hal::FB.bytes()
@@ -150,6 +152,15 @@ pub fn set_cursor(x: u16, y: u16, visible: bool) {
     put_u16(OFF_CURSOR_X, x);
     put_u16(OFF_CURSOR_Y, y);
     fb()[OFF_CURSOR_VISIBLE] = visible as u8;
+}
+
+/// The bell rang (BEL): the host beeps.
+pub fn ring_bell() {
+    put_u32(OFF_BELL, get_u32(OFF_BELL).wrapping_add(1));
+}
+
+pub fn bell_count() -> u32 {
+    get_u32(OFF_BELL)
 }
 
 pub fn mark_dirty() {

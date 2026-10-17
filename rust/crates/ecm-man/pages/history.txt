@@ -1,0 +1,28 @@
+NAME
+    history - list the commands you typed
+
+SYNOPSIS
+    history [N]
+
+    history -c
+
+DESCRIPTION
+    Lists the lines entered at the shell, oldest first, with their
+    numbers (for !N). The history holds the last 500 lines, is saved in
+    /.history and is shared by the Terminal block, Terminal windows and
+    SSH logins, so it survives a reboot.
+
+OPTIONS
+    N
+        Only the last N lines.
+
+    -c
+        Forget the whole history.
+
+EXAMPLES
+      history
+      history 10
+      !12
+
+SEE ALSO
+    keys, shell

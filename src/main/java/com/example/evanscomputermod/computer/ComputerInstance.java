@@ -461,6 +461,15 @@ public class ComputerInstance implements AutoCloseable {
      * Check if the framebuffer dirty counter has changed and sync if so.
      * Called on every worker loop iteration to auto-detect display changes.
      */
+    /** The framebuffer's bell counter last seen (MIN_VALUE: not read yet). */
+    private int lastBellCounter = Integer.MIN_VALUE;
+    private final java.util.concurrent.atomic.AtomicInteger bellsRung = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** How many times the console's bell rang since boot (for checks). */
+    public int bellsRung() {
+        return bellsRung.get();
+    }
+
     private void checkFramebufferDirty() {
         if (memory == null) return;
         // Drain any pending screen-header write staged by the server thread.
@@ -479,6 +488,14 @@ public class ComputerInstance implements AutoCloseable {
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
                 changed = true;
+            }
+            int bells = memory.readInt(fbBase + 0x10);
+            if (bells != lastBellCounter) {
+                boolean first = lastBellCounter == Integer.MIN_VALUE;
+                lastBellCounter = bells;
+                IComputerHost h = host;
+                if (!first) bellsRung.incrementAndGet();
+                if (!first && h != null && h.getServer() != null) h.getServer().execute(h::bell);
             }
 
             if (memSize >= gfxBase + 16) {
@@ -1545,13 +1562,56 @@ public class ComputerInstance implements AutoCloseable {
      * no-op stubs that return -1 to indicate "not implemented" so the WASM
      * module can load.
      */
+    /** The kernel's open redirect files and pipe ends, by the handle number it was given. */
+    private final java.util.Map<Integer, com.example.evanscomputermod.computer.wasi.SharedFd.Handle> kernelFds =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private int nextKernelFd = 100;
+
+    private int kernelFd(com.example.evanscomputermod.computer.wasi.WasiFileDescriptor desc) {
+        int fd = nextKernelFd++;
+        kernelFds.put(fd, new com.example.evanscomputermod.computer.wasi.SharedFd(desc).open());
+        return fd;
+    }
+
     private void createKernelExtensionStubs() {
-        // FD operations — stubs returning -1
-        addStubI32_3("fd_open");
+        // The shell's redirects and pipes: fd_open / pipe_create give the kernel
+        // handles (kernelFds) that process_spawn hands to children as stdio.
+        hh("fd_open", III, RET_I32, (inst, args) -> {
+            String path = readStringFromMemory((int) args[0], (int) args[1]);
+            int flags = (int) args[2];
+            boolean write = (flags & 1) != 0;
+            MountedPath mp = write ? resolveWritePath(path) : resolveReadPath(path);
+            if (mp == null || (write && mp.readOnly())) return retI32(-1);
+            try {
+                if (write) {
+                    if ((flags & 4) == 0 && !Files.exists(mp.realPath)) return retI32(-1);
+                    Files.createDirectories(mp.realPath.getParent());
+                } else if (!Files.isRegularFile(mp.realPath)) {
+                    return retI32(-1);
+                }
+                var file = new com.example.evanscomputermod.computer.wasi.VfsFileFd(mp.realPath, !write, write, (flags & 16) != 0);
+                if (write && (flags & 8) != 0) file.truncate();
+                return retI32(kernelFd(file));
+            } catch (java.io.IOException e) {
+                return retI32(-1);
+            }
+        });
         addStubI32_3("fd_read");
         addStubI32_3("fd_write");
-        addStubI32_1("fd_close");
-        addStubI32_2("pipe_create");
+        hh("fd_close", I, RET_I32, (inst, args) -> {
+            var h = kernelFds.remove((int) args[0]);
+            if (h == null) return retI32(-1);
+            h.close();
+            return retI32(0);
+        });
+        hh("pipe_create", II, RET_I32, (inst, args) -> {
+            var pipe = new com.example.evanscomputermod.computer.wasi.WasiPipe(16384);
+            int r = kernelFd(new com.example.evanscomputermod.computer.wasi.PipeFd(pipe, true));
+            int w = kernelFd(new com.example.evanscomputermod.computer.wasi.PipeFd(pipe, false));
+            memory.writeInt((int) args[0], r);
+            memory.writeInt((int) args[1], w);
+            return retI32(0);
+        });
 
         // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
         hh("process_spawn",
@@ -1578,7 +1638,12 @@ public class ComputerInstance implements AutoCloseable {
             // A program started for a request of an app (a line it typed into its shell
             // session) joins the app's process group: same identity, same permissions.
             int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
-            int pid = processManager.spawn(mp.realPath, argv, env, group);
+            var stdio = new com.example.evanscomputermod.computer.wasi.SharedFd[3];
+            for (int i = 0; i < 3; i++) {
+                var h = kernelFds.get((int) args[4 + i]);
+                if (h != null) stdio[i] = h.shared();
+            }
+            int pid = processManager.spawn(mp.realPath, argv, env, group, stdio);
             return retI32(pid);
         });
 
@@ -1607,8 +1672,16 @@ public class ComputerInstance implements AutoCloseable {
             return retI32(processManager.writeInput((int) args[0], data));
         });
 
-        hh("process_kill", II, RET_I32, (inst, args) ->
-                retI32(processManager.kill((int) args[0])));
+        // process_kill(pid, signal): 19/20 (SIGSTOP/SIGTSTP) pause the process
+        // (Ctrl+Z), 18 (SIGCONT) resumes it, anything else stops it.
+        hh("process_kill", II, RET_I32, (inst, args) -> {
+            int pid = (int) args[0];
+            return retI32(switch ((int) args[1]) {
+                case 19, 20 -> processManager.pause(pid);
+                case 18 -> processManager.resume(pid);
+                default -> processManager.kill(pid);
+            });
+        });
 
         hh("process_list", II, RET_I32, (inst, args) -> {
             String json = processManager.listProcesses();
@@ -2616,6 +2689,42 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /** Typed text from a player (§7 Text), for the GUI. */
+    /** The player who last gave this computer keys or a clipboard (who gets its copies). */
+    private volatile java.util.UUID uiPlayer;
+    /** The last text sent to a player's real clipboard (for checks). */
+    private volatile String lastClipboardToPlayer = "";
+
+    public void noteUiPlayer(java.util.UUID player) {
+        uiPlayer = player;
+    }
+
+    /** The player's real clipboard, sent by their client before a paste key. */
+    public void clipboardFromPlayer(java.util.UUID player, String text) {
+        uiPlayer = player;
+        uiManager.clipboardFromPlayer(text);
+    }
+
+    /** An app copied text: put it on the real clipboard of the player using the computer. */
+    public void clipboardToPlayer(String text) {
+        lastClipboardToPlayer = text;
+        IComputerHost h = host;
+        java.util.UUID who = uiPlayer;
+        if (h == null || who == null || h.getServer() == null) return;
+        var server = h.getServer();
+        server.execute(() -> {
+            net.minecraft.server.level.ServerPlayer p = server.getPlayerList().getPlayer(who);
+            if (p != null && !(p instanceof net.neoforged.neoforge.common.util.FakePlayer)) {
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p,
+                        new com.example.evanscomputermod.network.ClipboardPackets.Set(text));
+            }
+        });
+    }
+
+    /** The last text an app copied for the player's real clipboard ("" if none). */
+    public String lastClipboardToPlayer() {
+        return lastClipboardToPlayer;
+    }
+
     public void handleTextEvent(String text) {
         if (text != null && !text.isEmpty()) uiManager.text(text);
     }
@@ -3588,6 +3697,8 @@ public class ComputerInstance implements AutoCloseable {
         shutdownRequested = true;
         interrupted = true;  // Also set interrupt to abort any running WASM
         if(processManager!=null) processManager.killAll();
+        kernelFds.values().forEach(h -> h.close());
+        kernelFds.clear();
         if(instance!=null) instance.requestInterrupt();
 
         // Interrupt and wait for worker thread to finish
