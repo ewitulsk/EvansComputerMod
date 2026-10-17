@@ -246,7 +246,7 @@ public final class CellularTests {
                 if (server.getComputer() == null || web.getComputer() == null) return timeout(start, failure, "the package server or the web server did not boot");
                 String serverScreen = ScenarioRun.screen(server.getDisplay());
                 if (phase[0] == 1) {
-                    if (!serverScreen.contains("Serving 1 packages from /srv/repo on port 8080"))
+                    if (!java.util.regex.Pattern.compile("Serving \\d+ packages from /srv/repo on port 8080").matcher(serverScreen).find())
                         return timeout(start, failure, "pkg serve is not serving the repository:\n" + serverScreen.stripTrailing());
                     java.util.List<String> details = new java.util.ArrayList<>();
                     String why = com.example.evanscomputermod.testing.TechCellChecks.repoIndex(level, d, details);
@@ -274,7 +274,7 @@ public final class CellularTests {
                         web.getComputer().sendInput("pkg search\n");
                         at[1] = System.currentTimeMillis() + 6000;
                     }
-                    return timeout(start, failure, "pkg search on the web server did not list Chat from the repository:\n" + webScreen.stripTrailing() + "\n--- package server ---\n"
+                    return timeout(start, failure, "pkg search on the web server did not list Discord from the repository:\n" + webScreen.stripTrailing() + "\n--- package server ---\n"
                             + serverScreen.stripTrailing());
                 }
                 if (phase[0] == 3) {

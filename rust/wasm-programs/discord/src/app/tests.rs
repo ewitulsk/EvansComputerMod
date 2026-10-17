@@ -298,3 +298,27 @@ fn a_backend_that_goes_away_drops_its_servers() {
     assert_eq!(rail_names(&d), vec!["Lab"]);
     assert_eq!(d.model.borrow().current().unwrap().1.name, "Lab", "another server opens");
 }
+
+#[test]
+fn settings_change_the_username_on_every_backend() {
+    let (mut d, mock) = start("settings", 640, 400, two_backends(), None);
+    click(&mut d, &mock, "settings");
+    assert_eq!(d.model.borrow().page, Page::Settings);
+    assert_eq!(d.model.borrow().name_draft, "pc-0a1b", "the field starts with the current name");
+    // Control: an invalid name is refused and changes nothing.
+    type_into(&mut d, &mock, "username", " bad name");
+    click(&mut d, &mock, "save_username");
+    assert!(d.model.borrow().notice.as_deref().unwrap_or("").contains("invalid nickname"), "{:?}", d.model.borrow().notice);
+    assert_eq!(d.model.borrow().nick, "pc-0a1b");
+    d.model.borrow_mut().name_draft = "alex".into();
+    click(&mut d, &mock, "save_username");
+    assert_eq!(d.model.borrow().nick, "alex");
+    assert_eq!(d.model.borrow().notice.as_deref(), Some("Your username is now alex"));
+    // Both backends renamed us; it is saved for next time.
+    for b in &d.net.backends {
+        assert!(b.backend.nicks().contains(&"alex".to_string()), "{:?}", b.backend.nicks());
+    }
+    assert!(d.model.borrow().backends.iter().all(|b| b.me == "alex"));
+    let saved = std::fs::read_to_string(format!("{}/settings", d.data_dir.clone().unwrap())).unwrap();
+    assert!(saved.starts_with("nick alex\n"), "{saved}");
+}

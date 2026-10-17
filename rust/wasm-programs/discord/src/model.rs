@@ -166,6 +166,8 @@ pub enum Page {
     Join,
     /// Make a channel in the open server (its owner).
     NewChannel,
+    /// Your settings: the username.
+    Settings,
 }
 
 /// The voice channel we are in.
@@ -222,6 +224,8 @@ pub struct Model {
     pub new_channel: String,
     pub new_channel_kind: Kind,
     pub add_address: String,
+    /// The Settings page's username field.
+    pub name_draft: String,
     /// A server we made or joined, to open as soon as the backend shows it ours: (backend, name).
     pub open_when_made: Option<(usize, String)>,
     /// The saved settings' open server, opened once its backend shows it.
@@ -257,6 +261,7 @@ impl Default for Model {
             new_channel: String::new(),
             new_channel_kind: Kind::Text,
             add_address: String::new(),
+            name_draft: String::new(),
             open_when_made: None,
             reopen: None,
             logo: 0,
@@ -563,6 +568,25 @@ impl Model {
         for b in self.backends.iter_mut().filter(|b| b.up()) {
             b.outbox.push(Cmd::Nick(n.clone()).line());
         }
+        Ok(())
+    }
+
+    /// Open Settings with the username field filled in.
+    pub fn open_settings(&mut self) {
+        self.name_draft = self.nick.clone();
+        self.notice = None;
+        self.page = Page::Settings;
+    }
+
+    /// Settings' Save: the new username, everywhere (every connected backend is told; the
+    /// others hear it when they connect).
+    pub fn save_username(&mut self) -> Result<(), String> {
+        let wanted = self.name_draft.trim().to_string();
+        if wanted == self.nick {
+            return Ok(());
+        }
+        self.set_nick(&wanted)?;
+        self.notice = Some(format!("Your username is now {wanted}"));
         Ok(())
     }
 

@@ -66,6 +66,9 @@ every ISP router answers discovery for it ring-wide.
   a notification, "<nick> in #channel (Server)".
 - **Members** (wide windows: always on the right; phones: the Members button): online
   first.
+- **Settings** (the button by your name): *My Account* with your username. Save (or
+  Enter) renames you on every backend, like `/nick`; the page lists what each connected
+  backend calls you (one adds a number if the name is taken there).
 - **Sizes:** compact (phones) one page at a time (servers and channels, or a channel,
   or members); medium and wide side by side, in Discord's dark colours.
 

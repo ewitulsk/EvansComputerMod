@@ -197,7 +197,7 @@ fn no_server_text(st: &Model) -> String {
 
 fn user_area_h(st: &Model) -> i32 {
     let voice = if st.voice.is_some() || st.voice_wanted.is_some() { LINE + CAPTION + BUTTON + 12 } else { 0 };
-    voice + BUTTON + 12
+    voice + 2 * BUTTON + 16
 }
 
 /// The voice panel (while in a voice channel) and your name with Mute / Deafen.
@@ -216,24 +216,35 @@ fn user_area(m: &M, st: &Model) -> Element {
     }
     let mute = m.clone();
     let deaf = m.clone();
+    let gear = m.clone();
     let me = if st.nick.is_empty() { "you".to_string() } else { st.nick.clone() };
     c.child(
+        // Your name and Settings, then Mute / Deafen under them (one row is too wide for the sidebar).
         panel().fill(PANEL).radius(4).padding(4).child(
-            row()
+            column()
                 .gap(4)
-                .align(Align::Center)
-                .child(label(me).color(TEXT).wrap(false).id("me"))
-                .child(spacer())
-                .child(button(if st.muted { "Unmute" } else { "Mute" }).id("mute").style(if st.muted { "danger" } else { "flat" }).on_click(move |_, _| {
-                    let mut s = mute.borrow_mut();
-                    s.muted = !s.muted;
-                }))
-                .child(button(if st.deafened { "Undeafen" } else { "Deafen" }).id("deafen").style(if st.deafened { "danger" } else { "flat" }).on_click(
-                    move |_, _| {
-                        let mut s = deaf.borrow_mut();
-                        s.deafened = !s.deafened;
-                    },
-                )),
+                .child(
+                    row()
+                        .gap(4)
+                        .align(Align::Center)
+                        .child(label(me).color(TEXT).wrap(false).id("me"))
+                        .child(spacer())
+                        .child(button("Settings").id("settings").style("flat").on_click(move |_, _| gear.borrow_mut().open_settings())),
+                )
+                .child(
+                    row()
+                        .gap(4)
+                        .child(button(if st.muted { "Unmute" } else { "Mute" }).id("mute").style(if st.muted { "danger" } else { "flat" }).on_click(move |_, _| {
+                            let mut s = mute.borrow_mut();
+                            s.muted = !s.muted;
+                        }))
+                        .child(button(if st.deafened { "Undeafen" } else { "Deafen" }).id("deafen").style(if st.deafened { "danger" } else { "flat" }).on_click(
+                            move |_, _| {
+                                let mut s = deaf.borrow_mut();
+                                s.deafened = !s.deafened;
+                            },
+                        )),
+                ),
         ),
     )
 }
@@ -492,6 +503,37 @@ fn new_channel_page(m: &M, st: &Model) -> Element {
     c.child(row().gap(6).child(back_button(m)).child(spacer()).child(button("Create Channel").id("create_channel").style("primary").on_click(move |_, _| make(&go))))
 }
 
+fn settings_page(m: &M, st: &Model) -> Element {
+    let draft = m.clone();
+    let go = m.clone();
+    let go2 = m.clone();
+    let save = move |m: &M| {
+        let r = m.borrow_mut().save_username();
+        if let Err(e) = r {
+            m.borrow_mut().notice = Some(e);
+        }
+    };
+    let save2 = save.clone();
+    let mut c = column()
+        .gap(8)
+        .child(heading("Settings"))
+        .child(caption("MY ACCOUNT"))
+        .child(label("Username").color(TEXT))
+        .child(text_field().id("username").placeholder("Username").text(st.name_draft.clone()).on_change(move |cx, _| {
+            let t = cx.text("username");
+            draft.borrow_mut().name_draft = t;
+        }).on_submit(move |_, _| save2(&go2)))
+        .child(label("1-16 letters, digits, '-', '_' or '.'. Everyone on every backend sees the new name.").color(MUTED));
+    // What each connected backend calls you now (it may have added a number if the name was taken there).
+    for b in st.backends.iter().filter(|b| b.up() && !b.me.is_empty()) {
+        c = c.child(caption(format!("On {}: {}", b.name, b.me)));
+    }
+    if let Some(n) = &st.notice {
+        c = c.child(label(n.clone()).color(MUTED).id("notice"));
+    }
+    c.child(row().gap(6).child(back_button(m)).child(spacer()).child(button("Save").id("save_username").style("primary").on_click(move |_, _| save(&go))))
+}
+
 /// A page that isn't Servers/Chat, in a scroll view `h` tall; None for those two.
 fn other_page(m: &M, st: &Model, h: i32) -> Option<Element> {
     let page = match st.page {
@@ -499,6 +541,7 @@ fn other_page(m: &M, st: &Model, h: i32) -> Option<Element> {
         Page::Create => create_page(m, st),
         Page::Join => join_page(m, st),
         Page::NewChannel => new_channel_page(m, st),
+        Page::Settings => settings_page(m, st),
         Page::Members => column().gap(8).child(row().child(back_button(m)).child(heading("Members"))).child(members(st)),
         Page::Servers | Page::Chat => return None,
     };

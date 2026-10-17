@@ -46,7 +46,7 @@ public final class DiscordScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static final String DISCORD = AppScenarios.DISCORD;
-    static final BlockPos SERVER = new BlockPos(0, 1, 0), ALEX = new BlockPos(4, 1, 0), BO = new BlockPos(0, 1, 30);
+    public static final BlockPos SERVER = new BlockPos(0, 1, 0), ALEX = new BlockPos(4, 1, 0), BO = new BlockPos(0, 1, 30);
     static final BlockPos ALEX_MIC = new BlockPos(3, 1, 0), ALEX_SPEAKER = new BlockPos(5, 1, 0);
     static final BlockPos BO_MIC = new BlockPos(1, 1, 30), BO_SPEAKER = new BlockPos(-1, 1, 30);
     static final BlockPos SERVER_SPEAKER = new BlockPos(1, 1, 0);

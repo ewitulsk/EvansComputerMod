@@ -279,10 +279,11 @@ public final class TechCellChecks {
             if (!ix.has("publisher_key") || !repo.publicKey().equals(ix.get("publisher_key").getAsString()))
                 return "the index's publisher_key is not the world's repository key: " + ix.get("publisher_key");
             var pkgs = ix.getAsJsonArray("packages");
-            if (pkgs.size() != 1) return "the repository lists " + pkgs.size() + " packages, not only Discord: " + pkgs;
-            var e = pkgs.get(0).getAsJsonObject();
+            // Discord plus the card example packages (docs/CARDS.md); Discord is the one checked here.
+            com.google.gson.JsonObject e = null;
+            for (var el : pkgs) if (CHAT_APP.equals(el.getAsJsonObject().get("id").getAsString())) e = el.getAsJsonObject();
+            if (e == null) return "the repository does not list Discord: " + pkgs;
             String id = e.get("id").getAsString(), version = e.get("version").getAsString(), file = e.get("file").getAsString();
-            if (!id.equals(CHAT_APP)) return "the repository's package is " + id;
             byte[] bytes = Files.readAllBytes(dir.resolve(file));
             var p = VillageRepo.read(file, bytes);
             if (bytes.length != e.get("size").getAsLong() || !p.sha256().equals(e.get("sha256").getAsString())) return file + ": size or sha256 differ from the index";
