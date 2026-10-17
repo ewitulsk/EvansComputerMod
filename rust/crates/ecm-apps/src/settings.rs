@@ -3,19 +3,24 @@
 //! theme / shell / autostart (written to `/etc/ui.toml`; the desktop sends
 //! the new theme, so every open app restyles live), Apps (installed apps,
 //! their permissions, the files they were given and the types they open by
-//! default: `ecm_apps_ui::settings::AppsSection` over `app_ctl`) and About.
+//! default: `ecm_apps_ui::settings::AppsSection` over `app_ctl`), Sound (the
+//! default speaker and microphone, written to `/etc/sound.conf`, their volume
+//! and gain, and a live input level meter that records from the microphone
+//! while the page is open), Bluetooth (an ePhone's radio: pair AirPods whose
+//! case lid is open, connect, disconnect and forget them; docs/BLUETOOTH.md) and
+//! About.
 //!
 //! The layout adapts to the size class: a sidebar of sections beside the
 //! page on medium and wide windows (wider on wide), and on compact ones a
 //! header with the section's name and a Sections menu above the page.
 //!
-//!   settings [wifi|cellular|display|appearance|apps|about]
+//!   settings [wifi|cellular|display|appearance|apps|sound|bluetooth|about]
 
-use crate::sys::{self, CellState, DisplayState, Network, Sys, WifiState};
+use crate::sys::{self, BtState, CellState, DisplayState, Network, SoundDevice, Sys, WifiState};
 use crate::uitoml;
 use ecm_apps_ui::appctl::AppCtl;
 use ecm_apps_ui::settings::AppsSection;
-use ecm_ui::element::{button, column, label, list, responsive, row, scroll_view, spacer, text_field, toggle, Align, Element};
+use ecm_ui::element::{button, column, label, list, responsive, row, scroll_view, slider, spacer, text_field, toggle, Align, Element};
 use ecm_ui::window::EventValue;
 use ecm_ui::{App, Ctx, Theme};
 use ecm_ui_proto as proto;
@@ -23,10 +28,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// The sections, in order.
-pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "Apps", "About"];
+pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "Apps", "Sound", "Bluetooth", "About"];
 
 /// The Apps section's index in [`SECTIONS`].
 pub const APPS: usize = 4;
+
+/// The Sound section's index in [`SECTIONS`].
+pub const SOUND: usize = 5;
+
+/// The Bluetooth section's index in [`SECTIONS`].
+pub const BLUETOOTH: usize = 6;
 
 /// The shells Settings offers (program / app id, label).
 pub const SHELLS: &[(&str, &str)] = &[("dev.ecm.desktop", "Desktop"), ("test-shell", "Test shell (tiling)")];
@@ -39,7 +50,9 @@ pub fn section_named(s: &str) -> Option<usize> {
         "display" => 2,
         "appearance" | "theme" => 3,
         "apps" | "permissions" => APPS,
-        "about" => 5,
+        "sound" | "audio" | "microphone" => SOUND,
+        "bluetooth" | "bt" | "airpods" => BLUETOOTH,
+        "about" => 7,
         _ => return None,
     })
 }
@@ -66,6 +79,13 @@ pub struct State {
     pub notice: String,
     /// Settings -> Apps (the app manager through `app_ctl`).
     pub apps: Option<AppsSection>,
+    /// Settings -> Sound: speakers and microphones, the defaults from /etc/sound.conf, the input level.
+    pub sound: Vec<SoundDevice>,
+    pub default_output: Option<String>,
+    pub default_input: Option<String>,
+    pub input_level: Option<i32>,
+    /// Settings -> Bluetooth.
+    pub bt: BtState,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -97,6 +117,64 @@ pub fn refresh(st: &Shared, sys: &SysRef) {
     s.theme = uitoml::get(&toml, "theme").unwrap_or_else(|| "ecm-default".into());
     s.shell = uitoml::get(&toml, "shell").unwrap_or_else(|| "dev.ecm.desktop".into());
     s.autostart = uitoml::get(&toml, "autostart").as_deref() == Some("true");
+    drop(s);
+    refresh_sound(st, sys);
+    let bt = sys.borrow_mut().bluetooth();
+    st.borrow_mut().bt = bt;
+}
+
+fn read_sound_conf(sys: &SysRef) -> String {
+    sys::read_file(&**sys.borrow(), ecm_audio::SOUND_CONF).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+}
+
+/// Re-read the speakers, microphones and the defaults.
+fn refresh_sound(st: &Shared, sys: &SysRef) {
+    let devices = sys.borrow_mut().sound_devices();
+    let conf = read_sound_conf(sys);
+    let mut s = st.borrow_mut();
+    s.sound = devices;
+    s.default_output = ecm_audio::parse_sound_conf(&conf, "output");
+    s.default_input = ecm_audio::parse_sound_conf(&conf, "input");
+}
+
+/// The device of a kind that is in use: the default if it is attached, else the first.
+fn active(s: &State, input: bool) -> Option<SoundDevice> {
+    let want = if input { &s.default_input } else { &s.default_output };
+    let mut of_kind = s.sound.iter().filter(|d| d.input == input);
+    match want {
+        Some(n) => s.sound.iter().find(|d| d.input == input && &d.name == n).cloned().or_else(|| of_kind.next().cloned()),
+        None => of_kind.next().cloned(),
+    }
+}
+
+/// Make `name` the default output or input (in /etc/sound.conf).
+fn set_default(st: &Shared, sys: &SysRef, input: bool, name: &str) {
+    let key = if input { "input" } else { "output" };
+    let text = ecm_audio::set_sound_conf(&read_sound_conf(sys), key, Some(name));
+    let r = {
+        let s = sys.borrow();
+        let _ = std::fs::create_dir_all(sys::host_path(&s.root(), "/etc"));
+        sys::write_file(&**s, ecm_audio::SOUND_CONF, text.as_bytes())
+    };
+    let mut s = st.borrow_mut();
+    match r {
+        Ok(()) => {
+            if input {
+                s.default_input = Some(name.to_string());
+                s.input_level = None;
+            } else {
+                s.default_output = Some(name.to_string());
+            }
+            s.notice = format!("Default {}: {name}", if input { "input" } else { "output" });
+        }
+        Err(e) => s.notice = format!("Can't write {}: {e}", ecm_audio::SOUND_CONF),
+    }
+}
+
+/// A text level meter: 20 cells over -60..0 dBFS.
+pub fn meter(db: i32) -> String {
+    let n = ((db + 60).clamp(0, 60) / 3) as usize;
+    format!("{}{}", "|".repeat(n), ".".repeat(20 - n))
 }
 
 fn scan(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
@@ -433,6 +511,193 @@ fn appearance_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
     col
 }
 
+fn device_list(s: &State, st: &Shared, sys: &SysRef, input: bool) -> Element {
+    let devices: Vec<SoundDevice> = s.sound.iter().filter(|d| d.input == input).cloned().collect();
+    let cur = active(s, input);
+    let selected = cur.as_ref().and_then(|c| devices.iter().position(|d| d.name == c.name));
+    let (a, ya) = (st.clone(), sys.clone());
+    let names = devices.clone();
+    let l = list()
+        .id(if input { "inputs" } else { "outputs" })
+        .children(devices.iter().map(|d| label(d.name.clone()).wrap(false)))
+        .on_select(move |cx, e| {
+            if let EventValue::Index(i) = e.value {
+                if let Some(d) = names.get(i) {
+                    set_default(&a, &ya, input, &d.name);
+                    cx.invalidate();
+                }
+            }
+        });
+    match selected {
+        Some(i) => l.selected(i),
+        None => l,
+    }
+}
+
+fn volume_slider(dev: &SoundDevice, st: &Shared, sys: &SysRef) -> Element {
+    let (a, ya, d) = (st.clone(), sys.clone(), dev.clone());
+    row()
+        .gap(8)
+        .align(Align::Center)
+        .child(label(if dev.input { "Input volume" } else { "Volume" }).wrap(false))
+        .child(slider(0, 100).value(dev.volume as i32).id(if dev.input { "input_volume" } else { "output_volume" }).grow(1).on_change(
+            move |cx, e| {
+                if let EventValue::Int(v) = e.value {
+                    let r = ya.borrow_mut().sound_set_volume(&d, v.clamp(0, 100) as u8);
+                    let mut s = a.borrow_mut();
+                    if let Some(x) = s.sound.iter_mut().find(|x| x.name == d.name && x.input == d.input) {
+                        x.volume = v as i64;
+                    }
+                    if let Err(e) = r {
+                        s.notice = e;
+                    }
+                    cx.invalidate();
+                }
+            },
+        ))
+        .child(label(format!("{}", dev.volume)).wrap(false))
+}
+
+fn sound_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
+    let mut c = column().gap(8).child(title("Sound")).child(label("Output").style("caption"));
+    match active(s, false) {
+        Some(d) => c = c.child(device_list(s, st, sys, false)).child(volume_slider(&d, st, sys)),
+        None => c = c.child(label("No speaker: place a Speaker next to the computer.").id("no_output")),
+    }
+    c = c.child(label("Input").style("caption"));
+    match active(s, true) {
+        Some(d) => {
+            let level = match s.input_level {
+                Some(db) => format!("{}  {} dBFS", meter(db), db),
+                None => format!("{}  listening...", meter(-99)),
+            };
+            c = c
+                .child(device_list(s, st, sys, true))
+                .child(volume_slider(&d, st, sys))
+                .child(row().gap(8).child(label("Input level").wrap(false)).child(label(level).id("input_level").wrap(false)))
+                .child(
+                    label("The microphone hears speakers nearby, and players who turned on Microphone input in their game settings.")
+                        .style("caption"),
+                );
+        }
+        None => c = c.child(label("No microphone: place a Microphone next to the computer.").id("no_input")),
+    }
+    if !s.notice.is_empty() && s.section == SOUND {
+        c = c.child(label(s.notice.clone()).id("sound_notice").style("caption"));
+    }
+    c
+}
+
+/// Run a Bluetooth command; a problem becomes the page's notice.
+fn bt_command(cx: &mut Ctx, st: &Shared, sys: &SysRef, cmd: &str, address: &str) {
+    let r = sys.borrow_mut().bt_command(cmd, address);
+    let bt = sys.borrow_mut().bluetooth();
+    let mut s = st.borrow_mut();
+    s.bt = bt;
+    s.notice = match r {
+        Ok(()) => match cmd {
+            "pair" => "Pairing...".into(),
+            "connect" => "Connecting...".into(),
+            _ => String::new(),
+        },
+        Err(e) => e,
+    };
+    cx.invalidate();
+}
+
+/// What a paired device is doing, for its row.
+fn bt_status(d: &sys::BtDevice) -> String {
+    let state = if d.connected {
+        "Connected"
+    } else if d.connecting {
+        "Connecting..."
+    } else {
+        "Not Connected"
+    };
+    match d.battery {
+        Some(b) if d.connected => format!("{state} · {b}%"),
+        _ => state.to_string(),
+    }
+}
+
+fn bluetooth_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
+    let bt = &s.bt;
+    let mut c = column().gap(8).child(title("Bluetooth"));
+    if !bt.present {
+        return c
+            .child(label("This computer has no Bluetooth radio.").id("no_bluetooth"))
+            .child(label("Every ePhone has one: pair AirPods with it from its Settings.").style("caption"));
+    }
+    let (p, yp) = (st.clone(), sys.clone());
+    c = c.child(toggle("Bluetooth").id("bt_power").checked(bt.powered).on_change(move |cx, e| {
+        if let EventValue::Bool(on) = e.value {
+            bt_command(cx, &p, &yp, if on { "power on" } else { "power off" }, "");
+        }
+    }));
+    if !bt.powered {
+        return c.child(label("Bluetooth is off.").id("bt_off").style("caption"));
+    }
+    c = c.child(label(format!("Discoverable as \"{}\" ({})", bt.name, bt.address)).style("caption"));
+    c = c.child(label("MY DEVICES").style("caption"));
+    if bt.devices.is_empty() {
+        c = c.child(label("No devices paired yet.").id("bt_none"));
+    }
+    for (i, d) in bt.devices.iter().enumerate() {
+        let mut actions = row().gap(6);
+        let (a, ya, addr) = (st.clone(), sys.clone(), d.address.clone());
+        actions = if d.connected {
+            actions.child(button("Disconnect").id(format!("bt_disconnect:{i}")).on_click(move |cx, _| bt_command(cx, &a, &ya, "disconnect", "")))
+        } else {
+            actions.child(button("Connect").id(format!("bt_connect:{i}")).enabled(!d.connecting).on_click(move |cx, _| bt_command(cx, &a, &ya, "connect", &addr)))
+        };
+        let (f, yf, addr) = (st.clone(), sys.clone(), d.address.clone());
+        actions = actions.child(button("Forget").id(format!("bt_forget:{i}")).style("flat").on_click(move |cx, _| bt_command(cx, &f, &yf, "forget", &addr)));
+        c = c
+            .child(
+                row()
+                    .gap(8)
+                    .align(Align::Center)
+                    .child(label(d.name.clone()).wrap(false))
+                    .child(spacer())
+                    .child(label(bt_status(d)).id(format!("bt_state:{i}")).style("caption").wrap(false)),
+            )
+            .child(actions);
+    }
+    c = c.child(label("OTHER DEVICES").style("caption"));
+    if bt.nearby.is_empty() {
+        c = c.child(label("Looking... To pair AirPods, open their case's lid next to this phone (right-click the case).").id("bt_looking").style("caption"));
+    }
+    for (i, d) in bt.nearby.iter().enumerate() {
+        let (a, ya, addr) = (st.clone(), sys.clone(), d.address.clone());
+        let hint = if d.pairable { "ready to pair" } else { "not in pairing mode" };
+        c = c.child(
+            row()
+                .gap(8)
+                .align(Align::Center)
+                .child(column().child(label(d.name.clone()).wrap(false)).child(label(hint).style("caption").wrap(false)))
+                .child(spacer())
+                .child(button("Pair").id(format!("bt_pair:{i}")).style("primary").enabled(d.pairable).on_click(move |cx, _| bt_command(cx, &a, &ya, "pair", &addr))),
+        );
+    }
+    let route = if bt.audio == "headphones" {
+        let name = bt.devices.iter().find(|d| d.connected).map(|d| d.name.clone()).unwrap_or_else(|| "headphones".into());
+        format!("Sound plays on: {name}")
+    } else {
+        "Sound plays on: this phone's speaker".to_string()
+    };
+    c = c.child(label(route).id("bt_audio"));
+    let note = if !s.notice.is_empty() && s.section == BLUETOOTH { s.notice.clone() } else { String::new() };
+    let last = match bt.last.as_str() {
+        "" | "pairing" | "connecting" | "connected" | "paired" => note,
+        other if note.is_empty() || note.ends_with("...") => other.to_string(),
+        _ => note,
+    };
+    if !last.is_empty() {
+        c = c.child(label(last).id("bt_notice").style("caption"));
+    }
+    c
+}
+
 fn about_page(s: &State) -> Element {
     let mut c = column()
         .gap(6)
@@ -465,6 +730,8 @@ fn page(vcx: &ecm_ui::ViewCtx, s: &State, st: &Shared, sys: &SysRef, compact: bo
         2 => display_page(s),
         3 => appearance_page(s, st, sys),
         APPS => apps_page(vcx, s),
+        SOUND => sound_page(s, st, sys),
+        BLUETOOTH => bluetooth_page(s, st, sys),
         _ => about_page(s),
     };
     // grow: the page takes what the sidebar leaves (and no more).
@@ -473,6 +740,11 @@ fn page(vcx: &ecm_ui::ViewCtx, s: &State, st: &Shared, sys: &SysRef, compact: bo
 
 fn select_section(cx: &mut Ctx, st: &Shared, sys: &SysRef, i: usize) {
     refresh(st, sys);
+    if i != SOUND {
+        // Leaving Sound: stop recording for the level meter.
+        sys.borrow_mut().mic_level_stop();
+        st.borrow_mut().input_level = None;
+    }
     if i == APPS {
         if let Some(a) = st.borrow().apps.clone() {
             a.reload();
@@ -557,21 +829,44 @@ pub fn app_with(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: O
     refresh(&st, &sys);
     let (s1, y1) = (st.clone(), sys.clone());
     app.window("Settings", move |vcx| view(vcx, &s1, &y1));
-    // Keep the status pages current while open.
+    // One timer (an app has one `every`): the input level meter on Sound (every 500 ms), the
+    // Bluetooth devices on Bluetooth (they come and go: a case lid opens, a pairing lands), and
+    // the Wi-Fi and cellular status every 3 s.
     let (s2, y2) = (st.clone(), sys.clone());
-    app.every(3000, move |_| {
-        let before = {
-            let s = s2.borrow();
-            (s.wifi.clone(), s.cells.clone())
-        };
-        let (wifi, cells) = {
-            let mut y = y2.borrow_mut();
-            (y.wifi(), y.cells())
-        };
-        let mut s = s2.borrow_mut();
-        let changed = before != (wifi.clone(), cells.clone());
-        s.wifi = wifi;
-        s.cells = cells;
+    let turns = std::cell::Cell::new(0u32);
+    app.every(500, move |_| {
+        turns.set(turns.get().wrapping_add(1));
+        let mut changed = false;
+        let section = s2.borrow().section;
+        if section == SOUND {
+            let name = active(&s2.borrow(), true).map(|d| d.name);
+            if let Some(name) = name {
+                let level = y2.borrow_mut().mic_level(&name);
+                let mut s = s2.borrow_mut();
+                changed |= s.input_level != level;
+                s.input_level = level;
+            }
+        }
+        if section == BLUETOOTH {
+            let bt = y2.borrow_mut().bluetooth();
+            let mut s = s2.borrow_mut();
+            changed |= s.bt != bt;
+            s.bt = bt;
+        }
+        if turns.get() % 6 == 0 {
+            let before = {
+                let s = s2.borrow();
+                (s.wifi.clone(), s.cells.clone())
+            };
+            let (wifi, cells) = {
+                let mut y = y2.borrow_mut();
+                (y.wifi(), y.cells())
+            };
+            let mut s = s2.borrow_mut();
+            changed |= before != (wifi.clone(), cells.clone());
+            s.wifi = wifi;
+            s.cells = cells;
+        }
         changed
     });
     let s3 = st.clone();

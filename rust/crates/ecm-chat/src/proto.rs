@@ -23,7 +23,7 @@
 //! | `WHO <nick> <nick> ...` | Answer to `WHO` |
 //! | `ERR <text>` | Your last request was refused |
 
-/// TCP port `chatd` listens on by default.
+/// TCP port a Discord backend (`discordd`) listens on by default.
 pub const DEFAULT_PORT: u16 = 7777;
 /// Longest accepted line (bytes, without the newline).
 pub const MAX_LINE: usize = 400;

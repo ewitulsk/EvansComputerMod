@@ -768,7 +768,7 @@ public final class RouterTests {
     /**
      * Two village data center servers, five ASes apart and next door to the chat village,
      * chat through the ring's chat server over BGP using the /etc/chat.conf they were
-     * provisioned with. Control first: pointing chat at a web server (no chatd there) gets
+     * provisioned with. Control first: pointing chat at a web server (no discordd there) gets
      * the "refused" fix-it hint, which also proves the remote host was reached.
      */
     @GameTest(
@@ -802,7 +802,7 @@ public final class RouterTests {
                     long now = System.currentTimeMillis();
                     switch (phase[0]) {
                         case 0 -> {
-                            if (!screenOf(chatHost).contains("chatd listening")) return false;
+                            if (!screenOf(chatHost).contains("discordd listening")) return false;
                             if (sa.contains("1 packets sent, 1 received") && sa.stripTrailing().endsWith("/ >")) {
                                 phase[0] = 1;
                                 probe[0] = 0;
@@ -847,7 +847,7 @@ public final class RouterTests {
                             String log = screenOf(chatHost);
                             if (sa.contains("*** bye") && sb.contains("*** bye")
                                     && log.contains("v" + a + "-web joined from 100." + (64 + a) + ".0.10")) {
-                                EvansComputerMod.LOGGER.info("Chat across villages {} and {} via {}:\n{}\n--- {}\n{}\n--- chatd\n{}", a, b, server,
+                                EvansComputerMod.LOGGER.info("Chat across villages {} and {} via {}:\n{}\n--- {}\n{}\n--- discordd\n{}", a, b, server,
                                         sa.stripTrailing(), b, sb.stripTrailing(), log.stripTrailing());
                                 return true;
                             }
@@ -856,7 +856,7 @@ public final class RouterTests {
                     }
                     if (now - start > 55_000)
                         failure[0] = "chat phase " + phase[0] + " timed out\n--- web " + a + "\n" + sa.stripTrailing()
-                                + "\n--- web " + b + "\n" + sb.stripTrailing() + "\n--- chatd " + k + "\n"
+                                + "\n--- web " + b + "\n" + sb.stripTrailing() + "\n--- discordd " + k + "\n"
                                 + screenOf(chatHost).stripTrailing();
                     return false;
                 },

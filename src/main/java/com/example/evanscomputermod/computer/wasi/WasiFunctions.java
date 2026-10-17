@@ -1860,7 +1860,7 @@ public class WasiFunctions {
     /**
      * {@code server-bin/<name>}: the server's program folder, which the kernel mounts
      * read-only at {@code server-bin/} (it runs programs from there). Children read it
-     * too ({@code cp server-bin/chatapp.wasm ...}, a package's {@code main.wasm}); null
+     * too ({@code cp server-bin/discord.wasm ...}, a package's {@code main.wasm}); null
      * for any other path. Writes there are refused by the callers.
      */
     static Path serverBinPath(String pathStr) {

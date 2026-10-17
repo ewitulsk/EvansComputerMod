@@ -2,6 +2,7 @@ package com.example.evanscomputermod.testing.scenario;
 
 //? if <=1.21.1 {
 import com.example.evanscomputermod.computer.WorldNetwork;
+import com.example.evanscomputermod.testing.TechCableChecks;
 import com.example.evanscomputermod.testing.TechRoadChecks;
 import com.example.evanscomputermod.worldgen.TechVillageLocator;
 
@@ -51,6 +52,35 @@ public final class VillageRoadScenarios {
             return why;
         }, "walk from every building's door along the road to a street", 10_000);
         ALL.put("tech_village_roads", b.build());
+
+        var c = Scenario.builder("tech_village_cables",
+                        "the ISP router's Interface Block and every cable in the ISP and the Data Center visibly join what they"
+                                + " are wired to")
+                .asPlayer()
+                .inWorld();
+        c.note("Stand in a Tech Village (/ecm village tp <n>; the nearest village is used). Built by the world: the ISP router"
+                + " with its Interface Block, its cables to the mast panels and the Data Center, the racks' cable. Look at the"
+                + " router. Expected: the Interface Block beside it shows an arm into the router, each cable on the router's"
+                + " faces shows an arm into it, and every cable or Interface Block shows arms exactly toward the blocks it"
+                + " connects to. Failure: a block that looks unplugged (no arm) beside something it is wired to, or an arm"
+                + " into nothing. Control: the router's screen face never gets an arm.");
+        c.await(r -> {
+            var d = WorldNetwork.get(r.level());
+            d.plan(r.level());
+            Integer chosen = VILLAGE.get(r);
+            int n = chosen != null ? chosen : d.nearest(r.origin()).number();
+            TechVillageLocator.Visit v;
+            try {
+                v = TechVillageLocator.visit(r.level(), n);
+            } catch (IllegalStateException e) {
+                return e.getMessage();
+            }
+            List<String> details = new ArrayList<>();
+            String why = TechCableChecks.check(r.level(), v, details);
+            for (String line : details) r.say("§7  village " + n + ": " + line);
+            return why;
+        }, "look at the ISP router, its Interface Block and the cables in the ISP and the Data Center", 10_000);
+        ALL.put("tech_village_cables", c.build());
     }
 }
 //?}

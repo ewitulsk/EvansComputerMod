@@ -8,7 +8,7 @@ use std::io::Write;
 
 const USAGE: &str = "usage: disco [TYPE] [--wait MS]   find services on the network (chat, pkg, ... ; default every type)
        disco serve [-v] &         answer for this computer's services (-v: log every query)
-Servers announce themselves (chatd, pkg serve); /etc/disco.conf adds more:
+Servers announce themselves (discordd, pkg serve); /etc/disco.conf adds more:
   service <type> <port> [name]          on this computer
   record <type> <host> <port> [name]    elsewhere (routers answer for the network)
   relay gateway | relay <address>       pass queries on to the next router";

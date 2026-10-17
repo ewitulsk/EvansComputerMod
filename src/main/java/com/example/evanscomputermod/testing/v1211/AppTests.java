@@ -34,13 +34,13 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("files_open_with"), true);
     }
 
-    /** A server packages Chat and serves it with chatd; a cabled client (DHCP lease) installs it from the App Store, chats, gets a notification. */
-    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".chat_app")
-    public static void chat_app(GameTestHelper h) {
-        TestDriver.scenario(h, NS, AppScenarios.ALL.get("chat_app"), true);
+    /** A server runs discordd and serves the Discord app; a cabled client installs it, adds the backend, talks in #general, gets a notification. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".discord_app")
+    public static void discord_app(GameTestHelper h) {
+        TestDriver.scenario(h, NS, AppScenarios.ALL.get("discord_app"), true);
     }
 
-    /** The server's chat and repository found with disco (none before disco serve); the store lists its Chat unadded; Chat connects to what it found. */
+    /** The server's Discord backend and repository found with disco (none before disco serve); the store lists Discord unadded; Discord connects to what it found. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".service_discovery")
     public static void service_discovery(GameTestHelper h) {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("service_discovery"), true);

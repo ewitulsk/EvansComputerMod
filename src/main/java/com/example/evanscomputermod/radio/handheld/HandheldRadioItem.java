@@ -14,9 +14,10 @@ import net.minecraft.world.level.Level;
 import java.util.List;
 
 /**
- * Handheld radio: a receive-only AM / shortwave / VHF FM receiver with a
+ * Handheld radio: a receive-only AM / shortwave / VHF / UHF FM receiver with a
  * telescopic whip. Right-click turns it on or off; sneak + right-click opens
- * the tuning screen (dial, band, scan, volume, squelch).
+ * the tuning screen (dial, band, scan, volume, squelch). The
+ * {@link WalkieTalkieItem} is the one that also transmits.
  */
 public class HandheldRadioItem extends Item {
 

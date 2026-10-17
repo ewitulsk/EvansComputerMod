@@ -169,7 +169,7 @@ pub fn hint(p: &Problem) -> String {
             ip
         ),
         Problem::Refused(addr) => format!(
-            "chat: connection to {} refused: the computer answered but no chat server listens there.\n  Fix: on the chat server run 'chatd &' (it is in its services.cfg), or check the port.",
+            "chat: connection to {} refused: the computer answered but no Discord backend listens there.\n  Fix: on that computer run 'discordd &' (it is in its services.cfg), or check the port.",
             addr
         ),
         Problem::Timeout(addr) => format!(
@@ -445,7 +445,7 @@ mod tests {
         assert!(hint(&Problem::NoServer).contains("/etc/chat.conf"));
         assert!(hint(&Problem::NoAddress).contains("dhcp"));
         assert!(hint(&Problem::NoRoute("100.70.0.20".into())).contains("route default"));
-        assert!(hint(&Problem::Refused("1.2.3.4:7777".into())).contains("chatd"));
+        assert!(hint(&Problem::Refused("1.2.3.4:7777".into())).contains("discordd"));
         assert!(hint(&Problem::Timeout("1.2.3.4:7777".into())).contains("traceroute"));
     }
 }

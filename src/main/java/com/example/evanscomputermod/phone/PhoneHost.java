@@ -111,6 +111,49 @@ public final class PhoneHost implements IComputerHost {
                     return true;
                 }
             });
+    /**
+     * The phone's own microphone (peripheral {@code microphone}, {@code /dev/mic}): at the holder's
+     * hand, so it hears the holder close up and everything around them.
+     */
+    private final com.example.evanscomputermod.voice.MicAudio micAudio = new com.example.evanscomputermod.voice.MicAudio(
+            (start, n, rate, out) -> {
+                // The headphones layer: with AirPods connected and worn, /dev/mic is what their microphones sent.
+                if (this.bluetooth.micRouted()) {
+                    this.bluetooth.renderMic(start, n, rate, out);
+                    return;
+                }
+                com.example.evanscomputermod.voice.VoiceServer.Spot s = micSpot();
+                if (s != null) com.example.evanscomputermod.voice.SoundField.get().render(s.dimension(), s.x(), s.y(), s.z(), start, n, rate, out);
+            });
+    private final com.example.evanscomputermod.voice.MicrophonePeripheral mic = new com.example.evanscomputermod.voice.MicrophonePeripheral(
+            new com.example.evanscomputermod.voice.MicrophonePeripheral.Owner() {
+                @Override public com.example.evanscomputermod.voice.MicAudio mic() { return micAudio; }
+                @Override public void markGainChanged() {}
+            });
+
+    /**
+     * The phone's Bluetooth radio (peripheral {@code bluetooth}): AirPods pair and connect here, and
+     * while they are connected and worn the phone's speaker and microphone are theirs (docs/BLUETOOTH.md).
+     */
+    private com.example.evanscomputermod.bluetooth.PhoneBluetooth bluetooth;
+    private com.example.evanscomputermod.bluetooth.BluetoothPeripheral btPeripheral;
+
+    /**
+     * Where the phone's microphone is: a little below the holder's mouth, or the mouth of whoever
+     * wears the connected AirPods; null while nobody holds it.
+     */
+    @Nullable
+    private com.example.evanscomputermod.voice.VoiceServer.Spot micSpot() {
+        if (bluetooth.micRouted()) {
+            ServerPlayer w = com.example.evanscomputermod.bluetooth.Headsets.wearerOf(bluetooth.connected());
+            if (w != null) return com.example.evanscomputermod.voice.VoiceServer.mouth(w);
+        }
+        ServerPlayer p = holder;
+        if (p == null) return null;
+        var eye = p.getEyePosition();
+        return new com.example.evanscomputermod.voice.VoiceServer.Spot(p.level().dimension().location().toString(), eye.x, eye.y - 0.4, eye.z);
+    }
+
     /** The PhoneUi the status source was last given to (PhoneApps). */
     private Object statusSource;
 
@@ -228,7 +271,10 @@ public final class PhoneHost implements IComputerHost {
     PhoneHost(MinecraftServer server, UUID id) {
         this.server = server;
         this.id = id;
+        this.bluetooth = new com.example.evanscomputermod.bluetooth.PhoneBluetooth(id, "ePhone");
+        this.btPeripheral = new com.example.evanscomputermod.bluetooth.BluetoothPeripheral(bluetooth.link());
         speakerAudio.setWriteListener(() -> PhoneApps.audioWritten(this));
+        speakerAudio.setStatusExtra(() -> bluetooth.audioRouted() ? "headphones 1\n" : "headphones 0\n");
     }
 
     // ------------------------------------------------------------ state machine (server thread)
@@ -273,6 +319,9 @@ public final class PhoneHost implements IComputerHost {
         if (!attached) return;
 
         bays.tick();
+        if (!holderName.isEmpty()) bluetooth.link().setName(holderName + "'s ePhone");
+        bluetooth.tick(pose(), micAudio.listening());
+        if (bluetooth.link().takeChanged()) writeBluetoothToStack();
         ComputerInstance running = instance();
         if (running != null) running.tickSync();   // text console changes reach the holder from here
         drain();
@@ -365,6 +414,11 @@ public final class PhoneHost implements IComputerHost {
         bays.load();
         peripherals.setWireless(PhonePeripheral.NAME, phonePeripheral);
         peripherals.setWireless("speaker", speaker);
+        peripherals.setWireless("microphone", mic);
+        com.example.evanscomputermod.voice.VoiceServer.addMic(micAudio, this::micSpot);
+        if (!stack.isEmpty()) bluetooth.load(stack.getOrDefault(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
+                net.minecraft.world.item.component.CustomData.EMPTY).copyTag().getCompound(BLUETOOTH_KEY));
+        peripherals.setWireless(com.example.evanscomputermod.bluetooth.BluetoothPeripheral.TYPE, btPeripheral);
         peripherals.setWireless(com.example.evanscomputermod.card.SimPeripheral.TYPE, simPeripheral);
     }
 
@@ -375,6 +429,23 @@ public final class PhoneHost implements IComputerHost {
         }
         controllers.disconnectAll();
         peripherals.detachAll();
+        com.example.evanscomputermod.voice.VoiceServer.removeMic(micAudio);
+        bluetooth.stop();
+    }
+
+    /** Where the phone item keeps its Bluetooth pairings (custom data). */
+    private static final String BLUETOOTH_KEY = "ecm_bluetooth";
+
+    private void writeBluetoothToStack() {
+        if (stack.isEmpty() || PhoneItemData.id(stack) == null) return;
+        net.minecraft.nbt.CompoundTag t = bluetooth.save();
+        net.minecraft.world.item.component.CustomData.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA, stack,
+                root -> root.put(BLUETOOTH_KEY, t));
+    }
+
+    /** The phone's Bluetooth radio (tests, debug). */
+    public com.example.evanscomputermod.bluetooth.PhoneBluetooth bluetooth() {
+        return bluetooth;
     }
 
     /** The sleep landed (or timed out): let go of the computer. It stays in memory, paused. */
@@ -708,6 +779,18 @@ public final class PhoneHost implements IComputerHost {
         short[] pcm = speakerAudio.drain();
         ServerPlayer h = holder;
         if (pcm.length == 0 || h == null) return;
+        // The headphones layer: with AirPods connected and worn, the sound goes to them over
+        // Bluetooth (only their wearer hears it; it isn't in the air for microphones either).
+        if (bluetooth.audioRouted()) {
+            bluetooth.link().sendAudio(pcm, speakerAudio.rate());
+            return;
+        }
+        if (com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
+            // The phone's speaker is in the air for microphones too (in the holder's hand).
+            var eye = h.getEyePosition();
+            com.example.evanscomputermod.voice.SoundField.get().emit("phone:" + id, h.level().dimension().location().toString(),
+                    eye.x, eye.y - 0.5, eye.z, pcm, 0, pcm.length, speakerAudio.rate(), 1f);
+        }
         double range = com.example.evanscomputermod.EcmConfig.speakerRange();
         List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
         BlockPos at = h.blockPosition();
@@ -723,6 +806,11 @@ public final class PhoneHost implements IComputerHost {
     /** The phone's controller receiver (ControllerServer). */
     public com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
         return controllers;
+    }
+
+    /** The phone's microphone. */
+    public com.example.evanscomputermod.voice.MicAudio micAudio() {
+        return micAudio;
     }
 
     /** The phone's speaker (tests read how much it played). */

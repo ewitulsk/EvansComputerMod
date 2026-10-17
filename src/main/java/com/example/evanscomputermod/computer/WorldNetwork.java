@@ -865,7 +865,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /**
      * A display phone of village {@code village}'s Phone Store (slot 1-4): its computer, fixed by
      * the seed, with the Tech Village repository already in its {@code /etc/pkg/repos} (key
-     * pinned). Nothing else is installed: the player finds Chat in the App Store.
+     * pinned). Nothing else is installed: the player finds Discord in the App Store.
      */
     public UUID provisionStorePhone(ServerLevel level, int village, int slot) {
         plan(level);
@@ -881,14 +881,30 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         return id;
     }
 
-    /** Address of the ring's chat server when it lives in village {@code chat}. */
+    /** The chat server's services.cfg line: the ring's Discord backend, its home server named {@link VillageDiscovery#DISCORD_NAME}. */
+    public static String discordCommand() {
+        return "discordd " + CHAT_PORT + " --name \"" + VillageDiscovery.DISCORD_NAME + "\" &";
+    }
+
+    /** Address of the ring's Discord backend (the chat server) when it lives in village {@code chat}. */
     public static String chatAddress(int chat) {
         return "100." + (64 + chat) + ".0.20";
     }
 
-    /** The /etc/chat.conf every village computer gets. */
+    /**
+     * The /etc/browser.conf of village {@code i}'s house PCs: the Browser's default home page is
+     * the village's own website, by name where the ring has DNS (docs/gui/BROWSER.md). A home
+     * page the player sets in the Browser wins over it.
+     */
+    public static String browserConf(int i, DnsPlan dns) {
+        String home = dns == null ? "http://100." + (64 + i) + ".0.10/" : "http://web.v" + i + ".ring/";
+        return "# The Browser's home page (the Home button, and where it opens): this village's website.\n"
+                + "# Menu > Set as home page in the Browser overrides it for that computer's player.\nhome " + home + "\n";
+    }
+
+    /** The /etc/chat.conf every village computer gets: the ring's Discord backend (Discord and the chat command read it). */
     public static String chatConf(int chat, String nick) {
-        return "# Tech Village chat: run 'chat' (see 'chat --help')\nserver " + chatAddress(chat) + "\nport "
+        return "# Tech Village Discord backend: open Discord, or run 'chat' (see 'chat --help')\nserver " + chatAddress(chat) + "\nport "
                 + CHAT_PORT + "\nnick " + nick + "\n";
     }
 
@@ -977,9 +993,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put(
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
-            // chatd announces itself to disco serve on its computer (found on the data center LAN).
-            files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
-            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-chatd"));
+            // The ring's Discord backend; it announces itself to disco serve on its computer (found on the
+            // data center LAN), and the ISP routers answer for it ring-wide.
+            files.put("services.cfg", discordCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-discord"));
         } else if (role.equals(REPO)) {
             // The package server: its repository folder (VillageRepo.serverFiles) is written by provision().
             files.put(
@@ -1015,6 +1032,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         } else {
             files.put("network.cfg", "iface eth1 dhcp\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace(".pc", "")));
+            if (role.endsWith(".pc")) files.put("etc/browser.conf", browserConf(i, dns));
         }
         return files;
     }
@@ -1196,14 +1214,16 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 .append(cells == null ? "" : "; the carrier's cell sites along the fiber use .16 up").append("</li>\n");
         if (i == 1) html.append("<li>Uplink: eth4 10.0.0.2/24 to the internet gateway 10.0.0.1 (NAT)</li>\n");
         html.append("<li>Spare ports for peering: eth5-eth8</li>\n</ul>\n");
-        html.append("<h2>Chat</h2>\n<p>The ring's chat server runs in the data center of village ").append(chat)
-                .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(".</p>\n")
-                .append("<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
-                .append(chatAddress(chat)).append("</code>. Type to talk; /nick NAME, /who, /quit.</p>\n");
+        html.append("<h2>Discord</h2>\n<p>The ring's Discord backend runs in the data center of village ").append(chat)
+                .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(" (voice on UDP ").append(CHAT_PORT + 1)
+                .append("). Install Discord from the App Store: it finds this backend by itself, and you can make your own servers with")
+                .append(" text and voice channels there.</p>\n")
+                .append("<p>From a console: run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
+                .append(chatAddress(chat)).append("</code> to talk in the home server's #general; /nick NAME, /who, /quit.</p>\n");
         if (repo != null)
             html.append("<h2>Apps</h2>\n<p>The Tech Village app repository, ").append(VillageRepo.NAME).append(", runs in the data center of village ")
                     .append(repo.village()).append(": ").append(repo.url()).append(". The App Store on every village computer and every")
-                    .append(" Phone Store phone already lists it (Chat is there, from a verified publisher). On your own computer: <code>pkg repo add ")
+                    .append(" Phone Store phone already lists it (Discord is there, from a verified publisher). On your own computer: <code>pkg repo add ")
                     .append(VillageRepo.NAME).append(" ").append(repo.url()).append(" --key ").append(repo.publicKey()).append("</code></p>\n");
         if (cells != null) {
             html.append("<h2>Cellular</h2>\n<p>").append(cells.displayName()).append(" (carrier <code>").append(cells.carrier)

@@ -46,7 +46,8 @@ fn main() {
     println!("  curl <url>         - HTTP client (GET/POST)");
     println!("  ssh [user@]host    - SSH client (connect to remote)");
     println!("  chat [host[:port]] - Instant messaging (server from /etc/chat.conf)");
-    println!("  chatd [port] &     - Chat server (default port 7777)");
+    println!("  discordd [port] &  - Discord backend: servers, text + voice channels (port 7777)");
+    println!("  bluetoothctl       - Bluetooth: scan, pair, connect AirPods (an ePhone's radio)");
     println!("  disco [type]       - Find services on the network (chat, pkg, ...)");
     println!("  disco serve &      - Answer for this computer's services");
     println!();

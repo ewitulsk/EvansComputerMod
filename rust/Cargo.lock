@@ -197,6 +197,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "arecord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "arm7tdmi"
 version = "0.1.0"
 dependencies = [
@@ -357,6 +364,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "bluetoothctl"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
 ]
 
 [[package]]
@@ -550,27 +564,6 @@ dependencies = [
 
 [[package]]
 name = "chat"
-version = "0.1.0"
-dependencies = [
- "ecm-chat",
- "ecm-disco",
- "ecm-host-abi",
-]
-
-[[package]]
-name = "chatapp"
-version = "0.1.0"
-dependencies = [
- "ecm-chat",
- "ecm-disco",
- "ecm-host-abi",
- "ecm-ui",
- "ecm-ui-proto",
- "pkg",
-]
-
-[[package]]
-name = "chatd"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
@@ -1140,6 +1133,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "discord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-chat",
+ "ecm-disco",
+ "ecm-discord",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "pkg",
+]
+
+[[package]]
+name = "discordd"
+version = "0.1.0"
+dependencies = [
+ "ecm-disco",
+ "ecm-discord",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "domain"
 version = "0.1.0"
 dependencies = [
@@ -1157,6 +1173,7 @@ version = "0.1.0"
 dependencies = [
  "celld",
  "ecm-apps-ui",
+ "ecm-audio",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
@@ -1249,6 +1266,14 @@ name = "ecm-disco"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "ecm-discord"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-chat",
 ]
 
 [[package]]
