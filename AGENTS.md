@@ -28,7 +28,8 @@ same path:
    them. Do not hide a whole device's logic inside a block entity.
 Python and Lua have the same package access. Every module the `python`
 program offers (`shell`/`terminal`, `net`, `peripheral`, `sensors`,
-`controller`, `audio`, `radio`, `ui`, and imports of the computer's own files)
+`controller`, `audio`, `radio`, `ui`, `term`, `events`, `computer`, `colors`,
+`keys`, `fs`, `textutils`, `redstone`, and imports of the computer's own files)
 has a counterpart in the `lua` program (`rust/wasm-programs/lua`) with the same
 public functions, and the other way round. A change that adds or changes a
 module or function in one interpreter makes the same change in the other, with

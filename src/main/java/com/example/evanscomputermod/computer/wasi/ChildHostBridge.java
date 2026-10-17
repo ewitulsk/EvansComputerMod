@@ -35,6 +35,11 @@ public class ChildHostBridge {
         return parent.bridgeRedstoneGetInput(side);
     }
 
+    /** The power this computer puts out on a relative side (0-5): 0-15. */
+    public int redstoneGetOutput(int side) {
+        return parent.bridgeRedstoneGetOutput(side);
+    }
+
     /** Read all 6 sides' redstone input power into the given array (length 6). */
     public int redstoneGetAllInput(int[] out) {
         return parent.bridgeRedstoneGetAllInput(out);
@@ -318,5 +323,27 @@ public class ChildHostBridge {
     /** Pop one 10-byte mouse event into {@code out}. Returns 1 if written, 0 if empty. */
     public int mousePoll(byte[] out) {
         return parent.bridgeMousePoll(out);
+    }
+
+    // --- Console (raw keys, the world's clock, the computer's number) ---
+
+    /** Start getting the Terminal's raw keys. 1 if this console has them, else 0. */
+    public int keyCaptureStart() {
+        return parent.bridgeKeyCaptureStart();
+    }
+
+    /** Pop one 4-byte raw key into {@code out}. 1 if written, 0 if none. */
+    public int keyPoll(byte[] out) {
+        return parent.bridgeKeyPoll(out);
+    }
+
+    /** The world's day time in ticks, or null outside a world. */
+    public Long worldDayTime() {
+        return parent.bridgeWorldDayTime();
+    }
+
+    /** This computer's number, or -1. */
+    public int computerNumber() {
+        return parent.bridgeComputerNumber();
     }
 }

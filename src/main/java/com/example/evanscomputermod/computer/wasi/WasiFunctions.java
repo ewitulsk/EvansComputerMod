@@ -674,6 +674,12 @@ public class WasiFunctions {
             return retI32(childBridge.redstoneGetInput((int) args[0]));
         });
 
+        addEnv(sink, "redstone_get_output", I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            if (!allowed(state, "peripherals:redstone")) return retI32(0);
+            return retI32(childBridge.redstoneGetOutput((int) args[0]));
+        });
+
         addEnv(sink, "redstone_get_all_input", I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
             if (!allowed(state, "peripherals:redstone")) return retI32(EACCES);
@@ -1061,6 +1067,32 @@ public class WasiFunctions {
                 state.mem().writeBytes(bufPtr, out, 0, 10);
             }
             return retI32(rc);
+        });
+
+        // --- console (abi/child-abi.toml [imports.console]) ---
+        addEnv(sink, "key_capture_start", NO_PARAMS, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            return retI32(childBridge.keyCaptureStart());
+        });
+
+        addEnv(sink, "key_poll", I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            byte[] out = new byte[4];
+            int rc = childBridge.keyPoll(out);
+            if (rc == 1) state.mem().writeBytes((int) args[0], out, 0, 4);
+            return retI32(rc);
+        });
+
+        addEnv(sink, "world_time", I32, RET_I32, (inst, args) -> {
+            Long ticks = childBridge == null ? null : childBridge.worldDayTime();
+            if (ticks == null) return retI32(-4);
+            state.mem().writeLong((int) args[0], ticks);
+            return retI32(0);
+        });
+
+        addEnv(sink, "computer_number", NO_PARAMS, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.computerNumber());
         });
 
         registerUiFunctions(state, sink, childBridge);

@@ -12,7 +12,9 @@ Attachment names: sides "front", "back", "left", "right", "top", "bottom"
 (left/right as for redstone sides) and bay slots "left_bay_1", "left_bay_2",
 "right_bay_1", "right_bay_2".
 
-Events come back as several values (event, attachment, args...). Built-in events:
+Events come back as several values (event, attachment, args...). They come
+from the program's one event queue (events.pull and os.pullEvent read it
+too), so a program that also pulls keys sees those here. Built-in events:
     "peripheral", name, type        something was attached
     "peripheral_detach", name       it went away
 
@@ -52,8 +54,9 @@ function M.is_present(name)
   return false
 end
 
---- Type of the peripheral attached as `name`, or nil.
+--- Type of the peripheral attached as `name` (or of a wrapped one), or nil.
 function M.get_type(name)
+  if type(name) == "table" then return name.type end
   for _, p in ipairs(native.list()) do
     if p[1] == name then return p[2] end
   end
@@ -116,27 +119,39 @@ function M.find_all(ty)
   return out
 end
 
---- First attached peripheral of `type`, or nil.
-function M.find(ty)
+--- The attached peripherals of `type` (each passing `filter(name, wrapped)`,
+--- if given), wrapped: the first one, then the others (as more results).
+--- nil if there are none.
+function M.find(ty, filter)
+  local found = {}
   for _, p in ipairs(native.list()) do
     if p[2] == ty then
       local w = M.wrap(p[1])
-      if w then return w end
+      if w and (filter == nil or filter(p[1], w)) then found[#found + 1] = w end
     end
   end
-  return nil
+  return table.unpack(found)
+end
+
+--- The attachment name of a wrapped peripheral.
+function M.get_name(wrapped)
+  if type(wrapped) ~= "table" or type(wrapped.name) ~= "string" then
+    error("bad argument #1 (table expected, got " .. type(wrapped) .. ")", 2)
+  end
+  return wrapped.name
 end
 
 --- Wait for the next event (named `filter`, if given) and return it as
 --- event, attachment, args...; other events are discarded while waiting.
 --- `timeout` in seconds: nil waits forever, 0 only checks. nil on timeout.
 function M.pull_event(filter, timeout)
-  local ms = -1
-  if timeout ~= nil then
-    ms = math.min(math.max(0, math.floor(timeout * 1000)), 2147483647)
-  end
-  return native.wait_event(filter, ms)
+  -- The program's one event queue (events.pull, os.pullEvent read it too).
+  return require("_console").pull_quiet(filter, timeout)
 end
 M.wait_event = M.pull_event
+
+-- ComputerCraft's names.
+M.getNames, M.isPresent, M.getType, M.getMethods = M.names, M.is_present, M.get_type, M.get_methods
+M.getName = M.get_name
 
 return M
