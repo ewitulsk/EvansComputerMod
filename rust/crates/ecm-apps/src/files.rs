@@ -7,8 +7,12 @@
 //! app, which gets that one file. New folder, rename (F2), delete
 //! (Delete, with a confirmation), copy and paste (Ctrl+C / Ctrl+V; a copy
 //! also puts the path on the clipboard as text). Backspace goes up.
+//! Upload copies a file from the player's real computer into the folder shown
+//! (abi `[imports.upload]`): the button is there only while the player using the
+//! computer can upload (the evanscomputermod-upload add-on on the server and in
+//! their game); their system's file picker opens in their game.
 
-use crate::sys::{self, Entry, Sys};
+use crate::sys::{self, Entry, Sys, UploadState};
 use ecm_ui::element::{button, column, dialog, image, label, list, row, scroll_view, spacer, stack, text_field, Align, Element};
 use ecm_ui::window::{keys, EventValue};
 use ecm_ui::{App, Ctx};
@@ -52,6 +56,10 @@ pub struct State {
     /// Paths copied with Copy (pasted with Paste).
     pub copied: Vec<String>,
     pub icons: HashMap<&'static str, u32>,
+    /// The player using the computer can upload (refreshed every half second).
+    pub can_upload: bool,
+    /// The running upload's ticket and the folder it goes to.
+    pub upload: Option<(i32, String)>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -178,6 +186,60 @@ fn confirm(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
     cx.focus("list");
 }
 
+/// Upload a file from the player's computer into the folder shown.
+fn start_upload(st: &Shared, sys: &SysRef) {
+    if st.borrow().upload.is_some() {
+        return;
+    }
+    let cwd = st.borrow().cwd.clone();
+    let r = sys.borrow_mut().upload_begin(&cwd);
+    let mut s = st.borrow_mut();
+    match r {
+        Ok(t) => {
+            s.upload = Some((t, cwd));
+            s.status = "Pick a file on your computer (the file picker is open in your game)".into();
+        }
+        Err(e) => s.status = format!("Can't upload: {e}"),
+    }
+}
+
+fn cancel_upload(st: &Shared, sys: &SysRef) {
+    if let Some((t, _)) = st.borrow_mut().upload.take() {
+        sys.borrow_mut().upload_cancel(t);
+    }
+    st.borrow_mut().status = "Upload cancelled".into();
+}
+
+/// The half-second tick: can the player upload, and how the upload goes. True to redraw.
+pub fn upload_tick(st: &Shared, sys: &SysRef) -> bool {
+    let can = sys.borrow_mut().upload_supported() == 1;
+    let mut changed = st.borrow().can_upload != can;
+    st.borrow_mut().can_upload = can;
+    let Some((ticket, dir)) = st.borrow().upload.clone() else { return changed };
+    let state = sys.borrow_mut().upload_poll(ticket);
+    let status = match &state {
+        UploadState::Picking => return changed,
+        UploadState::Receiving(got, total) => {
+            let pct = if *total == 0 { 100 } else { got * 100 / total };
+            format!("Uploading: {} of {} ({pct}%)", sys::human_size(*got), sys::human_size(*total))
+        }
+        UploadState::Done(path) => format!("Uploaded {}", path.rsplit('/').next().unwrap_or(path)),
+        UploadState::Failed(e) => format!("Upload failed: {e}"),
+    };
+    if matches!(state, UploadState::Done(_) | UploadState::Failed(_)) {
+        st.borrow_mut().upload = None;
+        if st.borrow().cwd == dir {
+            load(st, sys, &dir);
+        }
+    }
+    let mut s = st.borrow_mut();
+    if s.status != status {
+        s.status = status;
+        changed = true;
+    }
+    changed
+}
+
 fn cancel(cx: &mut Ctx, st: &Shared) {
     st.borrow_mut().dialog = None;
     cx.focus("list");
@@ -195,10 +257,15 @@ pub fn app(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, start: Option<&
             }
         }
     }
-    let st: Shared = Rc::new(RefCell::new(State { cwd: "/".into(), entries: Vec::new(), status: String::new(), dialog: None, copied: Vec::new(), icons }));
+    let st: Shared = Rc::new(RefCell::new(State { cwd: "/".into(), entries: Vec::new(), status: String::new(), dialog: None, copied: Vec::new(), icons, can_upload: false, upload: None }));
+    upload_tick(&st, &sys);
     let dir = sys::normalize("/", start.unwrap_or("/"));
+    // An app that may only see the documents folder (the ePhone's Files) can't list `/`: start in /home.
     if !load(&st, &sys, &dir) {
-        load(&st, &sys, "/");
+        let _ = sys::make_dir(&**sys.borrow(), "/home");
+        if !load(&st, &sys, "/home") {
+            load(&st, &sys, "/");
+        }
     }
     let (s1, y1) = (st.clone(), sys.clone());
     let win = app.window("Files", move |vcx| view(vcx, &s1, &y1));
@@ -206,6 +273,8 @@ pub fn app(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, start: Option<&
         w.state_mut("path").text = st.borrow().cwd.clone();
         w.focus(Some("list"));
     }
+    let (s3, y3) = (st.clone(), sys.clone());
+    app.every(500, move |_| upload_tick(&s3, &y3));
     let (s2, y2) = (st.clone(), sys.clone());
     app.on_key(move |cx, key, mods| {
         if s2.borrow().dialog.is_some() {
@@ -282,9 +351,12 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     };
     if compact {
         let (m, ym) = (d.clone(), yd.clone());
+        let upload_item = if s.upload.is_some() { Some("Cancel upload") } else if s.can_upload { Some("Upload") } else { None };
         tools = tools.child(button("Open").id("open").on_click(open)).child(button("...").id("more").on_click(move |cx, _| {
             let (m2, ym2) = (m.clone(), ym.clone());
-            cx.popup_menu(150, 24, ["New folder", "Rename", "Delete", "Copy", "Paste"], move |cx, i| match i {
+            let mut items = vec!["New folder", "Rename", "Delete", "Copy", "Paste"];
+            items.extend(upload_item);
+            cx.popup_menu(150, 24, items, move |cx, i| match i {
                 0 => ask(cx, &m2, Dialog::NewFolder),
                 1 | 2 => {
                     if let Some(e) = selected(cx, &m2) {
@@ -292,7 +364,9 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
                     }
                 }
                 3 => copy_selected(cx, &m2),
-                _ => paste(cx, &m2, &ym2),
+                4 => paste(cx, &m2, &ym2),
+                _ if m2.borrow().upload.is_some() => cancel_upload(&m2, &ym2),
+                _ => start_upload(&m2, &ym2),
             });
         }));
     } else {
@@ -311,6 +385,12 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
             .child(button("Copy").id("copy").on_click(move |cx, _| copy_selected(cx, &g)))
             .child(button("Paste").id("paste").on_click(move |cx, _| paste(cx, &h, &yd)))
             .child(button("Open").id("open").style("primary").on_click(open));
+        let (u, yu) = (st.clone(), sys.clone());
+        if s.upload.is_some() {
+            tools = tools.child(button("Cancel upload").id("upload").on_click(move |_, _| cancel_upload(&u, &yu)));
+        } else if s.can_upload {
+            tools = tools.child(button("Upload").id("upload").on_click(move |_, _| start_upload(&u, &yu)));
+        }
     }
     let rows: Vec<Element> = s
         .entries
