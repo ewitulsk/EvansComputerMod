@@ -41,6 +41,8 @@ public class EvansComputerMod {
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.computer.DnsConfig.SPEC,
+                "evanscomputermod-dns-server.toml");
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
@@ -54,6 +56,8 @@ public class EvansComputerMod {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.GuiServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("phone"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.PhoneServerChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("upload"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.UploadServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("cards"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.CardsServerChecks::tick);
         else
@@ -148,6 +152,7 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.ScreenServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.GuiServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.PhoneServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.UploadServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.CardsServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());

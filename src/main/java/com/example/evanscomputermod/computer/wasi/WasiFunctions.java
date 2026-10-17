@@ -817,6 +817,41 @@ public class WasiFunctions {
             return retI64(pts);
         });
 
+        // === Upload port: a file from the player's real computer (the evanscomputermod-upload sidecar) ===
+
+        // 0 no add-on on the server, 1 ready, 2 the player using the computer lacks it, 3 not permitted.
+        addEnv(sink, "upload_supported", NO_PARAMS, RET_I32, (inst, args) ->
+                retI32(childBridge == null ? 0 : childBridge.uploadSupported()));
+
+        // (dir, len) -> ticket > 0, -1 not a directory, -2 busy, -4 not installed, -13 not permitted.
+        addEnv(sink, "upload_begin", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            String dir = state.mem().readString((int) args[0], (int) args[1]);
+            if (!pathAllowed(state, dir.startsWith("/") ? dir.substring(1) : dir, true)) return retI32(EACCES);
+            return retI32(childBridge.uploadBegin(dir));
+        });
+
+        // (ticket, out, cap) -> state; out: u64 received, u64 total, u32 path length, path bytes.
+        addEnv(sink, "upload_poll", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            var p = childBridge.uploadPoll((int) args[0]);
+            int out = (int) args[1];
+            int cap = (int) args[2];
+            if (cap >= 20) {
+                WasmMemory mem = state.mem();
+                byte[] path = p.path() == null ? new byte[0] : p.path().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                mem.writeLong(out, p.received());
+                mem.writeLong(out + 8, p.total());
+                mem.writeInt(out + 16, path.length);
+                int n = Math.min(path.length, cap - 20);
+                if (n > 0) mem.writeBytes(out + 20, path, 0, n);
+            }
+            return retI32(p.state());
+        });
+
+        addEnv(sink, "upload_cancel", I32, RET_I32, (inst, args) ->
+                retI32(childBridge == null ? -1 : childBridge.uploadCancel((int) args[0])));
+
         // 1 when the server can decode video (the optional evanscomputermod-ffmpeg sidecar), else 0.
         addEnv(sink, "video_supported", NO_PARAMS, RET_I32, (inst, args) ->
                 retI32(childBridge != null && childBridge.videoSupported() ? 1 : 0));
@@ -1276,7 +1311,9 @@ public class WasiFunctions {
             ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) hostBytes.length);
             System.arraycopy(hostBytes, 0, a, 2, hostBytes.length);
             NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_GETADDRINFO, a);
-            if (r.status < 0 || r.payload.length < 16) return retI32(-1);
+            // -2..-5: why the name did not resolve (kernel net/ipc.rs GAI_*), passed on.
+            if (r.status < 0) return retI32(r.status >= -5 ? (int) r.status : -1);
+            if (r.payload.length < 16) return retI32(-1);
             int n = Math.min(16, (int) args[3]);
             state.mem().writeBytes((int) args[2], r.payload, 0, n);
             return retI32(n);

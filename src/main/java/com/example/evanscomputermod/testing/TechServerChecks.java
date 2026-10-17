@@ -247,8 +247,12 @@ public final class TechServerChecks {
       for (var t : terminals)
         check(terminalId(level, t.pos()).equals(data.identity(level, n, t.role())),
             "village " + n + " " + t.role() + " missing at " + t.pos().toShortString());
-      // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
-      int infrastructure = 2 + (n == data.chatVillage() ? 1 : 0) + (n == data.cells(level).coreVillage ? 1 : 0) + 1;
+      // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site,
+      // and the village's DNS racks (docs/DNS.md: its resolver and part of the hierarchy).
+      int infrastructure = 2 + (n == data.chatVillage() ? 1 : 0) + (n == data.cells(level).coreVillage ? 1 : 0) + 1
+          + data.dns(level).roles(n).size();
+      for (String role : data.dns(level).roles(n))
+        check(visit.computers().contains(data.identity(level, n, role)), "village " + n + " has no " + role + " rack computer");
       check(visit.computers().size() == infrastructure + terminals.size(),
           "village " + n + " has " + visit.computers().size() + " computers, expected " + (infrastructure + terminals.size()));
       // Physical cabling: every house WAN reaches the ISP's access cable; LAN pairs are isolated.

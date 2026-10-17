@@ -100,8 +100,13 @@ public final class TechNetworkCommand {
                               for (var sp : spans)
                                 sb.append(sb.length() == 0 ? "" : ", ").append(sp.id()).append(" ").append(sp.x()).append(" ").append(sp.z());
                               say(s, "  cell sites toward village " + next + " (" + spans.size() + ", 172.31." + i + ".16 up): " + sb);
+                              var dns = d.dns(l);
+                              say(s, "  DNS: v" + i + ".ring (search domain), http://web.v" + i + ".ring/; this village runs:");
+                              for (String r : dns.describe(i)) say(s, "    " + r);
                               say(s, "  router " + d.identity(l, i, WorldNetwork.ISP_ROUTER) + ", web "
                                   + d.identity(l, i, WorldNetwork.WEB));
+                              for (String r : dns.roles(i))
+                                say(s, "  " + r + " " + d.identity(l, i, r));
                             }
                             return 1;
                           })));
@@ -173,6 +178,52 @@ public final class TechNetworkCommand {
                             }
                           return count;
                         })));
+    // /ecm dns roles: the whole DNS map (docs/DNS.md).
+    root.then(
+        Commands.literal("dns")
+            .then(
+                Commands.literal("roles")
+                    .executes(
+                        ctx -> {
+                          var s = ctx.getSource();
+                          var dns = data(s).dns(s.getServer().overworld());
+                          say(s, "Tech Village DNS (docs/DNS.md):");
+                          for (String line : dns.map()) say(s, "  " + line);
+                          for (int v = 1; v <= 10; v++) {
+                            java.util.List<String> roles = new java.util.ArrayList<>();
+                            for (String r : dns.roles(v)) roles.add(r.replace("datacenter.", ""));
+                            say(s, "  village " + v + ": v" + v + ".ring, " + String.join(", ", roles));
+                          }
+                          return 1;
+                        }))
+            // /ecm dns tld remove TLD: the operator at IANA's console (types `ianad revoke TLD` there).
+            .then(
+                Commands.literal("tld")
+                    .then(
+                        Commands.literal("remove")
+                            .then(
+                                Commands.argument("tld", com.mojang.brigadier.arguments.StringArgumentType.word())
+                                    .executes(
+                                        ctx -> {
+                                          var s = ctx.getSource();
+                                          var l = s.getServer().overworld();
+                                          var d = data(s);
+                                          var dns = d.dns(l);
+                                          String tld = com.mojang.brigadier.arguments.StringArgumentType.getString(ctx, "tld");
+                                          if (!tld.matches("[A-Za-z0-9-]{1,63}")) {
+                                            s.sendFailure(Component.literal("not a TLD: " + tld));
+                                            return 0;
+                                          }
+                                          var host = ComputerHost.get(s.getServer(), d.identity(l, dns.iana(), DnsPlan.IANA));
+                                          if (host.instance() == null) {
+                                            s.sendFailure(Component.literal("IANA's computer (village " + dns.iana() + ") is not running"));
+                                            return 0;
+                                          }
+                                          host.instance().sendInput("ianad revoke " + tld.toLowerCase() + "\n");
+                                          say(s, "typed 'ianad revoke " + tld.toLowerCase() + "' at IANA's console (village " + dns.iana()
+                                              + ", " + dns.ianaAddress() + "); the root servers drop ." + tld.toLowerCase() + " on the NOTIFY");
+                                          return 1;
+                                        })))));
     dispatcher.register(root);
   }
 

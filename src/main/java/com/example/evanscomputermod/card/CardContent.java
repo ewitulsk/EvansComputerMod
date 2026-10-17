@@ -93,8 +93,9 @@ public final class CardContent {
     public static final DeferredItem<Item> CARD_READER_MODULE = ITEMS.registerItem("card_reader_module", p -> new CardReaderModuleItem(p.stacksTo(1)));
     public static final DeferredItem<Item> NFC_MODULE = ITEMS.registerItem("nfc_module", p -> new NfcModuleItem(p.stacksTo(1)));
 
+    /** Partial blocks: no occlusion, or the faces of whatever they stand against (a Terminal) are culled and show through. */
     private static BlockBehaviour.Properties metal() {
-        return BlockBehaviour.Properties.of().strength(2f, 6f).sound(SoundType.METAL).requiresCorrectToolForDrops();
+        return BlockBehaviour.Properties.of().strength(2f, 6f).sound(SoundType.METAL).requiresCorrectToolForDrops().noOcclusion();
     }
 
     // ------------------------------------------------------------ blocks

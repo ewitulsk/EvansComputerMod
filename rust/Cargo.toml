@@ -19,6 +19,7 @@ members = [
     "crates/ecm-cell-ui",
     "crates/ecm-chat",
     "crates/ecm-disco",
+    "crates/ecm-dns",
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
     "crates/ecm-vte",
@@ -72,6 +73,7 @@ members = [
     "wasm-programs/gba-app",
     "wasm-programs/videoplayer",
     "wasm-programs/video",
+    "wasm-programs/upload",
     "wasm-programs/phonetest",
     "wasm-programs/gui",
     "wasm-programs/test-shell",
@@ -117,6 +119,13 @@ members = [
     "wasm-programs/picker",
     "wasm-programs/chooser",
     "wasm-programs/disco",
+    "wasm-programs/named",
+    "wasm-programs/dig",
+    "wasm-programs/registryd",
+    "wasm-programs/registrard",
+    "wasm-programs/ianad",
+    "wasm-programs/domain",
+    "wasm-programs/whois",
 ]
 resolver = "2"
 
@@ -135,6 +144,7 @@ ecm-cell = { path = "crates/ecm-cell" }
 ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-disco = { path = "crates/ecm-disco" }
+ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }

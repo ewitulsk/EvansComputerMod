@@ -42,6 +42,8 @@ pub struct PoolSpec {
     pub prefix: u8,
     pub router: Option<Ipv4Addr>,
     pub dns: Option<Ipv4Addr>,
+    /// Domain name handed out with the lease (option 15).
+    pub domain: Option<String>,
     pub lease_secs: u32,
 }
 
@@ -269,6 +271,7 @@ impl LeaseDb {
             r.mask = Some(Ipv4Addr::mask_from_prefix(pool.prefix));
             r.router = pool.router;
             r.dns = pool.dns;
+            r.domain = pool.domain.clone();
         }
         r
     }
@@ -401,6 +404,7 @@ mod tests {
             prefix: 24,
             router: Some(ip("192.168.50.1")),
             dns: Some(ip("1.1.1.1")),
+            domain: None,
             lease_secs: 3600,
         }
     }

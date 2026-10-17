@@ -13,7 +13,7 @@ fetch_sable() {
     bash scripts/fetch-libs.sh
 }
 
-# The sidecar subprojects (wasmtime, ffmpeg) target one MC version per build,
+# The sidecar subprojects (wasmtime, ffmpeg, upload) target one MC version per build,
 # selected by `-PmcVersion=...`. Each variant writes to its own build dir
 # (build-mc1.21.1/, build-mc26.1/) so we can build both back-to-back.
 # The 1.21.1 path of the main mod also requires the optional Sable and
@@ -28,11 +28,14 @@ GRADLE_INVOCATIONS=(
     ":evanscomputermod-wasmtime:build -PmcVersion=1.21.1"
     ":evanscomputermod-ffmpeg:jar -PmcVersion=26.1"
     ":evanscomputermod-ffmpeg:jar -PmcVersion=1.21.1"
+    ":evanscomputermod-upload:jar -PmcVersion=26.1"
+    ":evanscomputermod-upload:jar -PmcVersion=1.21.1"
 )
 JAR_GLOBS=(
     'versions/*/build/libs/*.jar'
     'evanscomputermod-wasmtime/build-mc*/libs/*.jar'
     'evanscomputermod-ffmpeg/build-mc*/libs/*.jar'
+    'evanscomputermod-upload/build-mc*/libs/*.jar'
 )
 NEEDS_SABLE=1
 for arg in "$@"; do
@@ -42,11 +45,13 @@ for arg in "$@"; do
                 ":1.21.1:build"
                 ":evanscomputermod-wasmtime:build -PmcVersion=1.21.1"
                 ":evanscomputermod-ffmpeg:jar -PmcVersion=1.21.1"
+                ":evanscomputermod-upload:jar -PmcVersion=1.21.1"
             )
             JAR_GLOBS=(
                 'versions/1.21.1/build/libs/*.jar'
                 'evanscomputermod-wasmtime/build-mc1.21.1/libs/*.jar'
                 'evanscomputermod-ffmpeg/build-mc1.21.1/libs/*.jar'
+                'evanscomputermod-upload/build-mc1.21.1/libs/*.jar'
             )
             NEEDS_SABLE=1
             ;;
@@ -55,11 +60,13 @@ for arg in "$@"; do
                 ":26.1:build"
                 ":evanscomputermod-wasmtime:build -PmcVersion=26.1"
                 ":evanscomputermod-ffmpeg:jar -PmcVersion=26.1"
+                ":evanscomputermod-upload:jar -PmcVersion=26.1"
             )
             JAR_GLOBS=(
                 'versions/26.1/build/libs/*.jar'
                 'evanscomputermod-wasmtime/build-mc26.1/libs/*.jar'
                 'evanscomputermod-ffmpeg/build-mc26.1/libs/*.jar'
+                'evanscomputermod-upload/build-mc26.1/libs/*.jar'
             )
             NEEDS_SABLE=0
             ;;

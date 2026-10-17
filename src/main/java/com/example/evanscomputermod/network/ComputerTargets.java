@@ -33,7 +33,11 @@ public final class ComputerTargets {
     @Nullable
     public static IComputerHost resolveInput(ServerPlayer player, UUID computerId, int displayId) {
         IComputerHost host = resolve(player, computerId, displayId);
-        return host != null && host.acceptsInput(player, displayId) ? host : null;
+        if (host == null || !host.acceptsInput(player, displayId)) return null;
+        // Whoever types or clicks is the player an upload asks for a file (UploadPort).
+        ComputerInstance computer = instance(host);
+        if (computer != null) computer.uploadPort().noteOperator(player, host);
+        return host;
     }
 
     /** The live computer behind {@code host}, or null while it is off or booting. */

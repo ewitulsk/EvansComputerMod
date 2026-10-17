@@ -20,6 +20,7 @@ pub mod net_config;
 pub mod dhcp;
 pub mod net_ipc;
 pub mod video;
+pub mod upload;
 pub mod gfx_child;
 pub mod mouse;
 pub mod peripheral;

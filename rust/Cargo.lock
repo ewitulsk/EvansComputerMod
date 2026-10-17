@@ -1081,6 +1081,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dig"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1117,6 +1125,14 @@ name = "disco"
 version = "0.1.0"
 dependencies = [
  "ecm-disco",
+]
+
+[[package]]
+name = "domain"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
 ]
 
 [[package]]
@@ -1214,6 +1230,14 @@ name = "ecm-disco"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "ecm-dns"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "sha2",
 ]
 
 [[package]]
@@ -1773,6 +1797,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ianad"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2263,6 +2295,14 @@ name = "mv"
 version = "0.1.0"
 
 [[package]]
+name = "named"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "nibble_vec"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2336,6 +2376,7 @@ dependencies = [
 name = "nslookup"
 version = "0.1.0"
 dependencies = [
+ "ecm-dns",
  "ecm-host-abi",
 ]
 
@@ -2973,6 +3014,22 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "registrard"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "registryd"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "resolvectl"
@@ -4328,6 +4385,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
+name = "upload"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "uppercase"
 version = "0.1.0"
 
@@ -4824,6 +4888,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bae2f2b2b816647a1cab1acc91f5bd20812d53cb344382635ec2181940c8034f"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "whois"
+version = "0.1.0"
+dependencies = [
+ "ecm-dns",
+ "ecm-host-abi",
 ]
 
 [[package]]

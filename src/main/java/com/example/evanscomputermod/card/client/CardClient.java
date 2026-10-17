@@ -32,6 +32,8 @@ public final class CardClient {
                 return renderer;
             }
         }, cardItems()));
+        modBus.addListener((net.neoforged.neoforge.client.event.EntityRenderersEvent.RegisterRenderers e) ->
+                e.registerBlockEntityRenderer(CardContent.CARD_READER_BE.get(), CardReaderRenderer::new));
         modBus.addListener((ModelEvent.RegisterAdditional e) -> {
             for (CardKind k : CardKind.values()) e.register(CardItemRenderer.BODIES.get(k));
         });

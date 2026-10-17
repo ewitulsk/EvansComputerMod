@@ -38,6 +38,9 @@ public class CardPrinterBlock extends BaseEntityBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
     /** Printing (the head is moving). */
     public static final BooleanProperty ACTIVE = BlockStateProperties.LIT;
+    /** The body and the tray on top (models/card_printer.bbmodel). */
+    private static final net.minecraft.world.phys.shapes.VoxelShape SHAPE = net.minecraft.world.phys.shapes.Shapes.or(
+            Block.box(0, 0, 0, 16, 10, 16), Block.box(1, 10, 1, 15, 12, 15));
 
     public CardPrinterBlock(Properties properties) {
         super(properties);
@@ -72,6 +75,12 @@ public class CardPrinterBlock extends BaseEntityBlock {
     @Override
     protected RenderShape getRenderShape(BlockState state) {
         return RenderShape.MODEL;
+    }
+
+    @Override
+    protected net.minecraft.world.phys.shapes.VoxelShape getShape(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos pos,
+                                                                  net.minecraft.world.phys.shapes.CollisionContext ctx) {
+        return SHAPE;
     }
 
     @Override

@@ -27,6 +27,7 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [switch]$Ffmpeg,                # JUnit in the FFmpeg video sidecar (26.1); GameTests: load the sidecar (1.21.1 build) in the run
+    [switch]$Upload,                # GameTests / -ClientChecks: load the file upload sidecar (1.21.1 build) in the run
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
@@ -37,8 +38,8 @@ param(
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen','gui','phone','cards')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock) or cards (card blocks, a printed card in hand and in frames, the printer screen, the inventory)
+    [ValidateSet('tech','radio','screen','gui','phone','upload','cards')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock), upload (a real client uploads a file to a Terminal; with -Upload) or cards (card blocks, a printed card in hand and in frames, the printer screen, the inventory)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
@@ -189,6 +190,14 @@ if ($GameTests.Count -gt 0) {
             Add-Step "ffmpeg-sidecar" "gradlew :evanscomputermod-ffmpeg:jar -PmcVersion=1.21.1" $flog (($fcode -eq 0) -and [bool]$fjar) $null $null "exit $fcode"
             if ($fjar) { Copy-Item $fjar.FullName $mods }
         }
+        if ($Upload) {
+            # The file upload sidecar (server and client side): built for 1.21.1 and dropped in the run's mods/.
+            $ulog = Join-Path $out "upload-sidecar.log"
+            $ucode = Run-Logged ".\gradlew.bat :evanscomputermod-upload:jar -PmcVersion=1.21.1 --console=plain" $ulog
+            $ujar = Get-ChildItem (Join-Path $root "evanscomputermod-upload\build-mc1.21.1\libs") -Filter "evanscomputermod-upload-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            Add-Step "upload-sidecar" "gradlew :evanscomputermod-upload:jar -PmcVersion=1.21.1" $ulog (($ucode -eq 0) -and [bool]$ujar) $null $null "exit $ucode"
+            if ($ujar) { Copy-Item $ujar.FullName $mods }
+        }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
     $only = (Split-List $GameTestOnly) -join ","
@@ -230,6 +239,14 @@ if ($ClientChecks) {
         New-Item -ItemType Directory -Force "$directory/mods","$directory/config" | Out-Null
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
+    }
+    if ($Upload) {
+        # The file upload sidecar goes in both games: the server and the player's client.
+        $ulog = Join-Path $out "upload-sidecar.log"
+        $ucode = Run-Logged ".\gradlew.bat :evanscomputermod-upload:jar -PmcVersion=1.21.1 --console=plain" $ulog
+        $ujar = Get-ChildItem (Join-Path $root "evanscomputermod-upload\build-mc1.21.1\libs") -Filter "evanscomputermod-upload-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+        Add-Step "upload-sidecar" "gradlew :evanscomputermod-upload:jar -PmcVersion=1.21.1" $ulog (($ucode -eq 0) -and [bool]$ujar) $null $null "exit $ucode"
+        if ($ujar) { foreach ($surface in @('server','client')) { Copy-Item $ujar.FullName (Join-Path $visualRoot "$surface/mods") } }
     }
     # Pick a free port below Windows' ephemeral range (49152+), where outgoing connections
     # of other programs cannot grab it between this probe and the server's bind.
@@ -275,6 +292,9 @@ if ($ClientChecks) {
         } elseif($ClientSuite -eq 'screen') {
             $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
+        } elseif($ClientSuite -eq 'upload') {
+            $cases=@('upload_terminal','upload_cancelled')
+            $serverOnly=@('upload_fixture','upload_final')
         } elseif($ClientSuite -eq 'cards') {
             $cases=@('cards_blocks','cards_hand','cards_frames','cards_printer_screen','cards_inventory')
             $serverOnly=@('cards_fixture','cards_final')

@@ -17,6 +17,7 @@ fn main() {
     println!("  echo [-n|-e] text - Print text");
     println!("  python [file]     - Start Python REPL or run script");
     println!("  peripherals [name] - List attached peripherals / a peripheral's methods");
+    println!("  upload [dir]      - Copy a file from your real computer (default /home)");
     println!("  git <command>     - Version control (init/add/commit/log/...)");
     println!("  visual            - Visual Programmer (a GUI app: start the GUI with `gui`)");
     println!();

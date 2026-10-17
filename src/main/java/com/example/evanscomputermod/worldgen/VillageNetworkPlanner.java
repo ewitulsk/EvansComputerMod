@@ -97,15 +97,24 @@ public final class VillageNetworkPlanner {
         }
         // The chat village's data center: the rack cable reaches down onto the chat server (rack
         // z = 4); the core village's onto the carrier core (z = 5).
+        // DNS (docs/DNS.md): onto the resolver (z = 7) and the hierarchy servers (z = 8, 9) the village has.
         var cells = com.example.evanscomputermod.computer.WorldNetwork.cellsFor(seed);
-        for (int rack : new int[] {4, 5}) {
-            boolean here = rack == 4 ? site.number() == WorldNetwork.chatVillage(seed)
-                    : cells != null && site.number() == cells.coreVillage;
+        var dns = com.example.evanscomputermod.computer.WorldNetwork.dnsFor(seed);
+        for (int rack : new int[] {4, 5, 7, 8, 9}) {
+            boolean here = switch (rack) {
+                case 4 -> site.number() == WorldNetwork.chatVillage(seed);
+                case 5 -> cells != null && site.number() == cells.coreVillage;
+                default -> dns != null && ProvisioningProcessor.dnsSlot(
+                        rack == 7 ? ProvisioningProcessor.DNS_SLOT : ProvisioningProcessor.DNS_SLOT + "." + (rack - 7), dns,
+                        site.number()) != null;
+            };
             if (datacenter == null || !here) continue;
             BlockPos c = datacenter.world(new BlockPos(11, 2, rack));
             int mask = 0;
-            for (BlockPos q : List.of(datacenter.world(new BlockPos(11, 2, rack - 1)), datacenter.world(new BlockPos(11, 2, rack + 1)),
-                    datacenter.world(new BlockPos(11, 1, rack)))) {
+            List<BlockPos> arms = new ArrayList<>(List.of(datacenter.world(new BlockPos(11, 2, rack - 1)),
+                    datacenter.world(new BlockPos(11, 1, rack))));
+            if (rack < 9) arms.add(datacenter.world(new BlockPos(11, 2, rack + 1)));
+            for (BlockPos q : arms) {
                 Direction d = Direction.fromDelta(q.getX() - c.getX(), q.getY() - c.getY(), q.getZ() - c.getZ());
                 if (d != null) mask |= 1 << d.ordinal();
             }

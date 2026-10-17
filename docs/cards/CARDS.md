@@ -458,3 +458,8 @@ Everything above is built on 1.21.1 with these differences and notes:
 - **Tests**: JUnit `BankAppletTest`, `NfcAppletTest`, `CardFacesTest`, `NfcAirTest`, `NfcRadioTest` (+ lane R's
   `NearFieldTest`, `PassiveEndpointTest`); Rust `ecm-cards` (14), `ecm-ui` (`tests/cards.rs`), `python` (`cards_tests`,
   `cards_apps_tests`), `lua`; GameTests `ecm_cards`; goldens `card_widgets`; the radio client suite frames printed cards.
+- **Reader display**: the Card Reader/Writer draws the card actually in its slot (`CardReaderRenderer`, the item's own body
+  and painted faces) from a client-safe copy in its update tag (item, faces, stripe-corrupted flag; never applets or
+  secrets); the block model's fixed SIM cube is gone. Right-clicking a card into a reader (block or bay module) consumes
+  it in creative too: a card is handed over, not placed. The reader and printer are `noOcclusion` partial blocks with
+  matching shapes, so a Terminal they stand against keeps its faces.

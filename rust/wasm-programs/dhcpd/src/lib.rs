@@ -12,7 +12,7 @@
 //! ```
 //!
 //! - `pool <iface> <first> <last> [prefix <n> | netmask <mask>]
-//!   [router <ip>] [dns <ip>] [lease <seconds>]`: one pool per interface.
+//!   [router <ip>] [dns <ip>] [domain <name>] [lease <seconds>]`: one pool per interface.
 //!   Defaults: prefix 24, lease 3600 s, no router/DNS option.
 //! - `reserve <mac> <ip>`: that MAC always gets that address (it must be in
 //!   a pool's subnet; it may be outside the range).
@@ -112,6 +112,7 @@ impl Config {
             prefix: 24,
             router: None,
             dns: None,
+            domain: None,
             lease_secs: DEFAULT_LEASE_SECS,
         };
         let mut i = 4;
@@ -122,6 +123,7 @@ impl Config {
             match w[i] {
                 "router" => p.router = Some(ip(v, line)?),
                 "dns" => p.dns = Some(ip(v, line)?),
+                "domain" => p.domain = Some(v.trim_end_matches('.').to_ascii_lowercase()),
                 "lease" => {
                     p.lease_secs = v
                         .parse()

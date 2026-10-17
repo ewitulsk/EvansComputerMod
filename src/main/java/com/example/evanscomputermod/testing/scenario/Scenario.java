@@ -20,9 +20,10 @@ import java.util.regex.Pattern;
  * CI checks.
  *
  * <p>Terminals are placed with their screen facing {@link Node#facing}. A
- * terminal's NICs are its non-screen faces in {@link Direction} order
- * (DOWN, UP, NORTH, SOUTH, WEST, EAST), so for a north-facing terminal
- * eth0 = down, eth1 = up, eth2 = south, eth3 = west, eth4 = east;
+ * terminal's NICs are its non-screen faces relative to the screen
+ * (bottom, top, back, left, right; see TerminalBlock.relativeFaces), so
+ * eth0 = down, eth1 = up, eth2 = back, eth3 = left, eth4 = right whatever
+ * the facing (for a north-facing terminal: south, west, east);
  * {@link #eth} computes it. Each cable run is its own segment, so
  * {@link Builder#build} rejects layouts where runs touch or a run touches
  * a terminal face it wasn't meant to.
@@ -123,10 +124,26 @@ public final class Scenario {
      * the steps find what they use from the run's origin.
      */
     public final boolean inWorld;
+    /**
+     * For an {@link #inWorld} scenario: where its layout's origin is, given the level and the
+     * player's position (e.g. the house PC nearest to the player), or null when there is
+     * none there (the reason is thrown as an IllegalStateException). Null: the player's position.
+     */
+    public final java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, BlockPos> locate;
+    /** Computers the player places during the run (a step puts them down and {@code relocate}s the node): not booted with the others. */
+    public final Set<String> later;
+    /**
+     * For a scenario whose layout depends on where it is spawned (a tap on the ring span
+     * nearest the player): the concrete scenario for the level and the player's position
+     * (its {@link #locate} gives the origin). Null: this scenario as it is.
+     */
+    public java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, Scenario> specialize;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
                      List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime,
-                     Set<String> remote, boolean inWorld) {
+                     Set<String> remote, boolean inWorld,
+                     java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, BlockPos> locate,
+                     Set<String> later) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
@@ -138,13 +155,15 @@ public final class Scenario {
         this.realTime = realTime;
         this.remote = remote;
         this.inWorld = inWorld;
+        this.locate = locate;
+        this.later = later;
     }
 
     /** NIC index of a face on a terminal with the given screen direction (no Interface blocks). */
     public static int eth(Direction facing, Direction face) {
         if (face == facing) throw new IllegalArgumentException("the screen face has no NIC");
         int i = 0;
-        for (Direction d : Direction.values()) {
+        for (Direction d : com.example.evanscomputermod.block.TerminalBlock.relativeFaces(facing)) {
             if (d == face) return i;
             if (d != facing) i++;
         }
@@ -256,6 +275,8 @@ public final class Scenario {
         private boolean realTime;
         private final Set<String> remote = new HashSet<>();
         private boolean inWorld;
+        private java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, BlockPos> locate;
+        private final Set<String> later = new HashSet<>();
 
         private Builder(String name, String description) {
             this.name = name;
@@ -263,7 +284,12 @@ public final class Scenario {
         }
 
         public Builder host(String name, BlockPos pos, String ip) {
-            nodes.put(name, new Node(name, pos, Direction.NORTH, Role.HOST, ip));
+            return host(name, pos, ip, Direction.NORTH);
+        }
+
+        /** A host whose screen faces {@code facing} (the default is north). */
+        public Builder host(String name, BlockPos pos, String ip, Direction facing) {
+            nodes.put(name, new Node(name, pos, facing, Role.HOST, ip));
             return this;
         }
 
@@ -298,6 +324,26 @@ public final class Scenario {
         /** Runs in the generated world as it is ({@link Scenario#inWorld}). */
         public Builder inWorld() {
             inWorld = true;
+            return this;
+        }
+
+        /** A computer the player places during the run ({@link Scenario#later}); {@code pos} is only a placeholder. */
+        public Builder hostLater(String name, BlockPos pos) {
+            host(name, pos, null);
+            later.add(name);
+            return this;
+        }
+
+        /** An {@link #inWorld} scenario whose origin {@code locate} finds from the player's position. */
+        public Builder locate(java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, BlockPos> locate) {
+            inWorld = true;
+            this.locate = locate;
+            return this;
+        }
+
+        /** A built layout whose origin {@code locate} finds (not {@link #inWorld}: the layout is cleared and built there). */
+        public Builder builtAt(java.util.function.BiFunction<net.minecraft.server.level.ServerLevel, BlockPos, BlockPos> locate) {
+            this.locate = locate;
             return this;
         }
 
@@ -398,7 +444,7 @@ public final class Scenario {
         public Scenario build() {
             validate();
             return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs,
-                    playerBuilt, realTime, Set.copyOf(remote), inWorld);
+                    playerBuilt, realTime, Set.copyOf(remote), inWorld, locate, Set.copyOf(later));
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */

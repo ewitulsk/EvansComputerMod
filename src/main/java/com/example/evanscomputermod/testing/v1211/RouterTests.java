@@ -123,7 +123,8 @@ public final class RouterTests {
                         probeAt[0] = System.currentTimeMillis() + 5000;
                     }
                     String screen = screenOf(host);
-                    if (phase[0] == 1 && screen.contains("1 packets sent, 1 received")) {
+                    // Type the next command only back at the prompt (a line typed while ping exits is lost).
+                    if (phase[0] == 1 && screen.contains("1 packets sent, 1 received") && screen.stripTrailing().endsWith("/ >")) {
                         host.instance().sendInput("curl http://100.72.0.10/index.html\n");
                         probeAt[0] = System.currentTimeMillis() + 5000;
                         phase[0] = 2;
@@ -610,7 +611,9 @@ public final class RouterTests {
                                     throw new IllegalStateException(role + " missing at " + at);
                             }
                             // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
-                            int infrastructure = 2 + (d.chatVillage() == 1 ? 1 : 0) + (d.cells(level).coreVillage == 1 ? 1 : 0) + 1;
+                            // Plus its DNS racks: the resolver and its part of the hierarchy (docs/DNS.md).
+                            int infrastructure = 2 + (d.chatVillage() == 1 ? 1 : 0) + (d.cells(level).coreVillage == 1 ? 1 : 0) + 1
+                                    + d.dns(level).roles(1).size();
                             if (ids.size() != net.terminals().size() || visit.computers().size() != ids.size() + infrastructure)
                                 throw new IllegalStateException("computers " + visit.computers().size() + " for "
                                         + ids.size() + " house terminals + " + infrastructure + " infrastructure");
@@ -902,7 +905,7 @@ public final class RouterTests {
                                     }
                                     BlockPos mastTop = com.example.evanscomputermod.worldgen.IspCabling.toWorld(origin, rot,
                                             new BlockPos(10, scan.mastTop(), 10));
-                                    var exits = com.example.evanscomputermod.worldgen.IspCabling.nicExits(scan, router, rot);
+                                    var exits = com.example.evanscomputermod.worldgen.IspCabling.nicExits(scan, router);
                                     if (!r.prevRun().get(r.prevRun().size() - 1).above().equals(mastTop.relative(prev))
                                             || !r.nextRun().get(r.nextRun().size() - 1).above().equals(mastTop.relative(next))
                                             || !r.prevExit().equals(com.example.evanscomputermod.worldgen.IspCabling.toWorld(origin, rot, exits.get(2)))

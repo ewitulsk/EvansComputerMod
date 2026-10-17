@@ -122,7 +122,7 @@ public final class CardReaderModule extends AnnotatedPeripheral implements IComp
         slot = id;
         card = ModemSimStore.peek(id);
         released = false;
-        if (!player.getAbilities().instabuild) stack.shrink(1);
+        stack.shrink(1);   // in creative too: the card is handed over, not placed
         host.markDirty();
         reader.cardInserted(card);
         return Component.translatable("message.evanscomputermod.card_reader.inserted");

@@ -98,6 +98,8 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider, 
     };
 
     private final CardReaderPeripheral peripheral = new CardReaderPeripheral(this);
+    /** Client side: what the renderer draws (the card's kind and faces only). */
+    private ItemStack clientCard = ItemStack.EMPTY;
     private boolean autoEject;
     private boolean released;
     private boolean hadCard;
@@ -209,11 +211,33 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider, 
     @Override
     public void cardChanged() {
         setChanged();
+        syncToClients();
+    }
+
+    /** The card as clients see it: its item (kind), painted faces and whether its stripe is scrambled; nothing else. */
+    public static ItemStack clientView(ItemStack card) {
+        if (card.isEmpty() || CardItem.kindOf(card) == null) return ItemStack.EMPTY;
+        ItemStack view = new ItemStack(card.getItem());
+        CardFaces f = CardItem.faces(card);
+        if (f != null) view.set(CardContent.CARD_FACES.get(), f);
+        Stripe s = CardItem.stripe(card);
+        if (s != null && s.corrupted()) view.set(CardContent.CARD_STRIPE.get(), new Stripe("", "", "", true));
+        return view;
+    }
+
+    /** What the client renders in the slot (EMPTY with no card). */
+    public ItemStack clientCard() {
+        return level != null && level.isClientSide() ? clientCard : clientView(card());
+    }
+
+    private void syncToClients() {
+        if (level != null && !level.isClientSide()) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
     }
 
     private void contentsChanged() {
         setChanged();
         if (level == null || level.isClientSide()) return;
+        syncToClients();
         boolean has = hasCard();
         if (has != hadCard) {
             hadCard = has;
@@ -290,10 +314,32 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider, 
         hadCard = hasCard();
     }
 
-    /** Nothing for clients: the card (and its key) stays on the server; the block state shows it. */
+    /**
+     * Clients get only the card's look ({@link #clientView}): the card itself, with its applets
+     * and secrets, stays on the server; the block state shows whether one is in.
+     */
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        return new CompoundTag();
+        CompoundTag tag = new CompoundTag();
+        ItemStack view = clientView(card());
+        if (!view.isEmpty()) tag.put("ClientCard", view.save(registries));
+        return tag;
+    }
+
+    @Override
+    public net.minecraft.network.protocol.Packet<net.minecraft.network.protocol.game.ClientGamePacketListener> getUpdatePacket() {
+        return net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(this);
+    }
+
+    @Override
+    public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider registries) {
+        clientCard = tag.contains("ClientCard") ? ItemStack.parseOptional(registries, tag.getCompound("ClientCard")) : ItemStack.EMPTY;
+    }
+
+    @Override
+    public void onDataPacket(net.minecraft.network.Connection net, net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket pkt,
+                             HolderLookup.Provider registries) {
+        handleUpdateTag(pkt.getTag() == null ? new CompoundTag() : pkt.getTag(), registries);
     }
 }
 //?}

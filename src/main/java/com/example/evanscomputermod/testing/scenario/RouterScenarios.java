@@ -16,7 +16,7 @@ import net.minecraft.core.BlockPos;
  * their command lines, and other files written from Python. A lab's link is cut by
  * breaking a block of its cable and repaired by placing one back.
  *
- * <p>Ports: every computer's screen faces north, so eth0 = DOWN, eth1 = UP, eth2 = SOUTH.
+ * <p>Ports: every computer's screen faces north, so eth0 = DOWN, eth1 = UP, eth2 = SOUTH (its back).
  * Computers stand 4 blocks apart on x; "down-down" runs along y=0 under two neighbours,
  * "up-down" runs from one computer's top over to the next one's bottom.
  */
@@ -847,6 +847,77 @@ public final class RouterScenarios {
   }
 
   /**
+   * Ports follow the computer's facing: eth0 bottom, eth1 top, eth2 back, eth3 left, eth4
+   * right, whichever way the screen faces. The player places an east-facing PC (a facing
+   * whose ports moved when numbering was by world direction: its back was eth4), cables its
+   * back to a server's bottom and pings over eth2, then turns the PC to face each other way
+   * and reads every face with the Interface Probe.
+   */
+  private static Scenario portsFollowFacing() {
+    var b =
+        Scenario.builder(
+                "router_ports_follow_facing",
+                "Ports are relative to the screen: bottom eth0, top eth1, back eth2, left eth3,"
+                    + " right eth4. An east-facing PC's back (west face) is cabled to a server and"
+                    + " pings on eth2; turned to face south, west and north, the Interface Probe"
+                    + " reads the same names on the same relative faces. Control: the screen face"
+                    + " has no port.")
+            .timeLimit(55_000)
+            .asPlayer();
+    b.host("server", new BlockPos(0, 1, 0), "10.95.0.1/24");
+    b.host("pc", new BlockPos(4, 1, 0), "10.95.0.2/24", EAST);
+    // server DOWN (eth0) -> under the floor -> up into the PC's back (its west face).
+    b.link("cable", "server", DOWN, "pc", WEST,
+        Scenario.Path.from(new BlockPos(0, 0, 0)).go(EAST, 3).go(UP, 1));
+    b.note("The PC faces east, so its back is the west face, where the cable arrives: that is eth2.");
+    b.mutate(r -> probeFaces(r, "pc", EAST), "Probe the east-facing PC's faces: bottom eth0, top eth1, back eth2, left eth3, right eth4");
+    b.send("server", "ifconfig eth0 10.95.0.1/24");
+    b.expect("server", "eth0: inet 10\\.95\\.0\\.1/24", "server has 10.95.0.1 on its bottom face");
+    b.send("pc", "ifconfig eth2 10.95.0.2/24");
+    b.expect("pc", "eth2: inet 10\\.95\\.0\\.2/24", "PC has 10.95.0.2 on its back face");
+    b.waitMs(500, "link up on both ends");
+    ping(b, "pc", "10.95.0.1", 2, 2, "the PC reaches the server through its back port (eth2)");
+    for (var facing : List.of(SOUTH, WEST, NORTH)) {
+      String way = facing.getName();
+      b.mutate(r -> r.player().breakForDrop(r.where("pc")), "Break the PC (it drops as an item)");
+      b.await(r -> r.player().pickUp(r.where("pc"), PlayerKit.ModBlocksRef.terminalItem()), "pick the PC up", 5_000);
+      b.mutate(r -> {
+        BlockPos at = r.where("pc");
+        r.player().placeFromInventory(PlayerKit.ModBlocksRef.terminalItem(), at, facing,
+            s -> s.getValue(com.example.evanscomputermod.block.TerminalBlock.FACING) == facing);
+        r.player().openScreen(at, facing);
+      }, "Place the PC back facing " + way + " and open its screen");
+      b.await(r -> r.terminal("pc") != null && r.terminal("pc").findInterfaceIndexByExitPos(r.where("pc").below()) == 0 ? null : "booting",
+          "the PC's ports are up", 10_000);
+      b.mutate(r -> probeFaces(r, "pc", facing), "Probe the " + way + "-facing PC: the same names on the same relative faces");
+    }
+    return b.build();
+  }
+
+  /** Sneak-right-click every face of {@code node} with the Interface Probe (unsneaking opens the screen) and check the names relative to {@code facing}. */
+  private static void probeFaces(ScenarioRun r, String node, net.minecraft.core.Direction facing) {
+    var probe = com.example.evanscomputermod.item.ModItems.INTERFACE_PROBE.get();
+    BlockPos at = r.where(node);
+    var expected = ordered(
+        Map.entry(DOWN, "eth0"), Map.entry(UP, "eth1"), Map.entry(facing.getOpposite(), "eth2"),
+        Map.entry(facing.getCounterClockWise(), "eth3"), Map.entry(facing.getClockWise(), "eth4"));
+    String[] names = {"bottom", "top", "back", "left", "right"};
+    int i = 0;
+    for (var e : expected.entrySet()) {
+      String heard = String.join(" ", r.player().use(probe, at, e.getKey(), true));
+      String side = names[i++] + " (" + e.getKey().getName() + ")";
+      if (!heard.contains(e.getValue() + " ")) {
+        r.fail(node + " facing " + facing.getName() + ": the " + side + " face should be " + e.getValue() + ", probe said: " + heard);
+        return;
+      }
+      r.say("§7  " + side + ": " + e.getValue());
+    }
+    String screen = String.join(" ", r.player().use(probe, at, facing, true));
+    if (!screen.contains("no interface")) r.fail("control: the screen face should have no port, probe said: " + screen);
+    else r.say("§7  screen (" + facing.getName() + "): no port");
+  }
+
+  /**
    * The router configuration a player types on a tap router: eth0 (DOWN, on the patch
    * panel) takes a free address in the link's /28, eth1 (UP) is the player's LAN, and the
    * router peers with both ends of the fiber. {@code extra} adds lines in global config
@@ -1102,26 +1173,18 @@ public final class RouterScenarios {
   }
 
   /**
-   * A player taps the real generated ring between village {@code a} and the next one. The
-   * layout's origin is the air block on top of a path span: the player puts a Fiber Patch
-   * Panel there, a network cable on it and their router on the cable (DOWN face, eth0); a
-   * PC shares the router's UP face (eth1, LAN 10.200.a.0/24). A control panel is placed
-   * two blocks from the path under the "ctl" computer and must not join the fiber.
-   *
-   * @param cut also break the span at {@code breakAt} (toward village a) and repair it, and
-   *     keep the tap router Always-On through an unload
+   * The ring-tap lab up to BGP: the tap router on a Fiber Patch Panel on a span of the
+   * generated ring between village {@code a} and the next (eth0, a free address .5 in the
+   * link's /28, AS 65200+a), its LAN 10.200.a.0/24 on its UP face with a PC (.10), an
+   * off-path control panel under "ctl", both sessions Established. {@code listen}: first
+   * listen to the link with tcpdump; {@code extra}/{@code family}: more router lines (see
+   * {@link #tapConfig}). Other scenarios (DNS) continue from here.
    */
-  public static Scenario ringTap(int a, boolean cut, BlockPos breakAt) {
-    int b = a == 10 ? 1 : a + 1, far = (a + 3) % 10 + 1;
+  public static Scenario.Builder tapLab(int a, String name, String description, long timeLimit, boolean listen,
+      List<String> extra, List<String> family) {
+    int b = a == 10 ? 1 : a + 1;
     String sub = "172.31." + a + ".";
-    var s =
-        Scenario.builder(
-                "router_ring_tap_" + a + (cut ? "_cut" : ""),
-                "Tap the Tech Village ring between villages " + a + " and " + b + ": a patch panel"
-                    + " on a span, a router (AS " + (65200 + a) + ", LAN 10.200." + a + ".0/24) at " + sub
-                    + "5/28 peering with both ISPs.")
-            .timeLimit(55_000)
-            .asPlayer();
+    var s = Scenario.builder(name, description).timeLimit(timeLimit).asPlayer();
     var up = net.minecraft.core.Direction.UP;
     var north = net.minecraft.core.Direction.NORTH;
     s.host("tap", new BlockPos(0, 2, 0), null);
@@ -1169,7 +1232,7 @@ public final class RouterScenarios {
         },
         "the tap shares the fiber with both ISPs; the off-path control panel does not",
         5_000);
-    if (!cut) {
+    if (listen) {
       // The ring carries the carrier's cell traffic too: listen to BGP (TCP 179) only.
       s.send("tap", "tcpdump -i eth0 -c 1 tcp port 179");
       s.expect("tap", q(sub) + "[12]\\.\\d+ > " + q(sub) + "[12]\\.", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
@@ -1180,14 +1243,43 @@ public final class RouterScenarios {
     s.send("tap", "router");
     s.expect("tap", "router#", "router CLI");
     for (String line :
-        tapConfig(65200 + a, a, sub + "5/28", sub + "1", 65000 + a, sub + "2", 65000 + b,
-            cut ? List.of() : List.of("ip route 100." + (64 + far) + ".0.0/24 10.200." + a + ".99"),
-            cut ? List.of() : List.of("network 100." + (64 + far) + ".0.0/24",
-                "neighbor " + sub + "1 default-originate", "neighbor " + sub + "2 default-originate")))
+        tapConfig(65200 + a, a, sub + "5/28", sub + "1", 65000 + a, sub + "2", 65000 + b, extra, family))
       s.send("tap", line);
     s.expect("tap", "Configuration saved", "write memory");
     s.until("tap", "show bgp ipv4 unicast summary", "^ " + q(sub) + "1 +" + (65000 + a) + " .*Established", "peered with village " + a);
     s.until("tap", "show bgp ipv4 unicast summary", "^ " + q(sub) + "2 +" + (65000 + b) + " .*Established", "peered with village " + b);
+    return s;
+  }
+
+  /**
+   * A player taps the real generated ring between village {@code a} and the next one. The
+   * layout's origin is the air block on top of a path span: the player puts a Fiber Patch
+   * Panel there, a network cable on it and their router on the cable (DOWN face, eth0); a
+   * PC shares the router's UP face (eth1, LAN 10.200.a.0/24). A control panel is placed
+   * two blocks from the path under the "ctl" computer and must not join the fiber.
+   *
+   * @param cut also break the span at {@code breakAt} (toward village a) and repair it, and
+   *     keep the tap router Always-On through an unload
+   */
+  public static Scenario ringTap(int a, boolean cut, BlockPos breakAt) {
+    int b = a == 10 ? 1 : a + 1, far = (a + 3) % 10 + 1;
+    String sub = "172.31." + a + ".";
+    var s = tapLab(a, "router_ring_tap_" + a + (cut ? "_cut" : ""),
+        "Tap the Tech Village ring between villages " + a + " and " + b + ": a patch panel"
+            + " on a span, a router (AS " + (65200 + a) + ", LAN 10.200." + a + ".0/24) at " + sub
+            + "5/28 peering with both ISPs.",
+        55_000, !cut,
+        cut ? List.of() : List.of("ip route 100." + (64 + far) + ".0.0/24 10.200." + a + ".99"),
+        cut ? List.of() : List.of("network 100." + (64 + far) + ".0.0/24",
+            "neighbor " + sub + "1 default-originate", "neighbor " + sub + "2 default-originate"));
+    var north = net.minecraft.core.Direction.NORTH;
+    var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
+    java.util.function.Function<ScenarioRun, byte[]> tapNic =
+        r -> NetworkHub.deriveMac(r.terminal("tap").getComputerId(), 0);
+    java.util.function.BiFunction<ScenarioRun, Boolean, byte[]> ispNic =
+        (r, next) -> NetworkHub.deriveMac(
+            WorldNetwork.get(r.level()).identity(r.level(), next ? a : b, WorldNetwork.ISP_ROUTER),
+            next ? WorldNetwork.FIBER_NEXT_PORT : WorldNetwork.FIBER_PREV_PORT);
     if (!cut) {
       s.until("tap", "show bgp ipv4 unicast", "^0\\.0\\.0\\.0/0 via ", "the default route from village 1");
       s.mutate(
@@ -1358,6 +1450,7 @@ public final class RouterScenarios {
     add(headless());
     add(village());
     add(playerFiber());
+    add(portsFollowFacing());
     add(fiberTapLab());
   }
   //?}

@@ -85,6 +85,8 @@ pub struct Net {
     /// The Wi-Fi radio (`wlan0` once a Wi-Fi module is present).
     pub wifi: wifi::WifiDev,
     wifi_carrier: bool,
+    /// The stack's DNS generation last written to `/etc/resolv.conf`.
+    resolv_gen: u32,
 }
 
 impl Net {
@@ -121,6 +123,7 @@ impl Net {
             tuns: radio0::Tuns::new(),
             wifi: wifi::WifiDev::new(radio, now),
             wifi_carrier: false,
+            resolv_gen: 0,
         };
         if net.wifi.present() {
             net.attach_wlan(now);
@@ -398,6 +401,25 @@ impl Net {
         core::mem::take(&mut self.console_log)
     }
 
+    /// DHCP or `resolvectl dns` changed the DNS server or domain: rewrite
+    /// `/etc/resolv.conf`, unless the player wrote that file themselves (no kernel mark).
+    fn sync_resolv_conf(&mut self) {
+        let g = self.stack.dns_generation();
+        if g == self.resolv_gen {
+            return;
+        }
+        self.resolv_gen = g;
+        let path = ecm_net::resolv::RESOLV_CONF;
+        let mine = match crate::fs::read_to_string(path) {
+            Some(t) => t.starts_with(ecm_net::resolv::KERNEL_MARK),
+            None => true,
+        };
+        if mine {
+            let text = ecm_net::resolv::ResolvConf::render_kernel(self.stack.dns_server(), self.stack.dns_domain());
+            crate::fs::write(path, text.as_bytes());
+        }
+    }
+
     /// Timers, carrier sampling and output. Returns the next deadline.
     pub fn poll(&mut self, now: i64) -> Option<i64> {
         if now >= self.next_carrier_poll {
@@ -426,6 +448,7 @@ impl Net {
         if let Some(b) = self.bridge.as_mut() {
             deadline = min_opt(deadline, b.poll(now));
         }
+        self.sync_resolv_conf();
         self.flush(now);
         min_opt(deadline, Some(self.next_carrier_poll))
     }
