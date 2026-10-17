@@ -59,7 +59,14 @@ const SOCK_DGRAM: i32 = 2;
 const SOCK_RAW: i32 = 3;
 const IPPROTO_ICMP: i32 = 1;
 const SOL_SOCKET: i32 = 1;
+const SO_REUSEADDR: i32 = 2;
 const SO_RCVTIMEO: i32 = 20;
+// IPPROTO_IP options (Linux numbering).
+const IP_MULTICAST_IF: i32 = 32;
+const IP_MULTICAST_TTL: i32 = 33;
+const IP_MULTICAST_LOOP: i32 = 34;
+const IP_ADD_MEMBERSHIP: i32 = 35;
+const IP_DROP_MEMBERSHIP: i32 = 36;
 const SHUT_RD: i32 = 0;
 /// recv/recvfrom flag: return the timeout status at once instead of waiting.
 const MSG_DONTWAIT: i32 = 0x40;
@@ -457,10 +464,10 @@ fn op_bind(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i32 {
             *bind = Some(addr);
             out.status(0)
         }
-        Kind::Udp(h) => match stack.udp_bind(addr) {
-            // Bind the new port first so a failed rebind keeps the old one.
+        // The new binding keeps SO_REUSEADDR, the multicast options and memberships; a
+        // failed rebind keeps the old one.
+        Kind::Udp(h) => match stack.udp_rebind(*h, addr) {
             Ok(new) => {
-                stack.udp_close(*h);
                 *h = new;
                 out.status(0)
             }
@@ -692,6 +699,11 @@ fn op_setsockopt(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i
     let Some(sock) = sess.sockets[id].as_mut() else {
         return out.status(-1);
     };
+    if let Kind::Udp(h) = sock.kind {
+        if let Some(r) = udp_option(stack, h, level, name, val) {
+            return out.status(r);
+        }
+    }
     if level == 0 && name == 2 {
         let Some(bytes) = val.get(..4) else {
             return out.status(-1);
@@ -729,6 +741,43 @@ fn op_setsockopt(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i
         sock.rcvtimeo_ms = if ms > 0 { Some(ms) } else { None };
     }
     out.status(0)
+}
+
+/// UDP socket options: SO_REUSEADDR and the IPv4 multicast ones. `None`: not one of them.
+/// Integer options take a 4-byte int (or, like Linux, one byte); addresses are 4 bytes in
+/// network order; IP_ADD/DROP_MEMBERSHIP take an ip_mreq (group, interface address).
+fn udp_option(stack: &mut Stack, h: SocketHandle, level: i32, name: i32, val: &[u8]) -> Option<i32> {
+    let int = || match val.len() {
+        1 => Some(val[0] as i32),
+        n if n >= 4 => Some(i32::from_le_bytes([val[0], val[1], val[2], val[3]])),
+        _ => None,
+    };
+    let addr = |at: usize| val.get(at..at + 4).map(Ipv4Addr::from_bytes);
+    let st = |r: Result<(), NetError>| if r.is_ok() { 0 } else { -1 };
+    Some(match (level, name) {
+        (SOL_SOCKET, SO_REUSEADDR) => match int() {
+            Some(v) => st(stack.udp_set_reuse(h, v != 0)),
+            None => -1,
+        },
+        (0, IP_MULTICAST_IF) => match addr(0) {
+            Some(a) => st(stack.udp_set_multicast_if(h, a)),
+            None => -1,
+        },
+        (0, IP_MULTICAST_TTL) => match int() {
+            Some(t @ 0..=255) => st(stack.udp_set_multicast_ttl(h, t as u8)),
+            _ => -1,
+        },
+        (0, IP_MULTICAST_LOOP) => match int() {
+            Some(v) => st(stack.udp_set_multicast_loop(h, v != 0)),
+            None => -1,
+        },
+        (0, IP_ADD_MEMBERSHIP) | (0, IP_DROP_MEMBERSHIP) => match (addr(0), addr(4)) {
+            (Some(g), Some(i)) if name == IP_ADD_MEMBERSHIP => st(stack.udp_join_group(h, g, i)),
+            (Some(g), Some(i)) => st(stack.udp_leave_group(h, g, i)),
+            _ => -1,
+        },
+        _ => return None,
+    })
 }
 
 fn op_sendto(

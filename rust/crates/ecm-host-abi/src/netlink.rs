@@ -15,6 +15,10 @@ pub const RTM_GETADDR: u16 = 22;
 pub const RTM_NEWROUTE: u16 = 24;
 pub const RTM_DELROUTE: u16 = 25;
 pub const RTM_GETROUTE: u16 = 26;
+/// Multicast group memberships (`ip maddr`): a dump answers one RTM_NEWMULTICAST per
+/// (interface, group), an `ifaddrmsg` with `IFA_MULTICAST`.
+pub const RTM_NEWMULTICAST: u16 = 56;
+pub const RTM_GETMULTICAST: u16 = 58;
 pub const NLMSG_DONE: u16 = 3;
 pub const NLMSG_ERROR: u16 = 2;
 
@@ -97,6 +101,7 @@ pub const IFA_UNSPEC: u16 = 0;
 pub const IFA_ADDRESS: u16 = 1;    // Interface address
 pub const IFA_LOCAL: u16 = 2;      // Local address
 pub const IFA_LABEL: u16 = 3;      // Interface name
+pub const IFA_MULTICAST: u16 = 7;  // A joined multicast group
 
 // --- Route attributes ---
 pub const RTA_UNSPEC: u16 = 0;

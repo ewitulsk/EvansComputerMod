@@ -42,8 +42,14 @@ pub fn search(kind: &str, wait_ms: i64) -> Result<Vec<Found>, String> {
     }
     let mut s = Search::new(seed() & 0x7fff_ffff, kind);
     let q = s.query();
-    for t in targets(&interfaces(), gateway()) {
-        // A segment without a route (or a link that is down) just fails: the others still go.
+    // The group, out of every interface (link-local: TTL 1, the default).
+    for ifc in multicast_interfaces(&interfaces()) {
+        if socket::set_multicast_if(fd, ifc) == 0 {
+            socket::sendto(fd, &q, 0, &SockAddrIn::from_ip_port(GROUP, PORT));
+        }
+    }
+    for t in targets(gateway()) {
+        // A gateway without a route (or a link that is down) just fails: the others still go.
         socket::sendto(fd, &q, 0, &SockAddrIn::from_ip_port(t, PORT));
     }
     let start = Instant::now();
@@ -106,6 +112,16 @@ pub fn serve(verbose: bool, log: &mut dyn FnMut(&str)) -> Result<(), String> {
         socket::close(fd);
         return Err(format!("cannot listen on UDP port {PORT} (is disco serve already running?)"));
     }
+    // The group on every interface; interfaces that get an address later (DHCP) join as they do.
+    let mut joined: Vec<Ip> = Vec::new();
+    let join_new = |joined: &mut Vec<Ip>| {
+        for ifc in multicast_interfaces(&interfaces()) {
+            if !joined.contains(&ifc) && socket::join_group(fd, GROUP, ifc) == 0 {
+                joined.push(ifc);
+            }
+        }
+    };
+    join_new(&mut joined);
     let (cfg, bad) = load_config();
     for b in &bad {
         log(&format!("{CONF}: ignored {b}"));
@@ -115,13 +131,18 @@ pub fn serve(verbose: bool, log: &mut dyn FnMut(&str)) -> Result<(), String> {
         Relay::Gateway => "relaying to the default gateway".to_string(),
         Relay::To(ip) => format!("relaying to {}", ip_str(ip)),
     };
-    log(&format!("disco: answering on UDP port {PORT} for {} services, {relay}. Ctrl+T to stop.", cfg.services.len()));
+    log(&format!(
+        "disco: answering on UDP port {PORT} and group {} for {} services, {relay}. Ctrl+T to stop.",
+        ip_str(GROUP),
+        cfg.services.len()
+    ));
     let mut r = Responder::new(seed());
     let start = Instant::now();
     let mut buf = [0u8; 2048];
     loop {
         let mut fds = [PollFd { fd, events: POLLIN, revents: 0 }];
         if socket::poll(&mut fds, 1000) <= 0 || fds[0].revents & POLLIN == 0 {
+            join_new(&mut joined);
             continue;
         }
         let mut from = SockAddrIn::default();
