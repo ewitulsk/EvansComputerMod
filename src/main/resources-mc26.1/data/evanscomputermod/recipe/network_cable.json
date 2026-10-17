@@ -3,13 +3,13 @@
   "category": "redstone",
   "pattern": [
     "RGR",
-    " D ",
+    " I ",
     "RGR"
   ],
   "key": {
     "R": "minecraft:redstone",
     "G": "minecraft:glass",
-    "D": "minecraft:diamond"
+    "I": "minecraft:iron_ingot"
   },
   "result": {
     "count": 8,
