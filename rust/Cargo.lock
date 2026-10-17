@@ -2027,7 +2027,11 @@ version = "0.1.0"
 name = "lua"
 version = "0.1.0"
 dependencies = [
+ "ecm-dsp",
  "ecm-host-abi",
+ "ecm-radio",
+ "ecm-ui",
+ "ecm-ui-proto",
  "mlua",
 ]
 

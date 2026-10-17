@@ -26,6 +26,18 @@ same path:
    in software running on computers, written in Rust/Python against the ABI.
    Java provides hardware: physics, signals, blocks, items, and interfaces to
    them. Do not hide a whole device's logic inside a block entity.
+Python and Lua have the same package access. Every module the `python`
+program offers (`shell`/`terminal`, `net`, `peripheral`, `sensors`,
+`controller`, `audio`, `radio`, `ui`, and imports of the computer's own files)
+has a counterpart in the `lua` program (`rust/wasm-programs/lua`) with the same
+public functions, and the other way round. A change that adds or changes a
+module or function in one interpreter makes the same change in the other, with
+tests in both (`cargo test -p python`, `cargo test -p lua`) and scenarios as
+for any feature. `cargo test -p lua` (`lua_offers_every_python_module_and_name`)
+fails when Lua lacks a Python module or name; a name that Lua deliberately
+reaches another way (a class behind a constructor function, an exception that
+is a Lua error) goes in that test's `NOT_IN_LUA` list with the reason.
+
 A block that bundles a complete device (for example a cell tower that runs its
 whole protocol internally) is a design smell: split it into its hardware
 primitive plus a program before extending it. Standing, user-approved

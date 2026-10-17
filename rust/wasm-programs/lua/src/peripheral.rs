@@ -1,28 +1,16 @@
-//! `peripheral` module: bindings over `ecm_host_abi::peripheral`.
+//! `_peripheral` native module: thin bindings over `ecm_host_abi::peripheral`
+//! (the same functions as Python's `_peripheral`). The user-facing
+//! `peripheral` module (lua/peripheral.lua) is built on top of it.
 //!
-//!   peripheral.list()                    → { {name=..., type=...}, ... }
-//!   peripheral.methods(name)             → type, { method names }
-//!   peripheral.call(name, method, ...)   → the method's result (errors raise)
-//!   peripheral.wrap(name)                → table with one function per method
-//!   peripheral.wait_event([filter], [timeout_s]) → event, attachment, args... (nil on timeout)
+//!   _peripheral.list()                      → { {name, type}, ... }
+//!   _peripheral.methods(name)               → true, type, {methods} | false, message
+//!   _peripheral.call(name, method, ...)     → true, result | false, message
+//!   _peripheral.wait_event(filter, ms)      → event, attachment, args... (nil on timeout)
 
 use ecm_host_abi::peripheral::{self as abi, Error, Value};
 use mlua::{Lua, MultiValue, Table, Value as LuaValue, Variadic};
 
 const MAX_DEPTH: usize = 32;
-
-/// `peripheral.wrap`, written in Lua over `methods` and `call`.
-const WRAP: &str = r#"
-local peripheral = ...
-return function(name)
-    local ty, methods = peripheral.methods(name)
-    local p = { name = name, type = ty }
-    for _, m in ipairs(methods) do
-        p[m] = function(...) return peripheral.call(name, m, ...) end
-    end
-    return p
-end
-"#;
 
 fn host_error(e: Error) -> mlua::Error {
     match e {
@@ -109,37 +97,43 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         let items = abi::list().map_err(host_error)?;
         let out = lua.create_table()?;
         for (i, (name, ty)) in items.into_iter().enumerate() {
-            let entry = lua.create_table()?;
-            entry.set("name", name)?;
-            entry.set("type", ty)?;
-            out.raw_set(i + 1, entry)?;
+            out.raw_set(i + 1, lua.create_sequence_from([name, ty])?)?;
         }
         Ok(out)
     })?)?;
 
     m.set("methods", lua.create_function(|lua, name: String| {
-        let (ty, names) = abi::methods(&name).map_err(host_error)?;
-        Ok((ty, lua.create_sequence_from(names)?))
+        match abi::methods(&name) {
+            Ok((ty, names)) => Ok(MultiValue::from_iter([
+                LuaValue::Boolean(true),
+                LuaValue::String(lua.create_string(ty)?),
+                LuaValue::Table(lua.create_sequence_from(names)?),
+            ])),
+            Err(Error::Peripheral(msg)) => {
+                Ok(MultiValue::from_iter([LuaValue::Boolean(false), LuaValue::String(lua.create_string(msg)?)]))
+            }
+            Err(e) => Err(host_error(e)),
+        }
     })?)?;
 
     m.set("call", lua.create_function(|lua, (name, method, args): (String, String, Variadic<LuaValue>)| {
         let args = args.iter().map(|a| to_value(a, 0)).collect::<mlua::Result<Vec<_>>>()?;
-        to_lua(lua, abi::call(&name, &method, &args).map_err(host_error)?)
+        match abi::call(&name, &method, &args) {
+            Ok(v) => Ok(MultiValue::from_iter([LuaValue::Boolean(true), to_lua(lua, v)?])),
+            Err(Error::Peripheral(msg)) => {
+                Ok(MultiValue::from_iter([LuaValue::Boolean(false), LuaValue::String(lua.create_string(msg)?)]))
+            }
+            Err(e) => Err(host_error(e)),
+        }
     })?)?;
 
-    // filter nil = any event; timeout nil = wait forever, 0 = don't wait.
-    m.set("wait_event", lua.create_function(|lua, (filter, timeout): (Option<String>, Option<f64>)| {
-        let timeout_ms = match timeout {
-            None => -1,
-            Some(s) => (s.max(0.0) * 1000.0).min(i32::MAX as f64) as i32,
-        };
-        match abi::wait_event(filter.as_deref(), timeout_ms).map_err(host_error)? {
+    // filter nil = any event; timeout_ms < 0 = wait forever, 0 = don't wait.
+    m.set("wait_event", lua.create_function(|lua, (filter, timeout_ms): (Option<String>, Option<i32>)| {
+        match abi::wait_event(filter.as_deref(), timeout_ms.unwrap_or(-1)).map_err(host_error)? {
             None => Ok(MultiValue::new()),
             Some(items) => items.into_iter().map(|v| to_lua(lua, v)).collect(),
         }
     })?)?;
 
-    let wrap: mlua::Function = lua.load(WRAP).set_name("=peripheral").call(m.clone())?;
-    m.set("wrap", wrap)?;
     Ok(m)
 }

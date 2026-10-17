@@ -6,21 +6,21 @@
 //!
 //! The interpreter is PUC-Rio Lua 5.2 (the version ComputerCraft programs are
 //! written for) through mlua. Lua's own `io` and `os` libraries work on the
-//! computer's files. Custom modules (globals, also available through `require`):
-//!   shell       — terminal I/O, files and redstone (same functions as Python's)
-//!   peripheral  — attached blocks and bay modules
+//! computer's files. The ECM modules are the same as Python's, with the same
+//! functions (globals, also available through `require`):
+//!   shell       — terminal I/O, files and redstone (`terminal` is the same module)
+//!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
+//!   peripheral  — attached blocks and bay modules (lua/peripheral.lua over `_peripheral`)
+//!   sensors, controller, audio — lidars, Xbox controllers, the Speaker
+//!   radio       — SDR flowgraphs (lua/radio.lua over `_radio`)
+//!   ui          — GUI apps (lua/ui.lua over `_ui` and ecm-ui)
+//! `require` also finds the computer's own files (a/b.lua or a/b/init.lua).
 
+mod net;
 mod peripheral;
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Variadic};
 use std::io::{self, Write};
-
-/// Lua 5.1 names that Lua 5.2 only keeps behind LUA_COMPAT_ALL (the vendored build
-/// doesn't set it) and that most older scripts still use.
-const COMPAT: &str = r#"
-unpack = unpack or table.unpack
-loadstring = loadstring or load
-"#;
 
 // ============================================================================
 // shell module — terminal I/O, filesystem access and redstone
@@ -115,14 +115,17 @@ fn shell_module(lua: &Lua) -> mlua::Result<Table> {
     Ok(m)
 }
 
-/// Install the custom modules as globals and in `package.loaded`, plus the compat names.
+/// Register the host-ABI modules (`shell` also as `terminal`, `net`, `_peripheral`),
+/// then the rest (ecm_lua::install: the Lua-source modules, `_radio`, `_ui`, the loader).
 fn setup(lua: &Lua) -> mlua::Result<()> {
-    let loaded: Table = lua.globals().get::<Table>("package")?.get("loaded")?;
-    for (name, module) in [("shell", shell_module(lua)?), ("peripheral", peripheral::module(lua)?)] {
+    let shell = shell_module(lua)?;
+    let net = net::module(lua)?;
+    for (name, module) in [("shell", &shell), ("terminal", &shell), ("net", &net)] {
         lua.globals().set(name, module.clone())?;
-        loaded.set(name, module)?;
+        ecm_lua::register(lua, name, module.clone())?;
     }
-    lua.load(COMPAT).set_name("=compat").exec()
+    ecm_lua::register(lua, "_peripheral", peripheral::module(lua)?)?;
+    ecm_lua::install(lua)
 }
 
 // ============================================================================
@@ -153,7 +156,7 @@ fn compile(lua: &Lua, code: &str) -> Chunk {
 fn repl(lua: &Lua) {
     println!("{} (PUC-Rio, via mlua)", lua.globals().get::<String>("_VERSION").unwrap_or_default());
     println!("Type 'exit' or Ctrl+D to exit.");
-    println!("Modules: shell (terminal, files, redstone), peripheral (attached blocks).");
+    println!("Modules: shell, net, peripheral, sensors, controller, audio, radio, ui (as in Python).");
     println!();
 
     let mut buffer = String::new();

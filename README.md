@@ -1205,18 +1205,41 @@ Lua 5.2 (PUC-Rio, via mlua)
 >> end
 ```
 
-Lua's own libraries work as usual (`string`, `table`, `math`, `coroutine`, `bit32`, `io` and `os` on the computer's files); `unpack` and `loadstring` are there for older scripts. Two modules, available as globals or through `require`:
+Lua's own libraries work as usual (`string`, `table`, `math`, `coroutine`, `bit32`, `io` and `os` on the computer's files); `unpack` and `loadstring` are there for older scripts.
 
-- `shell`: the same functions as Python's [`terminal` module](#terminal-module): `write`, `println`, `clear`, `set_cursor`, `get_width`, `get_height`, `sleep`, `input`, `read_file`, `write_file`, `file_exists`, `delete_file`, `file_size`, `list_files` (a list), redstone with `set_redstone`, `get_redstone`, `get_all_redstone` and the sides `shell.DOWN` .. `shell.RIGHT`.
-- `peripheral`: `list()` (a list of `{name=, type=}`), `methods(name)` (type and method names), `call(name, method, ...)`, `wrap(name)` (a table with one function per method) and `wait_event([filter], [timeout_s])`. A peripheral's error is raised as a Lua error.
+Lua has the same ECM modules as Python, with the same functions (a repository rule, checked by `cargo test -p lua`). They are globals, loaded on first use, and `require("name")` works too:
+
+| Module | What it is |
+|--------|------------|
+| `shell` (also `terminal`) | Python's [`terminal` module](#terminal-module): `write`, `println`, `clear`, `set_cursor`, `get_width`, `get_height`, `sleep`, `input`, `read_file`, `write_file`, `file_exists`, `delete_file`, `file_size`, `list_files`, `set_redstone`, `get_redstone`, `get_all_redstone`, sides `shell.DOWN` .. `shell.RIGHT` |
+| `net` | interfaces, routes, DNS, `ping`, `resolve`, TCP (`tcp_connect`, `tcp_listen`, `tcp_accept`, `tcp_send`, `tcp_recv`, `tcp_close`), `http_get`, `http_post` |
+| `peripheral` | `attached`, `names`, `is_present`, `get_type`, `get_methods`, `call`, `wrap`, `find`, `find_all`, `pull_event` (plus `list`, `methods`, `wait_event`) |
+| `sensors`, `controller`, `audio` | lidars on a Wired Sensor Module, Xbox controllers, the Speaker's `/dev/audio` |
+| `radio` | SDR flowgraphs: sources, blocks, sinks, `Flowgraph`, framed PHY mode |
+| `ui` | GUI apps: `ui.App`, the widgets, `ui.load` for `.ui.json` layouts |
+
+Differences that come from the language: pipelines are written with `..` where Python uses `>>`; optional arguments go in Python's order or in one table of names (`radio.tone(1000, {rate = 8000, seconds = 1})`); methods are called with `:` (`sdr:tune(146.52e6)`); a peripheral's or the radio's error is a Lua error (catch it with `pcall`); complex samples in lists are `{re, im}` pairs; row and column numbers of a lidar scan start at 0 as in Python. `require` also finds your own files: `require("lib.util")` loads `lib/util.lua` (or `lib/util/init.lua`) next to the running script or from the computer's root.
 
 ```lua
-local speaker = peripheral.wrap("left")
-print(speaker.type)
-for side = shell.DOWN, shell.RIGHT do shell.set_redstone(side, 15) end
+local speaker = peripheral.find("speaker")
+audio.open():notes("C5 E5 G5", 0.15)
+local fg = radio.Flowgraph(radio.tone(1000, {rate = 8000, seconds = 1}) .. radio.real() .. radio.speaker())
+fg:run()
 ```
 
-Try it with `/ecm scenario spawn lua_basics` (1.21.1). Lua errors use WASM exception handling, which the Wasmtime sidecar's engine doesn't have: with the sidecar installed, `lua` runs on the built-in Chicory runtime.
+A GUI app (start it from the desktop with `gui launch lua /counter.lua`):
+
+```lua
+local app = ui.App("dev.you.counter")
+local count, label = 0, ui.Label("Count: 0")
+app:window("Counter", ui.Column{gap = 8, padding = 12, children = {
+  label,
+  ui.Button("Add one", {on_click = function() count = count + 1; label.text = "Count: " .. count end}),
+}})
+app:run()
+```
+
+Try it with `/ecm scenario spawn lua_basics`, `lua_modules` and `lua_ui` (1.21.1). Lua errors use WASM exception handling, which the Wasmtime sidecar's engine doesn't have: with the sidecar installed, `lua` runs on the built-in Chicory runtime.
 
 ## Networking — Technical Details
 

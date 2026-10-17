@@ -22,5 +22,17 @@ public final class LuaTests {
     public static void lua_basics(GameTestHelper h) {
         TestDriver.scenario(h, NS, LuaScenarios.ALL.get("lua_basics"), true);
     }
+
+    /** Python's modules from Lua: require of a file on the computer, net, peripheral, audio on a Speaker, radio, ui's console control. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".modules")
+    public static void lua_modules(GameTestHelper h) {
+        TestDriver.scenario(h, NS, LuaScenarios.ALL.get("lua_modules"), true);
+    }
+
+    /** A GUI app in Lua: launched in the desktop, its button clicked twice. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".ui")
+    public static void lua_ui(GameTestHelper h) {
+        TestDriver.scenario(h, NS, LuaScenarios.ALL.get("lua_ui"), true);
+    }
 }
 //?}
