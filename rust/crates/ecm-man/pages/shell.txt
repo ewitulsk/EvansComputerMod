@@ -122,11 +122,11 @@ FILES AND STARTUP
     others start at the current directory (see cd, pwd and man filesystem).
 
     At boot the shell runs the lines of /services.cfg that end in & (and
-    switch on / router on), so servers such as sshd or chatd can start
+    switch on / router on), so servers such as sshd or discordd can start
     with the computer:
 
       sshd &
-      chatd &
+      discordd &
 
 EXAMPLES
       ls -l bin

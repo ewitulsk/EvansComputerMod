@@ -105,6 +105,9 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.VisualScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.LuaScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.TerminalScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.VoiceScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.AirPodsScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.DiscordScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.PhoneScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.VideoScenarios.ALL);

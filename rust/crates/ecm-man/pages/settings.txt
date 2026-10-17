@@ -24,6 +24,15 @@ SECTIONS
         toggle, the cells it hears, Refresh, and Turn on / Turn off.
         Without a modem it says how to fit one.
 
+    Sound
+        The speakers and microphones attached: pick the default ones
+        (written to /etc/sound.conf), their volume and gain, and a live
+        input level meter.
+
+    Bluetooth
+        On an ePhone: paired and nearby devices (AirPods) with Pair,
+        Connect, Disconnect and Forget, and where the sound plays.
+
     Display
         The display panel: tier, resolution, refresh rate, colours,
         console size in characters, and touch; and the GUI's size,

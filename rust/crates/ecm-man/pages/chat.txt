@@ -1,12 +1,14 @@
 NAME
-    chat - talk with everyone on a chat server
+    chat - talk in a Discord backend's #general from the console
 
 SYNOPSIS
     chat [server[:port]] [--nick NAME] [--port N]
 
 DESCRIPTION
-    Connects to a chatd server and joins its room. Recent messages are
-    replayed first, marked (earlier). Type a line and press Enter to
+    Connects to a Discord backend (discordd) and talks in its home
+    server's #general text channel, where Discord app users see the same
+    messages. Recent messages are replayed first, marked (earlier). Type
+    a line and press Enter to
     send it; messages from others appear above the line you are typing
     with their time and nickname, as do joins, leaves and nick changes.
 
@@ -21,7 +23,7 @@ DESCRIPTION
 
     When the server cannot be reached, chat says why and what to do:
     no address on this computer, no route, the name not found, the
-    connection refused (no chatd there) or no answer.
+    connection refused (no discordd there) or no answer.
 
 OPTIONS
     --nick NAME, -n NAME
@@ -55,4 +57,4 @@ EXAMPLES
       chat 10.0.8.1:7777 -n bob
 
 SEE ALSO
-    chatd, chatapp, disco, networking
+    discord, discordd, disco, networking

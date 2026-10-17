@@ -3,6 +3,8 @@ package com.example.evanscomputermod.radio.handheld;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
+import com.example.evanscomputermod.radio.api.Emission;
+import com.example.evanscomputermod.voice.SoundField;
 import com.example.evanscomputermod.radio.api.Pose;
 import com.example.evanscomputermod.radio.api.RadioEndpoint;
 import com.example.evanscomputermod.radio.api.RadioMedium;
@@ -29,10 +31,22 @@ import java.util.concurrent.ConcurrentHashMap;
  * medium as everything else), demodulates AM or FM and streams the audio to that
  * player only, so weak stations hiss and fade. Nothing runs for radios that are
  * off or not held.
+ *
+ * <p>A Walkie-Talkie on a two-way channel (VHF / UHF, not the broadcast band)
+ * also transmits: while its holder holds its push-to-talk key, its microphone (what the
+ * {@link SoundField} carries at the holder's mouth, their voice first) is
+ * FM-modulated and put on the medium at {@link #TX_POWER_DBM}. Like a real
+ * walkie-talkie it is half duplex: it hears nothing while it talks.
  */
 public final class HandheldServer {
 
     public static final int AUDIO_RATE = 24_000;
+    /** Transmit power: 5 W, a typical handheld. */
+    public static final double TX_POWER_DBM = 37;
+    /** I/Q rate of the transmitter (narrow FM, the receiver's rate for the same channel). */
+    public static final int TX_IQ_RATE = 48_000;
+    /** Peak deviation of the transmitter (narrow FM). */
+    public static final double TX_DEVIATION_HZ = 5_000;
 
     private static final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
 
@@ -42,13 +56,30 @@ public final class HandheldServer {
     public static ItemStack held(ServerPlayer p) {
         for (InteractionHand h : InteractionHand.values()) {
             ItemStack s = p.getItemInHand(h);
-            if (s.getItem() instanceof HandheldRadioItem) return s;
+            if (s.getItem() instanceof HandheldRadioItem) return s;   // a Handheld Radio or a Walkie-Talkie
         }
         return ItemStack.EMPTY;
     }
 
+    /**
+     * The radio in {@code stack} can transmit where it is tuned: only a Walkie-Talkie, and only on the VHF / UHF
+     * two-way channels (not the FM broadcast band).
+     */
+    public static boolean canTransmit(ItemStack stack, HandheldSettings s) {
+        return WalkieTalkieItem.isWalkie(stack) && WalkieTalkieItem.tunes(s.band()) && !s.band().wide(s.freqHz());
+    }
+
+    /** A player's radio session, if their radio is on (tests). */
+    public static Session sessionOf(UUID player) {
+        return sessions.get(player);
+    }
+
     public static void onPlayerTick(PlayerTickEvent.Post e) {
-        if (!(e.getEntity() instanceof ServerPlayer player)) return;
+        if (e.getEntity() instanceof ServerPlayer player) tickPlayer(player);
+    }
+
+    /** One tick of a player's radio (the player tick; scenarios call it for players the server doesn't tick). */
+    public static void tickPlayer(ServerPlayer player) {
         ItemStack stack = held(player);
         HandheldSettings s = stack.isEmpty() ? null : HandheldSettings.read(stack);
         RadioMedium medium = RadioMediumHooks.medium();
@@ -56,7 +87,7 @@ public final class HandheldServer {
             stop(player.getUUID());
             return;
         }
-        sessions.computeIfAbsent(player.getUUID(), id -> new Session(id)).tick(player, s, medium);
+        sessions.computeIfAbsent(player.getUUID(), id -> new Session(id)).tick(player, s, canTransmit(stack, s), medium);
     }
 
     /** Weakest signal Seek stops on: about 9 dB over a handheld's noise floor in a 6 kHz channel. */
@@ -132,15 +163,40 @@ public final class HandheldServer {
         RadioMedium registered;
 
         public float lastSignalDbm = -200;
+        /** The last block of audio the radio played (±1 at {@link #AUDIO_RATE}; tests). */
+        public volatile float[] lastAudio = new float[0];
+
+        // The transmitter: the radio's microphone, its modulator and its place on the air clock.
+        private com.example.evanscomputermod.voice.MicAudio txMic;
+        private final com.example.evanscomputermod.voice.VoiceModulator modulator =
+                new com.example.evanscomputermod.voice.VoiceModulator(com.example.evanscomputermod.voice.VoiceModulator.Mode.FM,
+                        AUDIO_RATE, TX_IQ_RATE, TX_DEVIATION_HZ);
+        private volatile com.example.evanscomputermod.voice.VoiceServer.Spot micAt =
+                new com.example.evanscomputermod.voice.VoiceServer.Spot("", 0, -10_000, 0);
+        private long txCursorMicros = Long.MIN_VALUE;
+        private boolean keyed;
+        /** Audio samples this radio has put on the air, and the loudest of the last block (tests, HUD). */
+        public long txSamples;
+        public float lastTxPeak;
+        /** Times a transmission was refused (server rules). */
+        public int txBlocked;
 
         public Session(UUID player) {
             this.id = new UUID(player.getMostSignificantBits() ^ 0x48616E64L, player.getLeastSignificantBits());
         }
 
-        void tick(ServerPlayer player, HandheldSettings s, RadioMedium medium) {
+        void tick(ServerPlayer player, HandheldSettings s, boolean canTransmit, RadioMedium medium) {
             var eye = player.getEyePosition();
-            float[] audio = receive(Pose.at(player.level().dimension().location().toString(), eye.x, eye.y - 0.3, eye.z), s, medium);
+            Pose pose = Pose.at(player.level().dimension().location().toString(), eye.x, eye.y - 0.3, eye.z);
+            if (com.example.evanscomputermod.voice.VoiceServer.talking(player.getUUID()) && canTransmit) {
+                micAt = com.example.evanscomputermod.voice.VoiceServer.mouth(player);
+                transmit(pose, s, medium);
+                return;
+            }
+            keyed = false;
+            float[] audio = receive(pose, s, medium);
             if (audio == null) return;
+            lastAudio = audio;
             short[] pcm = HandheldDemod.toPcm(audio, s.volume());
             for (int off = 0; off < pcm.length; off += 4096) {
                 int count = Math.min(4096, pcm.length - off);
@@ -197,6 +253,70 @@ public final class HandheldServer {
             return audio;
         }
 
+        /**
+         * Push-to-talk: modulate what the radio's microphone picked up since the last call and put it on the
+         * air at {@code pose}. Returns the audio samples sent (0 while the microphone fills, or when refused).
+         */
+        public int transmit(Pose pose, HandheldSettings s, RadioMedium medium) {
+            if (registered != medium) {
+                medium.register(endpoint);
+                registered = medium;
+            }
+            endpoint.pose = pose;
+            endpoint.band = s.band();
+            Channel ch = new Channel(s.freqHz(), s.band().bandwidth(s.freqHz()));
+            endpoint.channel = ch;
+            if (txMic == null) {
+                txMic = new com.example.evanscomputermod.voice.MicAudio((start, n, rate, out) -> {
+                    var m = micAt;
+                    com.example.evanscomputermod.voice.SoundField.get().render(m.dimension(), m.x(), m.y(), m.z(), start, n, rate, out);
+                });
+                txMic.setFormat(AUDIO_RATE, 16, 1);
+            }
+            if (!keyed) {
+                // Key up: start from what is said now, not what the microphone heard before.
+                keyed = true;
+                txMic.flush();
+                txCursorMicros = Long.MIN_VALUE;
+            }
+            byte[] buf = new byte[AUDIO_RATE];   // up to half a second
+            int bytes;
+            try {
+                bytes = txMic.read(buf, 0, buf.length, true);
+            } catch (Exception e) {
+                return 0;
+            }
+            if (bytes <= 0) return 0;
+            int n = bytes / 2;
+            float[] audio = new float[n];
+            float peak = 0;
+            for (int i = 0; i < n; i++) {
+                audio[i] = (short) ((buf[2 * i] & 0xFF) | (buf[2 * i + 1] << 8)) / 32768f;
+                peak = Math.max(peak, Math.abs(audio[i]));
+            }
+            float[] iq = modulator.modulate(audio);
+            long now = RadioMediumHooks.clockMicros();
+            if (txCursorMicros == Long.MIN_VALUE || txCursorMicros < now) txCursorMicros = now;
+            if (txCursorMicros > now + 500_000) return 0;   // the world clock fell behind (lag): don't run ahead of it
+            Emission e = Emission.iq(ch, TX_POWER_DBM, txCursorMicros, iq, TX_IQ_RATE);
+            boolean refused = net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                    new com.example.evanscomputermod.radio.api.event.RadioTransmitEvent(endpoint.id, pose, ch, TX_POWER_DBM, "handheld")).isCanceled();
+            if (refused) {
+                txBlocked++;
+                return 0;
+            }
+            Emission sent = medium.transmit(endpoint, e);
+            txCursorMicros = sent.endMicros();
+            txSamples += n;
+            lastTxPeak = peak;
+            return n;
+        }
+
+        /** The radio is transmitting. */
+        public boolean keyed() {
+            return keyed;
+        }
+
         /** Most RF gain allowed. */
         public static final double MAX_GAIN_DB = 40;
         /** Least: the front-end attenuator in, full scale at +50 dBm (a transmitter at arm's length). */
@@ -236,7 +356,7 @@ public final class HandheldServer {
             };
         }
         @Override public Channel tunedChannel() { return channel; }
-        @Override public double maxTxPowerDbm() { return -100; }
+        @Override public double maxTxPowerDbm() { return TX_POWER_DBM; }
         @Override public double noiseFigureDb() { return 7; }
         @Override public boolean listening() { return false; }   // audio is synthesised, not frame-delivered
         @Override public void onReceive(Reception reception) {}

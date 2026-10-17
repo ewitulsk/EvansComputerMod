@@ -165,6 +165,82 @@ public final class RadioClientChecks {
         if (handheldTicks < 20) return;   // settings packet reaches the server, the item syncs back
         mc.player.connection.sendCommand("ecmvisual radio handheld check");
         capture(mc, "radio_handheld_screen");
+        handheldPhase = 40;
+        handheldTicks = 0;
+      }
+      case 40 -> {
+        // Options > Music & Sounds: the microphone settings sit under the output Device.
+        if (handheldTicks < 10) return;
+        mc.setScreen(new net.minecraft.client.gui.screens.options.SoundOptionsScreen(null, mc.options));
+        handheldPhase = 41;
+        handheldTicks = 0;
+      }
+      case 41 -> {
+        if (handheldTicks < 10) return;
+        if (!(mc.screen instanceof net.minecraft.client.gui.screens.options.SoundOptionsScreen screen))
+          throw new IllegalStateException("Music & Sounds didn't open: " + mc.screen);
+        java.util.List<net.minecraft.client.gui.components.AbstractWidget> widgets = new java.util.ArrayList<>();
+        net.minecraft.client.gui.components.OptionsList list = null;
+        for (var c : screen.children()) {
+          if (c instanceof net.minecraft.client.gui.components.OptionsList l) {
+            list = l;
+            for (Object entry : (java.util.List<?>) l.children())
+              if (entry instanceof net.minecraft.client.gui.components.events.ContainerEventHandler ce)
+                for (var w : ce.children())
+                if (w instanceof net.minecraft.client.gui.components.AbstractWidget aw) widgets.add(aw);
+          }
+        }
+        java.util.function.Function<String, net.minecraft.client.gui.components.AbstractWidget> find = prefix -> {
+          for (var w : widgets) if (w.getMessage().getString().startsWith(prefix)) return w;
+          throw new IllegalStateException("no '" + prefix + "' in Music & Sounds: "
+              + widgets.stream().map(w -> w.getMessage().getString()).toList());
+        };
+        if (list != null) list.setScrollAmount(10_000);
+        // Click Microphone Input (off -> on).
+        var input = find.apply("Microphone Input");
+        input.onClick(input.getX() + 2, input.getY() + 2);
+        String device = find.apply("Input Device").getMessage().getString();
+        boolean on = com.example.evanscomputermod.voice.VoiceClientConfig.enabled();
+        var devices = com.example.evanscomputermod.voice.client.MicrophoneOptions.captureDevices();
+        if (!on) throw new IllegalStateException("clicking Microphone Input didn't turn it on");
+        // Simple Voice Chat ships its push-to-talk unbound: bind it to Caps Lock in Controls, as a player would.
+        for (var k : mc.options.keyMappings)
+          if (k.getName().equals("key.push_to_talk")) {
+            mc.options.setKey(k, com.mojang.blaze3d.platform.InputConstants.getKey("key.keyboard.caps.lock"));
+            net.minecraft.client.KeyMapping.resetMapping();
+          }
+        String walkiePtt = com.example.evanscomputermod.voice.client.VoiceClient.pttLabel(
+            new ItemStack(com.example.evanscomputermod.radio.handheld.RadioHandheldContent.WALKIE_TALKIE.get()));
+        if (com.example.evanscomputermod.voice.client.VoiceClient.usesVoiceMod()) {
+          // A voice chat mod's own microphone settings apply: ours step aside.
+          String mod = com.example.evanscomputermod.voice.client.VoiceClient.captureName();
+          EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_SOUND_OPTIONS voicemod='{}' input={} device='{}' walkiePtt='{}' rows={}", mod, on, device,
+              walkiePtt, widgets.stream().map(w -> w.getMessage().getString()).toList());
+          if (!device.contains(mod + "'s settings")) throw new IllegalStateException("Input Device doesn't defer to " + mod + ": " + device);
+          for (var w : widgets)
+            for (String ours : new String[] {"Input Volume", "Mic Mode", "Activation Level"})
+              if (w.getMessage().getString().startsWith(ours)) throw new IllegalStateException(ours + " is shown next to " + mod);
+          if (!walkiePtt.contains(mod)) throw new IllegalStateException("a Walkie-Talkie with no key doesn't use " + mod + "'s PTT: " + walkiePtt);
+          mc.player.connection.sendCommand("ecmvisual radio voice check voicemod " + mod.replace(' ', '_'));
+        } else {
+          // Click Input Volume three quarters along (about 150 %).
+          var volume = find.apply("Input Volume");
+          volume.onClick(volume.getX() + volume.getWidth() * 0.75, volume.getY() + 5);
+          volume.onRelease(volume.getX() + volume.getWidth() * 0.75, volume.getY() + 5);
+          int vol = com.example.evanscomputermod.voice.VoiceClientConfig.inputVolume();
+          EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_SOUND_OPTIONS input={} volume={} device='{}' devices={} walkiePtt='{}'", on, vol, device, devices, walkiePtt);
+          if (vol <= 100) throw new IllegalStateException("the Input Volume slider didn't go above 100%: " + vol);
+          mc.player.connection.sendCommand("ecmvisual radio voice check " + vol + " " + devices.size());
+        }
+        handheldPhase = 42;
+        handheldTicks = 0;
+      }
+      case 42 -> {
+        if (handheldTicks < 5) return;
+        capture(mc, "voice_sound_options");
+        // Back to the defaults: microphone off, 100 %.
+        com.example.evanscomputermod.voice.VoiceClientConfig.ENABLED.set(false);
+        com.example.evanscomputermod.voice.VoiceClientConfig.INPUT_VOLUME.set(100);
         handheldPhase = 5;
         handheldTicks = 0;
       }

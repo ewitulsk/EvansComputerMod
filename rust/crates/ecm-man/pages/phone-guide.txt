@@ -74,7 +74,7 @@ APPS
     One app is on screen at a time. An app you leave is suspended: it
     saves its state and stops. Exceptions, which you allow per app in
     Settings > Apps or with pkg perm: background refresh (a short wake
-    every few minutes, e.g. Chat fetching messages) and background
+    every few minutes, e.g. Discord fetching messages) and background
     audio (music keeps playing).
 
     A program can read the phone's battery: peripheral.find("ephone")
@@ -87,10 +87,18 @@ OTHERS SEEING IT
     config/evanscomputermod-phone-client.toml). Only you can type on
     your phone.
 
+MICROPHONE AND AIRPODS
+    The phone has a microphone at your hand (/dev/mic; turn on
+    Microphone Input in Minecraft's Music & Sounds options). Paired
+    AirPods in your ears take over its sound and microphone, so only you
+    hear it: open the case's lid and pair them in Settings > Bluetooth
+    (see bluetooth and voice).
+
 WIRELESS CONTROLLER
     Hold the phone in one hand and right-click with a Wireless Xbox
     Controller in the other: it pairs with the phone, and apps see it as
     controller_1 to controller_4.
 
 SEE ALSO
-    phone, gba-app, notes, settings, store, terminal-app, peripheral
+    phone, gba-app, notes, settings, store, terminal-app, peripheral,
+    bluetooth, voice

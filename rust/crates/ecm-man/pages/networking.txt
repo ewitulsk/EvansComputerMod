@@ -106,7 +106,7 @@ TASKS
       join Wi-Fi                     wifi, wpa_supplicant, wpa_cli, iw
       watch packets                  tcpdump
       find services                  disco
-      chat                           chat, chatd, chatapp
+      chat and Discord               chat, discord, discordd
 
 SEE ALSO
     ifconfig, ip, dhclient, router, switch, named, wifi, ssh, disco

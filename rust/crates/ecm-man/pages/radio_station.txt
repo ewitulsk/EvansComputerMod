@@ -2,11 +2,15 @@ NAME
     radio_station - broadcast audio files as an AM or FM radio station
 
 SYNOPSIS
-    radio_station <file|playlist|dir>... <freq> [--mode fm|am|wbfm]
-    [--power DBM] [--loop] [--gap S] [--sdr NAME] [--rate SPS]
+    radio_station <file|playlist|dir|/dev/mic>... <freq>
+    [--mode fm|am|wbfm] [--power DBM] [--loop] [--gap S] [--sdr NAME]
+    [--rate SPS]
     [--raw-rate HZ] [--iq FILE]
 
 DESCRIPTION
+    Given /dev/mic (or /dev/mic.<side>) instead of files, it transmits
+    the microphone live: a computer talking on the radio (see voice).
+
     Plays audio on the air through a Standard or Advanced SDR, so
     Handheld Radios and receivers (rx_fm, rx_am) can listen. The
     frequency is the last argument; everything before it is audio:

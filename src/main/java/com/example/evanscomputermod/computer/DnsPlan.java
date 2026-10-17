@@ -243,6 +243,7 @@ public final class DnsPlan {
         s.append("iana A ").append(ianaAddress()).append('\n');
         if (chat > 0) {
             s.append("chat A ").append(lan(chat, 20)).append('\n');
+            s.append("discord CNAME chat\n");
             s.append("repo A ").append(lan(chat, VillageRepo.HOST)).append('\n');
         }
         if (core > 0) s.append("core A ").append(lan(core, CellPlan.CORE_HOST)).append('\n');
@@ -266,6 +267,7 @@ public final class DnsPlan {
         s.append("dns A ").append(resolver(v)).append('\n');
         if (v == chat) {
             s.append("chat A ").append(lan(v, 20)).append('\n');
+            s.append("discord CNAME chat\n");
             s.append("repo A ").append(lan(v, VillageRepo.HOST)).append('\n');
         }
         if (v == core) s.append("core A ").append(lan(v, CellPlan.CORE_HOST)).append('\n');

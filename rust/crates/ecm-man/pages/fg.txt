@@ -16,7 +16,7 @@ DESCRIPTION
     If there is no such job, fg prints "fg: no such job".
 
 EXAMPLES
-      chatd &
+      discordd &
       [1] 5
       fg %1
       fg 5

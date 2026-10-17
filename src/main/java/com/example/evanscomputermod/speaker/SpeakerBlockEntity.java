@@ -75,6 +75,14 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
             setChanged();
         }
         short[] pcm = audio.drain();
+        //? if <=1.21.1 {
+        // Into the air too, for microphones nearby.
+        if (pcm.length > 0 && com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
+            Vec3 c = Vec3.atCenterOf(worldPosition);
+            com.example.evanscomputermod.voice.SoundField.get().emit("speaker:" + sl.dimension().location() + ":" + worldPosition.asLong(),
+                    sl.dimension().location().toString(), c.x, c.y, c.z, pcm, 0, pcm.length, audio.rate(), 1f);
+        }
+        //?}
         int peak = 0;
         if (pcm.length > 0) {
             List<ServerPlayer> listeners = listeners(sl);

@@ -14,6 +14,8 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
     private static final ModConfigSpec.IntValue SPEAKER_RANGE;
+    private static final ModConfigSpec.IntValue MIC_RANGE;
+    private static final ModConfigSpec.BooleanValue MIC_PLAYER_VOICES;
     /** Per panel tier (ordinal), in {@link TierCaps} component order. */
     private static final ModConfigSpec.IntValue[][] TIER_VALUES =
             new ModConfigSpec.IntValue[com.example.evanscomputermod.computer.display.PanelTier.values().length][];
@@ -74,6 +76,16 @@ public final class EcmConfig {
         SPEAKER_RANGE = b
                 .comment("How far a speaker can be heard, in blocks. Audio is only sent to players this close.")
                 .defineInRange("range", 48, 8, 128);
+        b.pop();
+
+        b.comment("Microphones (the Microphone block, the ePhone's microphone, handheld radios' push-to-talk).",
+                "Whether a player's own microphone is used is each player's choice, in the client settings.").push("microphone");
+        MIC_RANGE = b
+                .comment("How far a microphone hears players and speakers, in blocks (sound falls off with distance).")
+                .defineInRange("range", 24, 4, 128);
+        MIC_PLAYER_VOICES = b
+                .comment("Accept players' voices from their microphones. False: microphones only hear speakers.")
+                .define("playerVoices", true);
         b.pop();
 
         b.comment("GUI compositor limits (docs/gui/UI_PROTOCOL.md section 6). An app that breaks one loses its UI",
@@ -157,6 +169,18 @@ public final class EcmConfig {
 
     public static int speakerRange() {
         return get(SPEAKER_RANGE, 48);
+    }
+
+    public static int micRange() {
+        return get(MIC_RANGE, 24);
+    }
+
+    public static boolean micPlayerVoices() {
+        try {
+            return !SPEC.isLoaded() || MIC_PLAYER_VOICES.get();
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     public static int uiNodesPerSurface() { return get(UI_NODES_PER_SURFACE, 8192); }

@@ -97,6 +97,9 @@ AUDIO
       spk.notes("C4 E4 G4", s)   a tune; "-" is a rest
       spk.set_format(rate, bits, channels) spk.write(pcm)
       spk.set_volume(v) spk.status() spk.close()
+      open_mic(side)             a microphone: mic.read(), mic.record(s),
+                                 mic.level(), mic.set_format, set_gain
+      peak_db(pcm) save_wav(path, pcm) default_device("input")
 
 RADIO
       open(name)                 an SDR; sdr.tune(freq, rate)

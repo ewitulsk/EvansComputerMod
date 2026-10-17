@@ -18,6 +18,7 @@ members = [
     "crates/ecm-cell-net",
     "crates/ecm-cell-ui",
     "crates/ecm-chat",
+    "crates/ecm-discord",
     "crates/ecm-disco",
     "crates/ecm-dns",
     "crates/ecm-ui-proto",
@@ -74,6 +75,7 @@ members = [
     "wasm-programs/controllertest",
     "wasm-programs/beep",
     "wasm-programs/aplay",
+    "wasm-programs/arecord",
     "wasm-programs/gba",
     "wasm-programs/phone",
     "wasm-programs/gba-app",
@@ -115,9 +117,10 @@ members = [
     "wasm-programs/carrier",
     "wasm-programs/iw",
     "wasm-programs/antenna",
-    "wasm-programs/chatd",
+    "wasm-programs/discordd",
     "wasm-programs/chat",
-    "wasm-programs/chatapp",
+    "wasm-programs/discord",
+    "wasm-programs/bluetoothctl",
     "wasm-programs/pkg",
     "wasm-programs/apptest",
     "wasm-programs/visual",
@@ -150,6 +153,7 @@ ecm-radio = { path = "crates/ecm-radio" }
 ecm-cell = { path = "crates/ecm-cell" }
 ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
+ecm-discord = { path = "crates/ecm-discord" }
 ecm-disco = { path = "crates/ecm-disco" }
 ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
