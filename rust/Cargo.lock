@@ -1425,6 +1425,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-tel-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-ui",
+ "ecm-ui-proto",
+]
+
+[[package]]
 name = "ecm-ui"
 version = "0.1.0"
 dependencies = [
