@@ -23,6 +23,10 @@ import java.util.Locale;
  * dial (fine/coarse), band switch, seek ("Scan", done by the server, which
  * jumps straight to the next station it can hear), volume, squelch, power,
  * and a live signal meter. Changes go to the server, which stores them on the item.
+ *
+ * <p>For a Walkie-Talkie the band switch toggles VHF / UHF, and a PTT button
+ * binds its push-to-talk key the way the Wireless Controller binds buttons:
+ * click it, then press the key (Escape cancels, Delete restores the default).
  */
 public class HandheldScreen extends Screen {
 
@@ -31,15 +35,27 @@ public class HandheldScreen extends Screen {
     private EditBox freqBox;
     private String status = "";
     private int statusColor = 0xAAAAAA;
+    private final boolean walkie;
+    private String ptt;
+    private boolean bindingPtt;
+    private Button pttButton;
 
     public static void open(InteractionHand hand) {
         Minecraft.getInstance().setScreen(new HandheldScreen(hand));
     }
 
     HandheldScreen(InteractionHand hand) {
-        super(Component.translatable("item.evanscomputermod.handheld_radio"));
+        super(Component.translatable(com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(
+                Minecraft.getInstance().player.getItemInHand(hand)) ? "item.evanscomputermod.walkie_talkie" : "item.evanscomputermod.handheld_radio"));
         this.hand = hand;
-        this.s = HandheldSettings.read(Minecraft.getInstance().player.getItemInHand(hand));
+        var stack = Minecraft.getInstance().player.getItemInHand(hand);
+        this.s = HandheldSettings.read(stack);
+        this.walkie = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(stack);
+        this.ptt = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(stack);
+    }
+
+    private String pttLabel() {
+        return bindingPtt ? "PTT: press a key..." : "PTT: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(ptt);
     }
 
     /** The server's answer to Scan. */
@@ -66,7 +82,15 @@ public class HandheldScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("<"), b -> step(-1)).bounds(cx - 26, y, 24, 20).build());
         addRenderableWidget(Button.builder(Component.literal(">"), b -> step(1)).bounds(cx + 2, y, 24, 20).build());
         addRenderableWidget(Button.builder(Component.literal(">>"), b -> step(10)).bounds(cx + 30, y, 30, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Band"), b -> send(s.withBand(s.band().next()))).bounds(cx - 110, y + 28, 50, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("Band"), b -> send(s.withBand(s.band().next(walkie)))).bounds(cx - 110, y + 28, 50, 20).build());
+        if (walkie) {
+            pttButton = Button.builder(Component.literal(pttLabel()), b -> {
+                bindingPtt = !bindingPtt;
+                b.setMessage(Component.literal(pttLabel()));
+                setStatus(bindingPtt ? "Press the key for push-to-talk (Esc: cancel, Delete: default)" : "", 0xF0B429);
+            }).bounds(cx - 60, y + 112, 120, 20).build();
+            addRenderableWidget(pttButton);
+        }
         addRenderableWidget(Button.builder(Component.literal("Scan -"), b -> seek(-1)).bounds(cx - 56, y + 28, 50, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Scan +"), b -> seek(1)).bounds(cx - 2, y + 28, 50, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Power"), b -> send(s.withOn(!s.on()))).bounds(cx + 52, y + 28, 58, 20).build());
@@ -78,6 +102,14 @@ public class HandheldScreen extends Screen {
 
     @Override
     public boolean keyPressed(int key, int scan, int mods) {
+        if (bindingPtt) {
+            bindingPtt = false;
+            if (key == GLFW.GLFW_KEY_DELETE) bindPtt("");
+            else if (key != GLFW.GLFW_KEY_ESCAPE) bindPtt(com.mojang.blaze3d.platform.InputConstants.getKey(key, scan).getName());
+            else setStatus("", 0xAAAAAA);
+            pttButton.setMessage(Component.literal(pttLabel()));
+            return true;
+        }
         if ((key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) && freqBox.isFocused()) {
             tuneTyped();
             return true;
@@ -124,8 +156,9 @@ public class HandheldScreen extends Screen {
             return;
         }
         HandheldBand band = bandFor(hz);
-        if (band == null) {
-            setStatus("Out of range: AM 530-1700 kHz, SW 3-30 MHz, VHF 30-300 MHz", 0xFF8080);
+        if (band == null || (walkie && !com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.tunes(band))) {
+            setStatus(walkie ? "Out of range: VHF 30-300 MHz, UHF 300-512 MHz"
+                    : "Out of range: AM 530-1700 kHz, SW 3-30 MHz, VHF 30-300 MHz, UHF 300-512 MHz", 0xFF8080);
             return;
         }
         // Nearest 1 kHz, not the step grid: steps count from 0 Hz, so 146.52 MHz isn't on the 12.5 kHz grid.
@@ -134,6 +167,14 @@ public class HandheldScreen extends Screen {
         freqBox.setValue("");
         setStatus("Tuned to " + band + " " + HandheldRadioItem.freqLabel(snapped) + (s.on() ? "" : " (radio is off: press Power)"),
                 s.on() ? 0x7CFC00 : 0xFFD060);
+    }
+
+    /** Bind the Walkie-Talkie's push-to-talk key ("" = the default); the server stores it on the item. */
+    private void bindPtt(String name) {
+        if (!com.example.evanscomputermod.controller.ControllerData.isValidKeyName(name)) return;
+        ptt = name.isEmpty() ? com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.DEFAULT_PTT : name;
+        PacketDistributor.sendToServer(new HandheldPackets.PttKey(hand == InteractionHand.MAIN_HAND, name));
+        setStatus("Push-to-talk: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(ptt), 0x7CFC00);
     }
 
     private void setStatus(String text, int color) {
@@ -160,6 +201,7 @@ public class HandheldScreen extends Screen {
     public void render(GuiGraphics g, int mouseX, int mouseY, float partial) {
         super.render(g, mouseX, mouseY, partial);
         int cx = width / 2, y = height / 2 - 40;
+        g.drawCenteredString(font, title, cx, y - 92, 0xFFFFFF);
         g.drawCenteredString(font, s.band() + "  " + HandheldRadioItem.freqLabel(s.freqHz()) + (s.on() ? "" : "  (off)"), cx, y - 16, 0x7CFC00);
         float dbm = HandheldAudioClient.signalDbm;
         int bars = dbm < -125 ? 0 : (int) Math.min(10, (dbm + 125) / 6);

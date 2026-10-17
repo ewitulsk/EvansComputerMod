@@ -344,6 +344,12 @@ public final class ControllerClient {
         return k.getDisplayName().getString();
     }
 
+    /** The key named {@code name} (a binding stored on an item) is held right now, read straight from the keyboard / mouse. */
+    public static boolean isKeyDown(String name) {
+        InputConstants.Key k = key(name);
+        return k != null && isDown(windowHandle(Minecraft.getInstance()), k);
+    }
+
     private static boolean isDown(long window, InputConstants.Key k) {
         int code = k.getValue();
         if (k.getType() == InputConstants.Type.KEYSYM) {

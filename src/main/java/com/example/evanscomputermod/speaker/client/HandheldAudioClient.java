@@ -59,6 +59,11 @@ public final class HandheldAudioClient {
         return stream != null;
     }
 
+    /** Push-to-talk pressed: a half-duplex radio stops playing at once. */
+    public static void mute() {
+        stop();
+    }
+
     private static void stop() {
         if (sound != null) {
             sound.stopped = true;

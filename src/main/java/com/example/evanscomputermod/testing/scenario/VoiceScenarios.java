@@ -55,14 +55,16 @@ import java.util.WeakHashMap;
  * player has no microphone; its voice is a 440 Hz tone sent through the same
  * server handler the client's voice packets go to.]
  *
- * <p>{@code radio_voice}: two players with Handheld Radios 24 blocks apart,
- * both switched on (right-click) and tuned to VHF 146.520 MHz (the tuning
- * screen's settings). The talker holds Talk and speaks: the listener's radio
- * plays the talker's 700 Hz voice. Controls: nothing before Talk is held, and
- * nothing on 146.550 MHz. Then a computer talks: a Terminal with a Standard
- * SDR, a Microphone and a Speaker beside the talker runs
- * {@code radio_station /dev/mic 146.52M} while its Speaker beeps 1000 Hz, and
- * the listener's radio plays the 1000 Hz. [Exceptions: the scenario player's
+ * <p>{@code radio_voice}: two players with Walkie-Talkies 24 blocks apart,
+ * both switched on (right-click) and tuned to UHF 462.5625 MHz (the tuning
+ * screen's settings); the talker binds push-to-talk to Caps Lock on the
+ * tuning screen. The talker holds PTT and speaks: the listener's radio plays
+ * the talker's 700 Hz voice, and the talker's own radio plays nothing while it
+ * talks (half duplex). Controls: nothing before PTT is held, nothing on the
+ * next channel (462.5875 MHz), and nothing from a receive-only Handheld Radio
+ * with PTT held. Then a computer talks: a Terminal with a Standard SDR, a
+ * Microphone and a Speaker runs {@code radio_station /dev/mic 462.5625M}
+ * while its Speaker beeps 1000 Hz, and the listener's radio plays the 1000 Hz. [Exceptions: the scenario player's
  * voice as in mic_voice; the handhelds' per-player ticks are run by the
  * scenario, since the server never ticks scenario players.]
  * <pre>
@@ -81,7 +83,7 @@ public final class VoiceScenarios {
     static final BlockPos STATION = new BlockPos(4, 1, 0), STATION_SDR = new BlockPos(5, 1, 0),
             STATION_MIC = new BlockPos(3, 1, 0), STATION_SPEAKER = new BlockPos(4, 1, 1);
     static final BlockPos TALKER = new BlockPos(0, 1, 3), LISTENER = new BlockPos(0, 1, 27);
-    static final double FREQ_HZ = 146.52e6, OFF_HZ = 146.55e6;
+    static final double FREQ_HZ = 462.5625e6, OFF_HZ = 462.5875e6;
 
     /** A loud recording: peak at -24 dBFS or above. */
     static final String LOUD = "^arecord: recorded \\d+\\.\\d s, peak (?:0|-(?:[1-9]|1\\d|2[0-4])) dBFS, overruns 0$";
@@ -168,34 +170,42 @@ public final class VoiceScenarios {
 
     private static Scenario radio() {
         return Scenario.builder("radio_voice",
-                        "talk on a Handheld Radio (push-to-talk, FM on the air) and hear it on another 24 blocks away; then a"
-                                + " computer talks on the same channel through radio_station /dev/mic")
+                        "talk on a Walkie-Talkie (push-to-talk, half duplex, FM on the air) and hear it on another 24 blocks away;"
+                                + " then a computer talks on the same channel through radio_station /dev/mic")
                 .host("station", STATION, "-")
                 .asPlayer()
                 .realTime()
                 .decor(PlayerKit.decor(List.of(STATION_SDR, STATION_MIC, STATION_SPEAKER), null, VoiceScenarios::buildStation, null))
                 .note("Setup (done for you): a station computer with a Standard SDR, a Microphone and a Speaker")
-                .note("Two players take a Handheld Radio each, right-click to switch it on and tune it (sneak + right-click) to VHF"
-                        + " 146.520 MHz [exceptions: voice tones through the voice packet handler, and the radios' per-player ticks run"
+                .note("Two players take a Walkie-Talkie each, right-click to switch it on and tune it (sneak + right-click) to UHF"
+                        + " 462.5625 MHz [exceptions: voice tones through the voice packet handler, and the radios' per-player ticks run"
                         + " by the scenario; docs/SCENARIO_EXCEPTIONS.md]")
-                .mutate(VoiceScenarios::handOutRadios, "the talker and the listener take their radios, switch them on and tune 146.520 MHz")
+                .mutate(VoiceScenarios::handOutRadios, "the talker and the listener take their radios, switch them on and tune 462.5625 MHz")
+                .mutate(VoiceScenarios::bindPtt, "the talker binds push-to-talk to Caps Lock on the tuning screen")
                 .await(r -> listen(r, 700, false, 40), "control: before anyone talks, no voice on the channel", 20_000)
                 .mutate(r -> check(r, "silent", false), "the listener's radio plays no voice")
-                .note("The talker holds Talk and speaks")
+                .note("The talker holds PTT and speaks")
+                .mutate(VoiceScenarios::markTalkerAudio, "(note what the talker's radio has played so far)")
                 .await(r -> listen(r, 700, true, 80), "the talker talks for four seconds", 20_000)
                 .mutate(r -> check(r, "talk", true), "the listener's radio plays the talker's 700 Hz voice")
-                .note("Control: the listener tunes to 146.550 MHz while the talker keeps talking")
-                .mutate(r -> tune(r, listener(r), OFF_HZ), "the listener tunes to 146.550 MHz")
+                .mutate(VoiceScenarios::checkHalfDuplex, "the talker's own radio played nothing while it talked (half duplex)")
+                .note("Control: the listener tunes to the next channel, 462.5875 MHz, while the talker keeps talking")
+                .mutate(r -> tune(r, listener(r), OFF_HZ), "the listener tunes to 462.5875 MHz")
                 .await(r -> listen(r, 700, true, 60), "the talker talks for three seconds", 20_000)
-                .mutate(r -> check(r, "off", false), "nothing on 146.550 MHz")
+                .mutate(r -> check(r, "off", false), "nothing on 462.5875 MHz")
+                .note("Control: the talker swaps to a receive-only Handheld Radio on the same channel and holds PTT")
                 .mutate(r -> {
                     tune(r, listener(r), FREQ_HZ);
                     VoiceServer.onTalk(speaker(r), false);
-                }, "the listener tunes back to 146.520 MHz; the talker lets go of Talk")
+                    holdRadio(r, r.player(), RadioHandheldContent.HANDHELD_RADIO.get());
+                }, "the listener tunes back; the talker takes a Handheld Radio, switches it on and tunes 462.5625 MHz")
+                .await(r -> listen(r, 700, true, 60), "the talker talks for three seconds", 20_000)
+                .mutate(r -> check(r, "receiver", false), "a Handheld Radio doesn't transmit")
+                .mutate(r -> VoiceServer.onTalk(speaker(r), false), "the talker lets go of PTT")
                 .note("Now the computer talks: its Speaker beeps 1000 Hz next to its Microphone, and radio_station puts the"
                         + " Microphone on the air")
                 .send("station", "beep 1000 9000 --wave sine &")
-                .send("station", "radio_station /dev/mic 146.52M --power 0 --duration 6 &")
+                .send("station", "radio_station /dev/mic 462.5625M --power 0 --duration 6 &")
                 .expect("station", "radio_station: live from /dev/mic on ", "radio_station goes live", "radio_station: (?!live|done)")
                 .await(r -> listen(r, 1000, false, 80), "the listener listens for four seconds", 20_000)
                 .mutate(r -> check(r, "computer", true), "the listener's radio plays the computer's 1000 Hz")
@@ -265,17 +275,44 @@ public final class VoiceScenarios {
     static void handOutRadios(ScenarioRun r) {
         for (ScenarioPlayer p : List.of(r.player(), listener(r))) {
             stand(r, p, p == r.player() ? TALKER : LISTENER);
-            p.entity().setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(RadioHandheldContent.HANDHELD_RADIO.get()));
-            p.useHeld(false);   // right-click: on
-            tune(r, p, FREQ_HZ);
+            holdRadio(r, p, RadioHandheldContent.WALKIE_TALKIE.get());
         }
-        HandheldSettings s = HandheldSettings.read(listener(r).entity().getMainHandItem());
-        if (!s.on()) r.fail("right-clicking didn't switch the radio on: " + s);
+    }
+
+    /** The player takes a radio, right-clicks it on and tunes it to the channel. */
+    static void holdRadio(ScenarioRun r, ScenarioPlayer p, net.minecraft.world.item.Item radio) {
+        p.entity().setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(radio));
+        p.useHeld(false);   // right-click: on
+        tune(r, p, FREQ_HZ);
+        HandheldSettings s = HandheldSettings.read(p.entity().getMainHandItem());
+        if (!s.on() || s.freqHz() != FREQ_HZ) r.fail("the radio isn't on and tuned: " + s);
     }
 
     static void tune(ScenarioRun r, ScenarioPlayer p, double hz) {
-        // The tuning screen's packet: on, VHF, the frequency, volume 80, squelch off.
-        RadioHandheldContent.applySettings(p.entity(), new HandheldPackets.Settings(true, true, HandheldBand.VHF.ordinal(), hz, 80, 0));
+        // The tuning screen's packet: on, UHF, the frequency, volume 80, squelch off.
+        RadioHandheldContent.applySettings(p.entity(), new HandheldPackets.Settings(true, true, HandheldBand.UHF.ordinal(), hz, 80, 0));
+    }
+
+    /** The tuning screen's PTT binding (its packet): Caps Lock, stored on the item. */
+    static void bindPtt(ScenarioRun r) {
+        RadioHandheldContent.applyPtt(speaker(r), new HandheldPackets.PttKey(true, "key.keyboard.caps.lock"));
+        String k = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(speaker(r).getMainHandItem());
+        if (!k.equals("key.keyboard.caps.lock")) r.fail("the PTT binding wasn't stored on the Walkie-Talkie: " + k);
+    }
+
+    private static final Map<ScenarioRun, Object> TALKER_AUDIO = java.util.Collections.synchronizedMap(new WeakHashMap<>());
+
+    static void markTalkerAudio(ScenarioRun r) {
+        HandheldServer.Session s = HandheldServer.sessionOf(speaker(r).getUUID());
+        TALKER_AUDIO.put(r, s == null ? null : s.lastAudio);
+    }
+
+    /** Half duplex: while it was keyed, the talker's radio played no new audio. */
+    static void checkHalfDuplex(ScenarioRun r) {
+        HandheldServer.Session s = HandheldServer.sessionOf(speaker(r).getUUID());
+        if (s == null) r.fail("the talker's radio has no session");
+        else if (s.lastAudio != TALKER_AUDIO.get(r)) r.fail("the talker's radio played audio while it was transmitting");
+        else if (!s.keyed()) r.fail("the talker's radio wasn't keyed");
     }
 
     /**

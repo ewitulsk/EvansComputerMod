@@ -30,9 +30,16 @@ public final class HandheldClientHooks {
             int bars = dbm < -125 ? 0 : (int) Math.min(10, (dbm + 125) / 6);
             var g = e.getGuiGraphics();
             int x = g.guiWidth() - 118, y = g.guiHeight() / 2 + 20;
-            g.fill(x - 4, y - 4, x + 114, y + 22, 0x90000000);
+            boolean walkie = com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.isWalkie(stack);
+            g.fill(x - 4, y - 4, x + 114, y + (walkie ? 32 : 22), 0x90000000);
             g.drawString(mc.font, s.band() + " " + HandheldRadioItem.freqLabel(s.freqHz()), x, y, 0x7CFC00);
-            g.drawString(mc.font, "S " + "|".repeat(bars) + ".".repeat(10 - bars), x, y + 10, 0xFFFFFF);
+            if (walkie && com.example.evanscomputermod.voice.client.VoiceClient.onAir()) {
+                g.drawString(mc.font, "TX  (receive off)", x, y + 10, 0xFF5555);
+            } else {
+                g.drawString(mc.font, "S " + "|".repeat(bars) + ".".repeat(10 - bars), x, y + 10, 0xFFFFFF);
+            }
+            if (walkie) g.drawString(mc.font, "PTT: " + com.example.evanscomputermod.controller.client.ControllerClient.keyLabel(
+                    com.example.evanscomputermod.radio.handheld.WalkieTalkieItem.ptt(stack)), x, y + 20, 0xAAAAAA);
         });
     }
 }

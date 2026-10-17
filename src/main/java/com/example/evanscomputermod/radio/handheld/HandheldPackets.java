@@ -63,6 +63,18 @@ public final class HandheldPackets {
         }
     }
 
+    /** Client to server: the push-to-talk key bound on the Walkie-Talkie in a hand ("" = the default). */
+    public record PttKey(boolean mainHand, String key) implements CustomPacketPayload {
+        public static final Type<PttKey> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "walkie_ptt"));
+        public static final StreamCodec<ByteBuf, PttKey> STREAM_CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, PttKey::mainHand, ByteBufCodecs.stringUtf8(64), PttKey::key, PttKey::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     /** Client to server: new settings for the handheld in a hand (from the tuning screen). */
     public record Settings(boolean mainHand, boolean on, int band, double freqHz, int volume, int squelch) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "handheld_settings"));

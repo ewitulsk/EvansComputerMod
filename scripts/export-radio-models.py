@@ -75,6 +75,7 @@ PROJECTS = {
     'charging_dock': ('facing_active', 'block'),
     'card_reader': ('facing_card', 'block'),
     'microphone': ('facing_lit', 'block'),
+    'walkie_talkie': ('item', 'item'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']

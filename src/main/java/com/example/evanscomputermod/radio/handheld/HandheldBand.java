@@ -1,10 +1,12 @@
 package com.example.evanscomputermod.radio.handheld;
 
-/** Handheld receiver bands (spec: AM broadcast, shortwave, VHF FM). */
+/** Handheld receiver bands (spec: AM broadcast, shortwave, VHF FM), plus UHF for the Walkie-Talkie's two-way channels. */
 public enum HandheldBand {
     AM(530e3, 1700e3, 10e3, 1000e3, 10e3, Mode.AM, -25),
     SW(3e6, 30e6, 5e3, 7.1e6, 6e3, Mode.AM, -12),
-    VHF(30e6, 300e6, 12.5e3, 146.52e6, 12.5e3, Mode.FM, -2);
+    VHF(30e6, 300e6, 12.5e3, 146.52e6, 12.5e3, Mode.FM, -2),
+    /** UHF two-way (FRS / PMR446 / GMRS / 70 cm): narrow FM. */
+    UHF(300e6, 512e6, 12.5e3, 462.5625e6, 12.5e3, Mode.FM, -1);
 
     public enum Mode { AM, FM }
 
@@ -42,5 +44,11 @@ public enum HandheldBand {
 
     public HandheldBand next() {
         return values()[(ordinal() + 1) % values().length];
+    }
+
+    /** The next band a radio tunes: a Walkie-Talkie only switches between VHF and UHF. */
+    public HandheldBand next(boolean walkie) {
+        if (!walkie) return next();
+        return this == VHF ? UHF : VHF;
     }
 }
