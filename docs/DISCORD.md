@@ -131,6 +131,8 @@ your name.
   selective forwarding unit, like Discord's), and tells everyone who is speaking.
 - **Hearing:** each talker gets a small jitter buffer (80 ms before playing); talkers
   are mixed and played about 160 ms ahead.
+- The voice gate, jitter buffer and mixer, and the echo guard below come from `ecm-rtp`,
+  the voice crate the phone's calls use too ([TELEPHONY.md](TELEPHONY.md#calls)).
 - **Echo:** on a loudspeaker the app is half duplex, like a speakerphone: while it
   plays someone (and 300 ms after) it doesn't send its microphone, which would hear the
   speaker. With headphones it is full duplex.

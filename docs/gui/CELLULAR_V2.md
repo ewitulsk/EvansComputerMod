@@ -1046,3 +1046,14 @@ re-attaches within a few seconds with the same address (the core keeps it).
   ring links and the core's route on the next start (`PROVISION_VERSION` 3), and the core boots everywhere.
 - The ring simulator scenarios (`17_bgp_ring10`, `21_bgp_*`, from `scripts/gen-ring-scenarios.py`) still model /28
   links without the cell routes: they test BGP on the ring, which this did not change.
+
+## As built: telephony
+
+Calls, texts and MMS run on top of this network ([TELEPHONY.md](../TELEPHONY.md)):
+
+- `cored` is also the HSS and PCRF. Its database gains numbers (`block`, `msisdn`), an `ims` line, IMS profiles and port-out codes, and it answers the HSS query protocol on TCP 3868.
+- An attach with an `ims` line gives the phone a second, IMS-only address (the `Ims` air item, celld's `ims0`).
+- Calls get QCI 1 voice bearers (`BearerSetup`/`BearerRelease` items and backhaul messages). They have their own downlink queue and scheduler sub-channel, up to `max_voice` per cell, and travel with the phone in `HoRequest`.
+- The UE can go idle (`IdleRequest`) while the phone sleeps; the network pages it by TMSI, and the modem's wake filter wakes the phone.
+- `cell` shows the number and the IMS bearer.
+
