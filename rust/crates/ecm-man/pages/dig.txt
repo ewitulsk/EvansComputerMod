@@ -1,0 +1,56 @@
+NAME
+    dig - ask DNS servers and show exactly what they answer
+
+SYNOPSIS
+    dig [@SERVER] NAME [TYPE] [+trace] [+norecurse] [+short] [+tcp]
+        [-p PORT] [-t TYPE]
+    dig @SERVER ZONE AXFR
+
+DESCRIPTION
+    Sends one DNS query and prints the whole reply like BIND's dig: the
+    header flags, the question, and the answer, authority and
+    additional sections, then the server, the time taken and the size.
+    Without @SERVER it asks the first nameserver in /etc/resolv.conf.
+    SERVER may be an address or a name.
+
+    TYPE is A (default), NS, CNAME, SOA, MX, TXT, PTR or ANY; it may
+    also come before the name (dig MX mybase.ecm).
+
+    dig @SERVER ZONE AXFR lists a whole zone by zone transfer over TCP
+    (the server must allow it).
+
+OPTIONS
+    +trace
+        Walk the DNS tree yourself like a resolver: ask for the root
+        servers, then follow each referral (root, then the TLD, then
+        the zone) and print every step and who gave it.
+
+    +norecurse, +norec
+        Ask without recursion: only what the server itself knows.
+        +recurse turns it back on.
+
+    +short
+        Print only the data of the answer records.
+
+    +tcp, +vc
+        Ask over TCP instead of UDP.
+
+    -p PORT
+        Ask on this port instead of 53.
+
+    -t TYPE
+        The record type.
+
+EXAMPLES
+      dig web.v4.ring
+      dig +short www.mybase.ecm
+      dig @100.65.0.53 ring NS
+      dig +trace web.v2.ring
+      dig @10.53.0.3 lab.test AXFR
+
+NOTES
+    A timeout prints connection timed out and exits with status 9;
+    SERVFAIL and REFUSED exit with status 1.
+
+SEE ALSO
+    nslookup, named, resolvectl, whois, networking

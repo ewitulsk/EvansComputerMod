@@ -1,0 +1,22 @@
+NAME
+    cat - print the contents of files
+
+SYNOPSIS
+    cat [file ...]
+
+DESCRIPTION
+    Prints each file, one after another, exactly as it is. A file that
+    cannot be read gives "cat: file: reason" on the error output and cat
+    goes on with the next one.
+
+    With no file, cat copies its input to its output: useful at the end
+    of a pipe or with a < redirect.
+
+EXAMPLES
+      cat notes.txt
+      cat /etc/resolv.conf /etc/hosts
+      cat a.txt b.txt > both.txt
+      cat < notes.txt | grep todo
+
+SEE ALSO
+    edit, grep, wc, less, shell

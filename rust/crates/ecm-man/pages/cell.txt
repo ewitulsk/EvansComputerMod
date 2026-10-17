@@ -1,0 +1,68 @@
+NAME
+    cell - show and control this computer's cellular connection
+
+SYNOPSIS
+    cell [status]
+
+    cell scan
+
+    cell up | down
+
+    cell roaming on|off
+
+DESCRIPTION
+    Talks to celld, the cellular daemon, and shows what it is doing:
+    like the signal bars and carrier name on a phone, in detail. celld
+    must be running (an ePhone starts it by itself once it has a modem
+    and a SIM; on a Terminal run celld &).
+
+COMMANDS
+    status
+        The default. The modem, the state with a sentence explaining
+        it, the SIM (carrier and IMSI), the serving cell and channel,
+        the signal (RSSI dBm, SINR dB, CQI, bars like [****]), the IP
+        address with gateway and DNS, traffic and handovers, and
+        whether roaming is on.
+
+    scan
+        The cells heard in the last 10 seconds: carrier, cell id,
+        profile, channel, RSSI and SINR, the serving one marked. celld
+        listens on one channel at a time while it searches, so an
+        empty list may fill in a few seconds.
+
+    up, down
+        Attach to the network, or detach and switch the modem's radio
+        off (airplane mode for the modem).
+
+    roaming on|off
+        Data roaming, saved in /etc/celld.toml.
+
+STATES
+    The states cell shows (each with a sentence explaining it):
+
+      no_sim      no SIM card in the phone's tray or the modem's bay
+      locked      the phone is locked to another carrier
+      down        switched off (cell up to attach)
+      searching   looking for a cell of the SIM's carrier
+      waiting     waiting before trying again
+      attaching   authenticating with the network
+      connected   on a cell, with an IP address on wwan0
+      idle        on a cell, quiet (resumes on traffic)
+      handover    moving to a better cell (the address stays)
+      detaching   leaving the network (after cell down)
+      rejected    the network refused the phone (cell up to retry)
+
+EXAMPLES
+      cell
+      cell scan
+      cell down
+      cell up
+
+NOTES
+    "celld is not running" means a modem is fitted but celld is not
+    started. "this computer has no cellular modem": fit an LTE Modem or
+    mmWave Modem in a module bay (right-click the computer with a
+    Module Expansion Card, then the modem) and give it a SIM card.
+
+SEE ALSO
+    celld, cellular, ping, ifconfig

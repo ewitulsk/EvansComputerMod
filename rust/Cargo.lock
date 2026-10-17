@@ -1232,6 +1232,17 @@ name = "ecm-host-abi"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-lineedit"
+version = "0.1.0"
+dependencies = [
+ "ecm-vte",
+]
+
+[[package]]
+name = "ecm-man"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-net"
 version = "0.1.0"
 
@@ -3947,6 +3958,7 @@ dependencies = [
  "ecm-bridge",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-net",
  "ecm-radio",
  "ecm-router",

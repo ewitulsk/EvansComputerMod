@@ -1,0 +1,42 @@
+NAME
+    mousetest - draw with the mouse to test mouse and touch input
+
+SYNOPSIS
+    mousetest [screen]
+
+DESCRIPTION
+    Switches the Terminal's display to graphics and draws a filled
+    circle that follows the mouse pointer over it. Use it to check that
+    programs get the mouse.
+
+    With screen it uses the attached Screen wall instead, which must be
+    a touch wall (Tier 3 HD Screens). Clicking the wall in the world
+    draws a dot there and prints one line per pointer event:
+    "touch KIND X Y buttons=0x..", in the Screen's pixels. It says so
+    when there is no wall, the wall has no touch, or it is busy.
+
+KEYS
+    Move the mouse
+        The circle follows the pointer.
+
+    Left click
+        Flash white for a few frames.
+
+    Right click
+        Next colour.
+
+    Middle click
+        Back to black.
+
+    Wheel
+        Make the circle bigger or smaller (radius 3 to 60).
+
+    Ctrl+T
+        Quit.
+
+EXAMPLES
+      mousetest
+      mousetest screen
+
+SEE ALSO
+    controllertest, gfxtest

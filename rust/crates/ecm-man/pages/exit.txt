@@ -1,0 +1,19 @@
+NAME
+    exit - end a remote or Terminal window session
+
+SYNOPSIS
+    exit
+
+DESCRIPTION
+    In a session shell (logged in over SSH, or a Terminal window on the
+    desktop), exit prints "Connection closed." and ends the session. Over
+    SSH this logs you out; a Terminal window shows that the session has
+    ended and can be closed. Programs started from the session are
+    stopped with it.
+
+    On the computer's own console exit does nothing except print a
+    reminder: the console shell always stays running. Use Ctrl+T to stop
+    a running program instead.
+
+SEE ALSO
+    shell, kill, sshd

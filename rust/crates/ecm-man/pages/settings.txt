@@ -1,0 +1,64 @@
+NAME
+    settings - the Settings app: Wi-Fi, cellular, display, theme, apps
+
+SYNOPSIS
+    settings [wifi|cellular|display|appearance|apps|about]
+
+DESCRIPTION
+    Opens the Settings window on a section (Wi-Fi if none is given).
+    Needs the GUI. On a wide window the sections are a sidebar beside
+    the page; on a small one (an ePhone) a header names the section and
+    its Sections button switches.
+
+SECTIONS
+    Wi-Fi
+        The Wi-Fi Module's status, Scan, and the networks found with
+        their signal and security (open or WPA2). Pick one, type the
+        password if it has one, and Join: it does what the wifi command
+        does, step by step, with the same advice when something fails.
+        Disconnect leaves the network.
+
+    Cellular
+        Each LTE or mmWave modem: carrier (or No service), signal bars,
+        state, SIM, cell, signal, address and data, a Data roaming
+        toggle, the cells it hears, Refresh, and Turn on / Turn off.
+        Without a modem it says how to fit one.
+
+    Display
+        The display panel: tier, resolution, refresh rate, colours,
+        console size in characters, and touch; and the GUI's size,
+        scale and size class. Without a panel the computer is headless.
+
+    Appearance
+        Theme (Dark, Light, Ocean, High contrast): every open app
+        restyles at once. Shell (Desktop, or Test shell, a tiling shell):
+        used from the next gui. "Start the GUI when the computer boots"
+        (autostart). All three are written to /etc/ui.toml.
+
+    Apps
+        The installed apps. For the one selected: each permission it
+        asked for with an allow toggle, the current answer and Ask
+        again; the files it was given one at a time (revoke them); and
+        the file types it opens by default.
+
+    About
+        The UI protocol version, shell, theme and panel.
+
+    Section names on the command line may also be wi-fi, cell, theme or
+    permissions.
+
+FILES
+    /etc/ui.toml
+        theme, shell and autostart.
+
+    /var/lib/apps/db.json
+        Permission answers, file grants and "open with" defaults (the
+        Apps section changes them; no app can read it).
+
+EXAMPLES
+      settings
+      settings wifi
+      gui launch settings apps
+
+SEE ALSO
+    gui, desktop, wifi, cell, pkg, phone-guide

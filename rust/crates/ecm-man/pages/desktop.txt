@@ -1,0 +1,69 @@
+NAME
+    desktop - the GUI's desktop shell: taskbar, windows and launcher
+
+SYNOPSIS
+    desktop [--restart] [--launch PROGRAM[:ARG:ARG...]]...
+
+DESCRIPTION
+    desktop (app id dev.ecm.desktop) is the shell the GUI starts by
+    default; you don't type it, gui starts it. It draws the wallpaper, a
+    taskbar at the bottom of the screen, and a title bar and border
+    around every app window.
+
+    The taskbar holds the Apps button (the launcher), one button per
+    open window (click to focus it, click the focused one to minimize
+    it), Wi-Fi bars (a click opens Settings on Wi-Fi), cellular bars
+    when a modem is fitted, and the clock (HH:MM).
+
+    The launcher lists the core apps (Terminal, Files, Text Editor,
+    Settings, Notes, Visual Programmer), then every app installed under
+    /apps, the App Store among them. It is read again each time it
+    opens, so an app you just installed is there at once.
+
+    Windows: drag the title bar to move a window; drag its border or a
+    corner to resize it. An outline follows the pointer and the window
+    is placed when you let go. The title bar has minimize, maximize and
+    close buttons. Double-click the title to maximize; right-click it
+    for a menu (Minimize, Maximize or Restore, Close). On a small
+    (compact) display every window opens maximized; new windows
+    cascade. A minimized app keeps running.
+
+    Notifications from apps show as cards in the top right corner for 6
+    seconds; clicking one (or one of its actions) passes it to the app.
+    When an app asks for a permission, a dialog asks "Allow <app> to use
+    <permission>?", says what the permission covers, and offers
+    "Remember my choice", Deny and Allow.
+
+OPTIONS
+    --launch PROGRAM[:ARG:ARG...]
+        Start PROGRAM (or an installed app id) when the desktop starts,
+        with its arguments separated by colons. May be repeated. Give it
+        in /etc/ui.toml as shell_args.
+
+    --restart
+        Given by the GUI when it restarts the shell after a crash: the
+        open windows get their title bars back and the --launch programs
+        are not started a second time.
+
+KEYS
+    Alt+Tab
+        The window switcher, most recently used first. Each press moves
+        on; the choice is focused a moment after the last press.
+
+    Alt+F4
+        Close the focused window.
+
+    Ctrl+Esc
+        Open the launcher.
+
+FILES
+    /etc/ui.toml
+        theme is sent to every app at start and again whenever the file
+        changes (checked every second), so Settings > Appearance
+        restyles every open window live. shell_args are the desktop's
+        arguments, for example:
+
+      shell_args = ["--launch", "terminal", "--launch", "files:/home"]
+
+SEE ALSO
+    gui, settings, terminal-app, files, editor, store, phone

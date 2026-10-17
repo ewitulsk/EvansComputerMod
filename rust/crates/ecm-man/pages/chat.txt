@@ -1,0 +1,58 @@
+NAME
+    chat - talk with everyone on a chat server
+
+SYNOPSIS
+    chat [server[:port]] [--nick NAME] [--port N]
+
+DESCRIPTION
+    Connects to a chatd server and joins its room. Recent messages are
+    replayed first, marked (earlier). Type a line and press Enter to
+    send it; messages from others appear above the line you are typing
+    with their time and nickname, as do joins, leaves and nick changes.
+
+    The server comes from the command line, else from /etc/chat.conf
+    (Tech Village computers have one), else chat looks for chat servers
+    on the network (see disco): with exactly one found it connects,
+    with several it lists them so you can pick one.
+
+    The nickname comes from --nick, else chat.conf, else pc- and the
+    last four hex digits of this computer's MAC address. A nickname is
+    1 to 16 letters, digits, dashes, underscores or dots.
+
+    When the server cannot be reached, chat says why and what to do:
+    no address on this computer, no route, the name not found, the
+    connection refused (no chatd there) or no answer.
+
+OPTIONS
+    --nick NAME, -n NAME
+        The nickname to use.
+
+    --port N, -p N
+        The server's port (default 7777).
+
+KEYS
+    /nick NAME
+        Change your nickname.
+
+    /who
+        List who is online (/names also works).
+
+    /help
+        Show the commands.
+
+    /quit
+        Leave (/exit, /q and Ctrl+T also work).
+
+FILES
+    /etc/chat.conf
+        server ADDRESS[:PORT], port N and nick NAME lines (or
+        key=value); # comments.
+
+EXAMPLES
+      chat
+      chat --nick alice
+      chat 100.67.0.20
+      chat 10.0.8.1:7777 -n bob
+
+SEE ALSO
+    chatd, chatapp, disco, networking

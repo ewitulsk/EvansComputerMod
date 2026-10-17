@@ -1,0 +1,142 @@
+NAME
+    scripting - writing programs for the computer in Python or Lua
+
+DESCRIPTION
+    The computer runs Python (python) and Lua (lua). Both come with the
+    same ECM modules, with the same names and functions, so a program
+    can be written in either and ported line by line. This page lists
+    each module's main functions; dir(module) in Python lists them all.
+
+RUNNING A SCRIPT
+    Write the program with the Text Editor (editor FILE) or any way you
+    like, then run it:
+
+      python /home/hello.py
+      lua /home/hello.lua arg1 arg2
+
+    python or lua alone starts an interactive prompt to try things out.
+    Ctrl+C or Ctrl+T stops a running program. /home is a good place
+    for your files: it is the documents folder apps can be allowed to
+    use.
+
+    Python imports other .py files from the computer (import tools
+    loads tools.py); Lua's require finds a/b.lua next to the script or
+    from the root. File paths in the modules count from the root of the
+    computer's storage, so /home/a.txt and home/a.txt are the same.
+
+PYTHON AND LUA
+    In Lua the modules are globals (and require works too). The
+    functions take the same arguments in the same order. Differences:
+
+      Python                     Lua
+      pad.state()                pad:state() or pad.state()
+      ev = pull_event(...)       ev, name, a, b = pull_event(...)
+        (a tuple, None)            (several values, nil)
+      raises an exception        peripheral errors: Lua errors;
+                                 shell.upload: nil, reason
+      lists start at 0           lists start at 1
+      sdr >> block >> sink       sdr .. block .. sink
+      f(x, rate=8000)            f(x, 8000) or f(x, {rate=8000})
+
+SHELL (ALSO TERMINAL)
+      write(s) println(s)        print text (without/with newline)
+      clear() set_cursor(x, y)   clear the screen, move the cursor
+      input(prompt)              read a line (shows what is typed)
+      sleep(seconds)             wait
+      read_file(p) write_file(p, s)   whole files
+      file_exists(p) delete_file(p) file_size(p) list_files()
+      set_redstone(side, power)  redstone output, power 0-15
+      get_redstone(side)         redstone input on a side
+      get_all_redstone()         all six inputs
+      DOWN UP FRONT BACK LEFT RIGHT   the sides
+      upload_supported() upload(dir)  a file from your real PC
+
+NET
+      interfaces()               network interfaces and addresses
+      iface_set(name, cidr)      set an address: "eth0", "10.0.0.2/24"
+      iface_up(name) iface_down(name)
+      routes() route_add(dest, gw, dev) route_del(dest)
+      dns_set(ip) dns_get() resolve(name)
+      ping(host)                 round trip in ms
+      tcp_connect(host, port)    a connection handle
+      tcp_listen(port) tcp_accept(listener)
+      tcp_send(conn, data) tcp_recv(conn, max) tcp_close(conn)
+      http_get(url) http_post(url, body)   status, body, headers
+
+PERIPHERAL
+      names() attached()         what is attached (names, types)
+      find(type) find_all(type)  wrap the first / every one of a type
+      wrap(name)                 a peripheral by attachment name
+      p.METHOD(args)             call one of its methods
+      p.methods() get_methods(name) get_type(name) is_present(name)
+      call(name, method, args...)
+      pull_event(filter, timeout)   wait for an event
+
+    See peripheral for attachment names and events.
+
+SENSORS
+      find() find_all()          Wired Sensor Modules
+      hub.names() hub.lidar(name)    its lidars
+      lidar.configure(...)       sweep angles, rows, range
+      lidar.scan()               take one scan and wait for it
+      lidar.points()             hits as x, y, z in blocks
+      lidar.start() lidar.wait(after) lidar.stop()
+      scan.range_at(row, col) scan.nearest()
+
+CONTROLLER
+      find(player) all()         Wireless Xbox Controllers
+      pad.state() pad.is_down(button) pad.axis(name)
+      pull_event(timeout)        button and axis changes
+
+    Buttons: a b x y lb rb back start guide ls rs dpad_up dpad_down
+    dpad_left dpad_right. Axes: lx ly rx ry (-1 to 1), lt rt (0 to 1).
+
+AUDIO
+      open(side)                 a Speaker next to the computer
+      spk.tone(freq, seconds)    a beep (square wave by default)
+      spk.notes("C4 E4 G4", s)   a tune; "-" is a rest
+      spk.set_format(rate, bits, channels) spk.write(pcm)
+      spk.set_volume(v) spk.status() spk.close()
+
+RADIO
+      open(name)                 an SDR; sdr.tune(freq, rate)
+      fm_demod() am_demod() ssb_demod(mode) lowpass(hz) ...
+      speaker() wav_sink(path) iq_sink(path) collect()
+      Flowgraph(chain).run(seconds=10)
+      sdr.tx(True)               transmit (a sink that is an SDR)
+      framed(name)               LTE / mmWave frames: send, recv
+
+    Example: fg = radio.Flowgraph(sdr >> radio.fm_demod(5e3) >>
+    radio.speaker()); fg.run(seconds=10). See radio.
+
+UI
+      App(app_id)                a GUI app
+      app.window(title, root)    open a window with a widget tree
+      Label Button TextField TextArea List Checkbox Toggle Slider
+      Tabs Menu Dialog Image Canvas ScrollView
+      Row Column Stack Grid Spacer Responsive    layout
+      app.run()                  the event loop
+      app.notify(title, body) app.hotkey(slot, label, fn)
+      app.on_suspend(fn) app.restore()   keep state on a phone
+      app.pick_file() app.copy(text) app.paste() app.open(path)
+      load(file.ui.json, handlers)   a Visual Programmer layout
+
+    Widgets keep their values: set entry.text = "" or rows.items =
+    [...] and the window updates on the next turn. Handlers get an
+    event with kind, value and widget. A ui program needs the GUI.
+
+EXAMPLE
+      import ui
+      app = ui.App("dev.me.hello")
+      out = ui.Label("Not yet")
+      def hi(e):
+          out.text = "Hello!"
+      app.window("Hello", ui.Column(gap=8, padding=12, children=[
+          ui.Button("Say hi", on_click=hi), out]))
+      app.run()
+
+    The same in Lua: local app = ui.App("dev.me.hello"), ui.Button("Say
+    hi", {on_click = hi}), app:window(...), app:run().
+
+SEE ALSO
+    python, lua, peripheral, editor, visual, store, pkg, radio

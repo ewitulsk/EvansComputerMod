@@ -1,0 +1,25 @@
+NAME
+    fg - bring a background job to the foreground
+
+SYNOPSIS
+    fg %job
+    fg pid
+
+DESCRIPTION
+    Moves a background job of this shell to the foreground: the shell
+    waits for it to finish before showing the prompt again, your typing
+    goes to its input, and Ctrl+T stops it. Name the job by its job
+    number with a % in front (as jobs shows it), or by the PID of one of
+    its processes.
+
+    If there is no such background job, fg prints "fg: no such job".
+    Without an argument it prints its usage.
+
+EXAMPLES
+      chatd &
+      [1] 5
+      fg %1
+      fg 5
+
+SEE ALSO
+    jobs, bg, kill, shell

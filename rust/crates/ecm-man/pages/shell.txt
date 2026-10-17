@@ -1,0 +1,126 @@
+NAME
+    shell - how the Terminal OS command line works
+
+DESCRIPTION
+    The shell is the program that shows the prompt, reads the line you
+    type and runs it. It is always there: it starts when the computer
+    boots and cannot be stopped. Every Terminal window on the desktop and
+    every SSH login gets a shell of its own, with its own current
+    directory and its own jobs.
+
+THE PROMPT
+    The prompt shows the current directory between / and >:
+
+      / >
+      /home/projects >
+
+    Type a command and press Enter. For the keys that edit the line and
+    recall earlier commands, see man keys.
+
+RUNNING PROGRAMS
+    The first word of a line is the command, the rest are its arguments.
+    A few commands are built into the shell: cd, exit, ps, kill, jobs,
+    fg, bg, gfxtest, switch and router. Everything else is a program, a
+    .wasm file, looked for in this order:
+
+      <cmd> itself, if it ends in .wasm
+      <cmd>.wasm in the current directory
+      /bin/<cmd>.wasm, then /bin/<cmd>
+      /server-bin/<cmd>.wasm, then /server-bin/<cmd>
+
+    /bin is yours to fill; /server-bin holds the programs the server
+    ships and cannot be changed. Because /bin is looked at first, a
+    program you put there replaces a shipped one of the same name. If
+    nothing is found the shell prints "Unknown command: <cmd>".
+
+ARGUMENTS AND QUOTING
+    Arguments are separated by spaces or tabs. To pass text with spaces
+    as one argument, put it in double quotes "like this" or single
+    quotes 'like this'; the quote characters themselves are removed. A
+    | > or < inside quotes is ordinary text. Quotes can also cover part
+    of a word: name="a b" becomes the one argument name=a b. An & means
+    background only as the very last character of the line.
+
+    The shell does nothing else to arguments: there are no variables
+    ($HOME is just the text $HOME), no wildcards (* is passed as it is)
+    and no backslash escapes.
+
+PIPES
+    cmd1 | cmd2 runs both programs at once and feeds everything cmd1
+    prints into cmd2's input. Pipes can be chained:
+
+      cat log.txt | grep error | wc
+
+    Built-in commands cannot be part of a pipeline.
+
+REDIRECTS
+    > file
+        Write the program's output to file, replacing what was in it
+        (the file is created if needed).
+
+    >> file
+        Add the output to the end of file.
+
+    < file
+        Read the program's input from file instead of the keyboard.
+
+    2> file
+        Write the program's error messages to file. The 2 must touch the
+        >, with no space in between.
+
+    2>&1
+        Send error messages to the same place as the output (written as
+        one word).
+
+    Each program in a pipeline can have its own redirects. > and <
+    split words even without spaces around them: echo hi>out.txt works.
+
+BACKGROUND JOBS
+    A line ending in & runs in the background: the shell prints the job
+    number and the first PID, as [1] 7, and gives you the prompt back
+    at once while the program keeps running. Its output still appears on
+    the terminal. When it ends, "[1]+ Done    command" is printed before
+    the next prompt. Background programs do not get your typing.
+
+    jobs lists this shell's background jobs, fg %1 (or fg <pid>) brings
+    one back to the foreground, ps lists every process on the computer
+    and kill <pid> stops one. bg does nothing: background jobs never
+    pause.
+
+STOPPING A PROGRAM
+    While a program runs in the foreground, everything you type goes to
+    it. Ctrl+T stops it at once ("^T - Program terminated") and brings
+    back the prompt; background jobs keep running. In a Terminal window
+    and over SSH, Ctrl+C does the same, and Ctrl+C at the prompt throws
+    away the line being typed.
+
+    exit closes a Terminal window's or SSH session's shell; on the
+    computer's own console it only reminds you of Ctrl+T.
+
+EXIT CODES
+    Every program ends with an exit code: 0 means success, anything else
+    a failure. When a foreground program ends with a code other than 0
+    the shell prints "Process exited with code N". For a pipeline this
+    is the code of the last program.
+
+FILES AND STARTUP
+    Paths starting with / start at the root of the computer's storage;
+    others start at the current directory (see cd, pwd and man filesystem).
+
+    At boot the shell runs the lines of /services.cfg that end in & (and
+    switch on / router on), so servers such as sshd or chatd can start
+    with the computer:
+
+      sshd &
+      chatd &
+
+EXAMPLES
+      ls -l bin
+      echo "hello world" > greeting.txt
+      cat greeting.txt | grep world
+      httpd 8080 > http.log 2>&1 &
+      jobs
+      fg %1
+
+SEE ALSO
+    keys, terminal, filesystem, jobs, fg, ps, kill, cd, exit

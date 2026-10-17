@@ -1,0 +1,19 @@
+NAME
+    bg - continue a job in the background
+
+SYNOPSIS
+    bg
+
+DESCRIPTION
+    Exists for people used to other shells. Programs are never paused in
+    Terminal OS, so a background job is always already running; bg only
+    prints "Background jobs already run independently."
+
+    To start a program in the background, put & at the end of its
+    command line.
+
+EXAMPLES
+      httpd 8080 &
+
+SEE ALSO
+    jobs, fg, shell

@@ -1,0 +1,73 @@
+NAME
+    gba - play Game Boy Advance games on the computer
+
+SYNOPSIS
+    gba ROM.gba [screen] [--controller N] [--speaker SIDE] [--no-sound]
+    [--fps N] [--bios FILE] [--boot] [--save FILE] [--benchmark N]
+
+DESCRIPTION
+    Runs a Game Boy Advance game from a .gba file on the Terminal's
+    display (or the attached Screen wall with screen), with sound on a
+    Speaker next to the computer. The game runs at its real speed (59.73
+    frames a second); the display shows the newest frame at each
+    refresh.
+
+    The game's own save is written to the .sav file next to the ROM a
+    moment after the game saves, and when you quit, so it carries on
+    where its save left off.
+
+    Without a BIOS file gba uses the bundled open-source BIOS. To play
+    in a window of the GUI (and on an ePhone) use gba-app.
+
+OPTIONS
+    screen
+        Show the game on the attached Screen wall instead of the
+        Terminal.
+
+    --controller N
+        Use player N's Wireless Xbox Controller (default: the first one
+        connected).
+
+    --speaker SIDE
+        Play the sound on that speaker (default: the first one, if any).
+
+    --no-sound
+        Don't use a speaker.
+
+    --fps N
+        The display refresh to ask for. Default 30; the server caps it.
+
+    --bios FILE
+        A 16 KiB BIOS image. Default: gba_bios.bin or bios/gba_bios.bin
+        if present, else the bundled one.
+
+    --boot
+        Run the BIOS start-up animation instead of jumping into the
+        game.
+
+    --save FILE
+        The save file. Default: the ROM's path with .sav.
+
+    --benchmark N
+        Run N frames as fast as possible, without display or sound, and
+        print the speed.
+
+KEYS
+    Controller
+        A/B = A/B, LB/RB = L/R, Start = Start, Back = Select, D-pad or
+        left stick = D-pad, Guide = quit.
+
+    Keyboard (without a controller)
+        Arrows = D-pad, Z = A, X = B, A = L, S = R, Enter = Start,
+        Backspace = Select, Q = quit.
+
+    Ctrl+T
+        Quit.
+
+EXAMPLES
+      gba /home/roms/game.gba
+      gba /home/roms/game.gba screen --controller 2
+      gba /home/game.gba --no-sound --fps 20
+
+SEE ALSO
+    gba-app, controllertest, audio, phone-guide

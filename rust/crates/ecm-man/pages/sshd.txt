@@ -1,0 +1,43 @@
+NAME
+    sshd - let other computers log in to this one with ssh
+
+SYNOPSIS
+    sshd [port]
+
+DESCRIPTION
+    Listens for SSH connections on the port (default 22) and gives each
+    logged-in client a shell on this computer, as the user it logged
+    in as. Connections are served one at a time. It logs each accepted
+    connection. sshd runs until you stop it with Ctrl+T; start it with
+    sshd & or put sshd & in /services.cfg to start it at boot.
+
+    Logins are checked against /etc/passwd: a user listed with a
+    password needs that password; a user listed without one gets in
+    with any password. If /etc/passwd has no users, root can log in
+    without a password. A user can also log in with a key listed in
+    /home/<user>/.ssh/authorized_keys.
+
+    The host key is /etc/ssh/ssh_host_ed25519_key; sshd makes one the
+    first time if it is missing.
+
+FILES
+    /etc/passwd
+        user:password-hash lines (set passwords with passwd).
+
+    /home/<user>/.ssh/authorized_keys
+        Public keys allowed to log in as that user, one per line (64
+        hex digits).
+
+    /etc/ssh/ssh_host_ed25519_key, ssh_host_ed25519_key.pub
+        The host key.
+
+EXAMPLES
+      sshd &
+      sshd 2222 &
+
+NOTES
+    Set a root password with passwd before opening sshd to a network
+    you share.
+
+SEE ALSO
+    ssh, ssh-keygen, passwd, networking

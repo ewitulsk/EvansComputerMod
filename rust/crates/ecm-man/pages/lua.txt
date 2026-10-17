@@ -1,0 +1,57 @@
+NAME
+    lua - run Lua programs, or type Lua interactively
+
+SYNOPSIS
+    lua
+    lua FILE.lua [ARGS...]
+
+DESCRIPTION
+    Lua 5.2 (PUC-Rio, the version ComputerCraft programs are written
+    for) with the same ECM modules as Python. Lua's own io and os
+    libraries work on the computer's files. The Lua 5.1 names unpack and
+    loadstring are there too, for older scripts.
+
+    Without a file lua starts the interactive prompt (the REPL): type a
+    line at > and it runs; an expression such as 1 + 1 prints its value.
+    An unfinished statement continues at a >> prompt. exit, quit, or
+    Ctrl+D on an empty line leaves.
+
+    With FILE.lua it runs that file and exits. The global table arg
+    holds the script (arg[0]) and its arguments (arg[1], ...), which are
+    also passed as .... A first line starting with # is skipped. Errors
+    are printed as "lua: message". Ctrl+C or Ctrl+T
+    stops a running program.
+
+    The modules are globals (shell.println("hi")) and can also be loaded
+    with require. require also finds the computer's own files: "a.b" is
+    a/b.lua or a/b/init.lua, next to the running script or from the
+    computer's root.
+
+MODULES
+      shell        terminal output and input, files, redstone,
+                   sleep, upload (terminal is the same module)
+      net          interfaces, routes, DNS, ping, TCP, HTTP
+      peripheral   attached blocks and bay modules
+      sensors      lidars on a Wired Sensor Module
+      controller   Wireless Xbox Controllers
+      audio        a Speaker's sound (tones, notes, PCM)
+      radio        SDR flowgraphs: demodulators, modems, sinks
+      ui           GUI apps: windows, widgets, layout
+
+    The functions are Python's, with Lua habits: methods may be called
+    with a colon (pad:state()), events come back as several values
+    instead of a tuple, shell.upload returns nil and a reason instead of
+    raising, a peripheral's error is a Lua error (catch it with pcall),
+    lists start at 1, and radio pipelines are joined with .. instead of
+    >>. See scripting.
+
+EXAMPLES
+      lua
+      lua /home/blink.lua 5
+
+      > shell.println("Hello")
+      > print(peripheral.names()[1])
+      > shell.set_redstone(shell.BACK, 15)
+
+SEE ALSO
+    scripting, python, peripheral, editor

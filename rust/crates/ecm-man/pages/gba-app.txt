@@ -1,0 +1,58 @@
+NAME
+    gba-app - the GBA emulator as a GUI app (ePhone and desktop)
+
+SYNOPSIS
+    gba-app [ROM.gba]
+
+DESCRIPTION
+    The GBA app (dev.ecm.gba) plays Game Boy Advance games in a window,
+    with touch buttons drawn around the picture, so the same window
+    works on an ePhone and on a Terminal's desktop. It is a built-in app
+    on every ePhone. Needs the GUI.
+
+    Without a ROM it shows the game list: the .gba files in /home and
+    /home/roms (it asks for access to your documents the first time).
+    Tap one to play. The game's own save goes next to the ROM (.sav).
+    The app remembers which game runs and starts it again after the
+    phone cold-boots.
+
+    While a game runs, GAMES (the button between L and R) goes back to
+    the list; the cartridge save is written first.
+
+    Settings (top right of the game list) is the Controls page: one row
+    per GBA button (A, B, L, R, Start, Select, Up, Down, Left, Right)
+    with its keyboard key. Tap a row, then press the new key; Esc or a
+    second tap cancels. A key another button already uses is refused
+    and the message names that button: change that one first. Reset to
+    defaults puts the default keys back. Changes are saved at once.
+
+KEYS
+    Keyboard (phone open, or on a Terminal)
+        By default arrows = D-pad, Z = A, X = B, A = L, S = R, Enter =
+        Start, Backspace = Select. Change them on the Settings page.
+
+    Touch (phone open, the mouse is your finger)
+        The on-screen D-pad, A, B, L, R, Start and Select.
+
+    ePhone hotkey slots (phone in hand, not open)
+        1 = A, 2 = B, 3 = Left, 4 = Right, 5 = Up, 6 = Start. Down, L, R
+        and Select need the phone open or a controller.
+
+    Wireless Xbox Controller
+        A/B, LB/RB = L/R, Start, Back = Select, D-pad or left stick.
+
+    All of these work at the same time.
+
+FILES
+    /var/apps/dev.ecm.gba/keys.json
+        The keyboard keys chosen on the Settings page.
+
+    /home/roms/*.gba
+        Where the game list looks (and /home).
+
+EXAMPLES
+      gba-app
+      gui launch gba-app /home/roms/game.gba
+
+SEE ALSO
+    gba, phone-guide, controllertest, upload

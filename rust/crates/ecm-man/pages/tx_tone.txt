@@ -1,0 +1,51 @@
+NAME
+    tx_tone - transmit a test carrier or FM tone
+
+SYNOPSIS
+    tx_tone <freq> [--offset HZ] [--fm AUDIO_HZ] [--seconds S]
+    [--power DBM] [--sdr NAME] [--rate SPS] [--iq FILE]
+
+DESCRIPTION
+    Keys the SDR's transmitter for a few seconds with a plain carrier
+    (an unmodulated signal), or with --fm an FM signal carrying an
+    audio tone. Use it to check that another station or a Handheld
+    Radio hears you, to find your signal on a waterfall, or to test an
+    antenna and feedline. Needs a Standard or Advanced SDR (a Basic SDR
+    is receive-only).
+
+    Prints the frequency and length, then "tx_tone: done" once the
+    transmitter is off again.
+
+OPTIONS
+    --offset HZ
+        Put the carrier HZ above (or, with a minus sign, below) freq.
+        Must stay inside half the sample rate. Default 0.
+
+    --fm AUDIO_HZ
+        Send narrowband FM (5 kHz deviation) with a tone of AUDIO_HZ
+        instead of a bare carrier. Needs --rate 16000 or more.
+
+    --seconds S
+        How long to transmit, up to 3600. Default 5.
+
+    --power DBM
+        Transmit power in dBm (0 = 1 mW, 30 = 1 W). Default: the SDR's
+        maximum, 37 dBm (5 W).
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+    --rate SPS
+        Sample rate. Default 48000.
+
+    --iq FILE
+        Write the would-be transmission to FILE (cf32 IQ plus a
+        .sigmf-meta file) instead of transmitting.
+
+EXAMPLES
+      tx_tone 146.52M
+      tx_tone 7.1M --fm 1000 --seconds 20 --power 30
+      tx_tone 146.52M --offset 5k --power 0
+
+SEE ALSO
+    rx_fm, waterfall, antenna, radio_station, radio

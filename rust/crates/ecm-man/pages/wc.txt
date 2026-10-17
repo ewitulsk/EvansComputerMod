@@ -1,0 +1,19 @@
+NAME
+    wc - count lines, words and bytes
+
+SYNOPSIS
+    wc
+
+DESCRIPTION
+    Reads all of its input and prints three numbers: the number of
+    lines, of words (runs of non-space characters) and of bytes. wc
+    takes no options and reads no files named on the command line: feed
+    it with a pipe or a < redirect.
+
+EXAMPLES
+      cat notes.txt | wc
+      wc < notes.txt
+      ls bin | wc
+
+SEE ALSO
+    cat, grep, shell

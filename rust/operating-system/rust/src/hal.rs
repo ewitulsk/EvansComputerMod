@@ -205,8 +205,31 @@ pub mod ffi {
     }
     pub unsafe fn file_size(p: usize, l: i32) -> i32 { FILES.with(|f| f.borrow().get(&key(p, l)).map(|v| v.len() as i32).unwrap_or(-1)) }
     pub unsafe fn file_exists(p: usize, l: i32) -> i32 { FILES.with(|f| f.borrow().contains_key(&key(p, l)) as i32) }
-    pub unsafe fn file_is_dir(_: usize, _: i32) -> i32 { 0 }
-    pub unsafe fn file_list_dir(_: usize, _: i32, _: usize, _: i32) -> i32 { 0 }
+    pub unsafe fn file_is_dir(p: usize, l: i32) -> i32 {
+        let pre = format!("{}/", key(p, l));
+        FILES.with(|f| f.borrow().keys().any(|k| k.starts_with(&pre)) as i32)
+    }
+    /// Directories are implied by the files' paths.
+    pub unsafe fn file_list_dir(p: usize, l: i32, b: usize, bl: i32) -> i32 {
+        let dir = key(p, l);
+        let pre = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let mut seen = std::collections::BTreeSet::new();
+        FILES.with(|f| {
+            for k in f.borrow().keys() {
+                if let Some(rest) = k.strip_prefix(&pre) {
+                    match rest.split_once('/') {
+                        Some((d, _)) => seen.insert(format!("d:{d}")),
+                        None => seen.insert(format!("f:{rest}")),
+                    };
+                }
+            }
+        });
+        let out = seen.into_iter().collect::<Vec<_>>().join("
+");
+        let n = out.len().min(bl as usize);
+        core::ptr::copy_nonoverlapping(out.as_ptr(), b as *mut u8, n);
+        n as i32
+    }
     pub unsafe fn fd_open(_: usize, _: i32, _: i32) -> i32 { -1 }
     pub unsafe fn fd_close(_: i32) -> i32 { 0 }
     pub unsafe fn pipe_create(_: usize, _: usize) -> i32 { -1 }

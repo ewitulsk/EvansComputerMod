@@ -28,6 +28,8 @@ pub enum Outcome {
     GfxTest(Vec<String>),
     /// `exit`: ends a remote (SSH) session; ignored on the local console.
     Exit,
+    /// `history [N|-c]`: the line editor's history.
+    History(Vec<String>),
 }
 
 pub enum SwitchCmd {
@@ -42,8 +44,8 @@ pub struct Shell {
     pub remote: bool,
 }
 
-const BUILTINS: &[&str] = &[
-    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "gfxtest", "switch", "router",
+pub const BUILTINS: &[&str] = &[
+    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "gfxtest", "switch", "router", "history",
 ];
 
 pub fn is_builtin(cmd: &str) -> bool {
@@ -139,12 +141,13 @@ impl Shell {
                     Some("on") => outcome(SwitchCmd::StartDetached),
                     Some("off") => outcome(SwitchCmd::Stop),
                     Some(_) => {
-                        con.println("Usage: switch [on|off]");
+                        con.println(&format!("Usage: {} [on|off]", cmd));
                         Outcome::Done
                     }
                 };
             }
             "gfxtest" => return Outcome::GfxTest(args.iter().map(|s| s.to_string()).collect()),
+            "history" => return Outcome::History(args.iter().map(|s| s.to_string()).collect()),
             _ => {}
         }
         Outcome::Done

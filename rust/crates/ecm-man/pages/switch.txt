@@ -1,0 +1,120 @@
+NAME
+    switch - turn this computer into an Ethernet switch (VLANs, STP)
+
+SYNOPSIS
+    switch
+    switch on
+    switch off
+
+DESCRIPTION
+    switch is built into the shell. It makes the computer's network
+    ports (eth0, eth1, ...) the ports of a layer-2 switch, with VLANs,
+    MAC learning, spanning tree, link aggregation (LACP) and LLDP. The
+    commands follow Aruba AOS-CX.
+
+    switch opens the switch's command line (starting the switch if it
+    is not running) at the prompt switch(config)#. switch on starts it
+    in the background and at every boot; switch off stops it and
+    removes it from startup. Leaving the command line with exit does
+    not stop a switch that was started with switch on (or with the
+    command on).
+
+    When the switch starts it replays /switch.cfg. Changes take effect
+    at once; write memory saves them to /switch.cfg.
+
+    Ports start routed (layer 3, like a normal computer port). Give a
+    port no routing to make it a switch port; it then joins VLAN 1 as
+    an access port. Ports are named by number (0, 1, ...) or eth0,
+    eth1, ...
+
+CONTEXTS
+      switch(config)#            top level
+      switch(config-vlan-N)#     vlan N
+      switch(config-if-ethN)#    interface ethN
+      switch(config-lag-N)#      interface lag N
+      switch(config-if-vlan-N)#  interface vlan N (an SVI)
+
+    exit goes back to the top level, and at the top level leaves the
+    command line. end and quit go back to the top level. help or ?
+    lists the commands of the current context. Lines starting with #
+    or ! are ignored.
+
+COMMANDS
+    vlan <id>, vlan <start>-<end>, no vlan <id>
+        Create (and enter) a VLAN, create a range, or delete one. In
+        a VLAN: name, description, shutdown, no shutdown.
+
+    interface <ethN>
+        Configure a port: no routing / routing, shutdown / no
+        shutdown, vlan access <id>, vlan trunk native <id> [tag],
+        vlan trunk allowed <list|all>, lag <id>, lldp and
+        spanning-tree settings.
+
+    interface lag <id>, no interface lag <id>
+        A link aggregation group: the same VLAN settings, plus lacp
+        mode active|passive (no lacp mode for a static LAG), lacp rate
+        fast|slow, lacp fallback, hash l2-src-dst|l3-src-dst|l4-src-dst.
+
+    interface vlan <id>, no interface vlan <id>
+        A switch address in a VLAN (an SVI): ip address a.b.c.d/nn, so
+        the switch itself can be pinged or reached by ssh.
+
+    mac-address-table age-time <15-1000000>
+        How long learned MAC addresses are kept (seconds).
+
+    static-mac <mac> vlan <id> port <port|lagN>
+        A fixed MAC table entry (no static-mac removes it).
+
+    spanning-tree, lldp, logging
+        Turn rapid spanning tree (priority, forward-delay,
+        hello-time, max-age, config-name, config-revision) and LLDP on
+        or off and tune them; send log messages to a collector
+        (logging <ip>), set the severity, or to the console.
+
+    show mac-address-table, show vlan, show interface [brief],
+    show spanning-tree, show lacp, show lldp, show logging,
+    show running-config
+        Inspect the switch. See help for the variants.
+
+    clear mac-address-table dynamic, clear logging, clear lldp
+        Forget learned entries, the log, or LLDP neighbors.
+
+    write memory
+        Save the running configuration to /switch.cfg.
+
+    on
+        Keep the switch running after you leave the command line.
+
+FILES
+    /switch.cfg
+        The saved configuration (the same commands, one per line).
+
+    /services.cfg
+        switch on here starts the switch at boot.
+
+EXAMPLES
+      switch
+      vlan 10
+      exit
+      interface eth1
+      no routing
+      vlan access 10
+      exit
+      interface eth0
+      no routing
+      vlan trunk native 1
+      vlan trunk allowed 1,10
+      exit
+      write memory
+      on
+      exit
+
+NOTES
+    vlan trunk native resets the allowed list to all, so set the
+    native VLAN first. An access port drops tagged frames, even with
+    its own VLAN; a computer with ifconfig ethN vlan N must be on a
+    trunk. A plain cable run is already one shared segment (like a
+    hub); you only need a switch for VLANs, loops or LAGs.
+
+SEE ALSO
+    router, ifconfig, ssh, networking

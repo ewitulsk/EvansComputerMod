@@ -22,6 +22,8 @@ members = [
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
     "crates/ecm-vte",
+    "crates/ecm-lineedit",
+    "crates/ecm-man",
     "crates/ecm-apps",
     "crates/ecm-apps-ui",
     "wasm-programs/sshd",
@@ -146,6 +148,8 @@ ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
+ecm-lineedit = { path = "crates/ecm-lineedit" }
+ecm-man = { path = "crates/ecm-man" }
 ecm-apps = { path = "crates/ecm-apps" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }

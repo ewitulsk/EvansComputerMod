@@ -1,0 +1,68 @@
+NAME
+    rx_fm - listen to FM radio through a Speaker
+
+SYNOPSIS
+    rx_fm <freq> [--wide] [--squelch DB] [--gain DB] [--sdr NAME]
+    [--rate SPS] [--speaker SIDE] [--volume 0-100] [--seconds S]
+    [--wav FILE [--no-speaker]] [--audio-rate HZ]
+
+DESCRIPTION
+    Tunes the SDR next to the computer to freq, demodulates narrowband
+    FM (voice, VHF ham channels, the Handheld Radio's VHF band) and
+    plays the audio on a Speaker touching the computer. With --wide it
+    receives broadcast FM (88-108 MHz) instead.
+
+    It prints one line saying what it receives, then every 2 seconds the
+    signal level in dBFS, and runs until Ctrl+T (or --seconds). With
+    --seconds it ends with a summary: the strongest audio tone heard, or
+    "no audio tone (noise)".
+
+    Frequencies are written 146.52M, 146.52MHz, 146520k or 146.52e6.
+
+OPTIONS
+    --wide
+        Broadcast (wide) FM: 75 kHz deviation, de-emphasis, 15 kHz
+        audio. Needs a sample rate of at least 150000 (default 240000,
+        so a Standard or Advanced SDR).
+
+    --squelch DB
+        Mute the audio while the signal is below DB (dBFS, e.g. -40).
+        Off by default.
+
+    --gain DB
+        Fixed receiver gain in dB. Default: the SDR's automatic gain
+        (AGC).
+
+    --sdr NAME
+        Which SDR: empty (the first), an index (0, sdr0, sdr_0), a side
+        of the computer (left, top, ...) or a /dev/sdr path.
+
+    --rate SPS
+        Sample rate. Default 48000 (240000 with --wide).
+
+    --speaker SIDE, --volume 0-100
+        Which Speaker to use and its volume.
+
+    --seconds S
+        Stop after S seconds of samples.
+
+    --wav FILE
+        Also write the audio to a WAV file (complete on disk even when
+        stopped with Ctrl+T). With --no-speaker, only to the file: no
+        Speaker is needed.
+
+    --audio-rate HZ
+        Audio sample rate, 8000-48000. Default 24000 (48000 wide).
+
+EXAMPLES
+      rx_fm 146.52M
+      rx_fm 98.1M --wide --volume 60
+      rx_fm 146.52M --squelch -45 --seconds 30 --wav /voice.wav
+
+NOTES
+    Errors: "can't open the first SDR (...); place an SDR block next to
+    the computer", and "no speaker (...); place a Speaker next to the
+    computer or use --wav FILE --no-speaker". --help prints the usage.
+
+SEE ALSO
+    rx_am, rx_ssb, scan, waterfall, radio_station, radio

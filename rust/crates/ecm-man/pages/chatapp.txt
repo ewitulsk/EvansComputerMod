@@ -1,0 +1,39 @@
+NAME
+    chatapp - Chat, the windowed messaging app
+
+SYNOPSIS
+    chatapp
+    chatapp --source <dir>
+
+DESCRIPTION
+    chatapp is the Chat app (dev.ecm.chat), the GUI version of chat: it
+    talks to a chatd server with the same protocol. It needs the GUI
+    (start it from the desktop, or with gui first); in the console use
+    chat. On a phone it is the Chat app.
+
+    The window has a connect form (server, port, nickname), the
+    conversation and a line to type in. With no saved server it
+    searches the network for chat servers as it opens and lists them
+    under On the network; a tap connects, and with exactly one found
+    the form is filled in. /etc/chat.conf also fills in the form. Once
+    connected, the server and nickname are saved and it connects at
+    once next time. A message that arrives while the window is not on
+    screen posts a notification.
+
+    It needs the network permission (Settings > Apps > Chat).
+
+OPTIONS
+    --source <dir>
+        Write the app's package folder (app.toml, icon.png and
+        main.wasm) to dir, to pack it with pkg build <dir> <repo dir>.
+
+FILES
+    /etc/chat.conf
+        Prefills the connect form until a server is saved.
+
+EXAMPLES
+      chatapp
+      chatapp --source /tmp/chat
+
+SEE ALSO
+    chat, chatd, disco, pkg

@@ -1,0 +1,22 @@
+NAME
+    mkdir - create directories
+
+SYNOPSIS
+    mkdir [-p] dir ...
+
+DESCRIPTION
+    Creates each directory named. Without -p the parent directory must
+    already exist and dir must not; otherwise mkdir prints
+    "mkdir: cannot create directory 'dir': reason".
+
+OPTIONS
+    -p
+        Also create any missing parent directories, and do not complain
+        if the directory already exists.
+
+EXAMPLES
+      mkdir projects
+      mkdir -p /home/videos/clips
+
+SEE ALSO
+    cd, rm, ls, filesystem

@@ -1,0 +1,32 @@
+NAME
+    httpd - a small web server for the files in a directory
+
+SYNOPSIS
+    httpd <port>
+
+DESCRIPTION
+    Serves the files of the current directory over HTTP on the given
+    port (80 is the usual one), one request at a time, and prints each
+    request (method and path).
+
+    GET / returns index.html if there is one, otherwise a page listing
+    the files. GET /name returns that file: .html and .htm as web
+    pages, .json, .py, everything else as plain text. A missing file
+    is 404 Not Found.
+
+    POST /name writes the request body into that file (replacing it).
+    Anyone who can reach the port can change files, so only run it in
+    a directory you are happy to share.
+
+    httpd runs until you stop it with Ctrl+T. Start it with httpd 80 &
+    to keep the shell, or put httpd 80 & in /services.cfg.
+
+EXAMPLES
+      mkdir /site
+      cd /site
+      httpd 80 &
+      curl http://localhost/
+      curl -d "hello" http://localhost/note.txt
+
+SEE ALSO
+    curl, ifconfig, networking

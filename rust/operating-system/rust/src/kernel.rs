@@ -9,7 +9,7 @@ use crate::console::{Console, Term};
 use crate::gfx::Plane;
 use crate::gfx_test::GfxTest;
 use crate::jobs::{JobEvent, Jobs};
-use crate::lineedit::{Key, LineEditor};
+use crate::lineedit::{self, Editor, Event, InputRules, NoCompletion, Piece, ShellCompleter, TermOut};
 use crate::net::ipc::{IpcEffects, SocketIpc, IPC_PENDING};
 use crate::net::{self, min_opt, Net};
 use crate::router_svc::RouterService;
@@ -57,7 +57,7 @@ enum Ui {
 
 pub struct Kernel {
     con: Console,
-    editor: LineEditor,
+    editor: Editor,
     shell: Shell,
     jobs: Jobs,
     net: Net,
@@ -100,7 +100,7 @@ impl Kernel {
         con.println("");
         let mut k = Kernel {
             con,
-            editor: LineEditor::new(),
+            editor: Editor::new(),
             shell: Shell::new(),
             jobs: Jobs::new(),
             net,
@@ -122,6 +122,7 @@ impl Kernel {
                 k.run_line(&line, now);
             }
         }
+        lineedit::load_history(&mut k.editor);
         k.prompt();
         k
     }
@@ -135,48 +136,78 @@ impl Kernel {
             Ui::RouterCli => self.router.prompt(),
             _ => self.shell.prompt(),
         };
-        self.con.print(&p);
+        self.editor.start(&p, &mut TermOut(&mut self.con));
     }
 
     // ------------------------------------------------------------ input
 
     pub fn on_input(&mut self, bytes: &[u8], now: i64) {
+        let rules = match self.ui {
+            Ui::Program => InputRules::for_program(self.con.modes(), true),
+            Ui::Gfx => InputRules::for_program(Default::default(), false),
+            _ => InputRules::for_prompt(true),
+        };
+        for piece in lineedit::split_input(bytes, rules) {
+            match piece {
+                Piece::Scroll(by) => self.con.scroll(by),
+                Piece::Terminate => {
+                    self.con.live();
+                    self.terminate(now);
+                }
+                Piece::Interrupt => {
+                    self.con.live();
+                    self.interrupt(now);
+                }
+                Piece::Data(data) => {
+                    self.con.live();
+                    self.input_data(&data, now);
+                }
+            }
+        }
+    }
+
+    /// Keys for whatever owns the keyboard: the line editor or the program.
+    fn input_data(&mut self, data: &[u8], now: i64) {
         let mut i = 0;
-        while i < bytes.len() {
+        while i < data.len() {
             match self.ui {
                 Ui::Program => {
-                    // Everything up to a Ctrl+T goes to the program's stdin.
-                    let end = bytes[i..]
-                        .iter()
-                        .position(|&b| b == 0x14)
-                        .map(|p| i + p)
-                        .unwrap_or(bytes.len());
-                    if end > i {
-                        self.jobs.send_input(&bytes[i..end]);
-                    }
-                    if end < bytes.len() {
-                        self.terminate(now);
-                        i = end + 1;
-                    } else {
-                        i = end;
-                    }
+                    // The rest of the chunk is the program's (it may have just started).
+                    self.jobs.send_input(&data[i..]);
+                    return;
                 }
-                Ui::Gfx => {
-                    if bytes[i] == 0x14 {
-                        self.terminate(now);
-                    }
-                    i += 1;
-                }
+                Ui::Gfx => return,
                 Ui::Prompt | Ui::SwitchCli | Ui::RouterCli => {
-                    let b = bytes[i];
+                    let b = data[i];
                     i += 1;
-                    match self.editor.feed(b, &mut self.con) {
-                        Some(Key::Line(line)) => self.run_line(&line, now),
-                        Some(Key::Terminate) => self.terminate(now),
-                        None => {}
+                    let ev = if self.ui == Ui::Prompt {
+                        let cwd = self.shell.cwd.clone();
+                        self.editor.feed_byte(b, &mut TermOut(&mut self.con), &mut ShellCompleter { cwd: &cwd })
+                    } else {
+                        self.editor.feed_byte(b, &mut TermOut(&mut self.con), &mut NoCompletion)
+                    };
+                    match ev {
+                        Some(Event::Line(line)) => {
+                            if self.ui == Ui::Prompt {
+                                lineedit::save_history(&mut self.editor);
+                            }
+                            self.run_line(&line, now);
+                        }
+                        Some(Event::Terminate) => self.terminate(now),
+                        Some(Event::Interrupt) => self.prompt(),
+                        Some(Event::Eof) | None => {}
                     }
                 }
             }
+        }
+    }
+
+    /// Ctrl+C while a program runs (and doesn't read Ctrl+C itself): stop it.
+    fn interrupt(&mut self, now: i64) {
+        if self.ui == Ui::Program {
+            self.jobs.kill_foreground();
+            self.con.println("^C");
+            self.pump_jobs(now);
         }
     }
 
@@ -216,6 +247,7 @@ impl Kernel {
                 self.con.println("fg: no such job");
             }
             Outcome::ListJobs => self.jobs.list(&mut self.con),
+            Outcome::History(args) => lineedit::history_cmd(&mut self.editor, &args, &mut self.con),
             Outcome::Exit => self
                 .con
                 .println("Use Ctrl+T to stop a program; the shell always stays running."),
@@ -315,6 +347,7 @@ impl Kernel {
                 JobEvent::Exited(pid) => self.child_exited(pid),
                 JobEvent::ForegroundDone(status) => {
                     if self.ui == Ui::Program {
+                        self.con.reset_modes();
                         if status != 0 {
                             self.con
                                 .println(&format!("Process exited with code {}", status));
@@ -339,10 +372,8 @@ impl Kernel {
         }
         let size = self.con.resize(cols, rows);
         if matches!(self.ui, Ui::Prompt | Ui::SwitchCli | Ui::RouterCli) {
-            self.con.print("\r\x1b[K");
-            self.prompt();
-            let pending = self.editor.pending().to_string();
-            self.con.print(&pending);
+            self.con.print("\r\x1b[J");
+            self.editor.reprint(&mut TermOut(&mut self.con));
         }
         size
     }
@@ -360,9 +391,7 @@ impl Kernel {
             self.con.println(l);
         }
         if at_prompt {
-            self.prompt();
-            let pending = self.editor.pending().to_string();
-            self.con.print(&pending);
+            self.editor.reprint(&mut TermOut(&mut self.con));
         }
     }
 
@@ -650,6 +679,64 @@ mod tests {
         // Oversized requests are clamped to the framebuffer region.
         let (w, h) = k.resize_console(1000, 1000);
         assert!(w as usize * h as usize * framebuffer::CELL_SIZE + framebuffer::FB_HEADER_SIZE <= crate::hal::FB_CAP);
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
+    }
+
+    fn screen() -> String {
+        (0..framebuffer::height()).map(|y| row_text(y).trim_end().to_string()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// The console's own keys: editing in the middle of a line, history saved
+    /// to disk, Tab completion, and Shift+PgUp showing the scrollback.
+    #[test]
+    fn console_line_editing_history_and_scrollback() {
+        let _g = crate::hal::test_lock();
+        crate::hal::ffi::FILES.with(|f| f.borrow_mut().clear());
+        crate::hal::ffi::FILES.with(|f| f.borrow_mut().insert("bin/hello.wasm".into(), vec![0]));
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
+        let mut k = Kernel::boot(0);
+        k.resize_console(80, 25);
+        // Type "nosuchcmd", go left 3 and insert: the line runs as edited.
+        k.on_input(b"nosuchcmd\x1b[D\x1b[D\x1b[DXY\n", 0);
+        assert!(screen().contains("Unknown command: nosuchXYcmd"), "{}", screen());
+        // Tab completes a program name.
+        k.on_input(b"hel\t", 0);
+        let (_, cy) = k.con.cursor();
+        assert!(row_text(cy).contains("/ > hello "), "{:?}", row_text(cy));
+        // Ctrl+C abandons the line at the prompt.
+        k.on_input(b"\x03", 0);
+        assert!(screen().contains("hello ^C"));
+        let saved = crate::fs::read_to_string(lineedit::HISTORY_FILE).unwrap_or_default();
+        assert!(saved.contains("nosuchXYcmd"), "history saved: {saved:?}");
+        // A new boot reads it back: Up recalls it.
+        let mut k = Kernel::boot(0);
+        k.resize_console(80, 25);
+        k.on_input(b"\x1b[A", 0);
+        assert_eq!(k.editor.pending(), "nosuchXYcmd");
+        k.on_input(b"\x15", 0);
+        for i in 0..40 {
+            k.on_input(format!("line{i}\n").as_bytes(), 0);
+        }
+        assert!(!screen().contains("Unknown command: line5\n"));
+        // Shift+PgUp: an older page with the "-N" tag; the cursor is hidden.
+        k.on_input(b"\x1b[5;2~", 0);
+        assert!(k.con.scrolled());
+        let view = screen();
+        assert!(view.contains("Unknown command: line25") && !view.contains("line39"), "{view}");
+        assert!(row_text(0).trim_end().ends_with("-24"), "{:?}", row_text(0));
+        // Shift+Up: one more line back.
+        k.on_input(b"\x1b[1;2A", 0);
+        assert!(row_text(0).trim_end().ends_with("-25"));
+        // Any key goes back to the live screen and is typed.
+        k.on_input(b"z", 0);
+        assert!(!k.con.scrolled());
+        let (_, cy) = k.con.cursor();
+        assert!(row_text(cy).starts_with("/ > z"), "{:?}", row_text(cy));
+        // Shift+Home/End: the very top, then live again.
+        k.on_input(b"\x1b[1;2H", 0);
+        assert!(screen().contains("TERMINAL OS"));
+        k.on_input(b"\x1b[1;2F", 0);
+        assert!(!k.con.scrolled());
         framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
     }
 }

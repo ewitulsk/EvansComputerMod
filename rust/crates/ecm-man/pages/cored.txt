@@ -1,0 +1,116 @@
+NAME
+    cored - the carrier core: subscribers, SIMs and phone addresses
+
+SYNOPSIS
+    cored init <carrier> <pool> [--gateway IP] [--dns IP] [--force]
+
+    cored start | stop
+
+    cored status | sites | subs | sessions | log [n] | handovers
+
+    cored site add <id> | site remove <id> | site-add <id> <secret>
+
+    cored sim new [--label L] [--quota BYTES]
+
+    cored add <imsi> <key> [quota [label]]
+
+    cored revoke | unrevoke | remove | release | reset-usage <imsi>
+
+    cored quota <imsi> <bytes> | label <imsi> <label>
+
+    cored config | config set <key> <value>... | config keys
+
+    cored enable | disable
+
+DESCRIPTION
+    The heart of a mobile network you build: one computer runs cored
+    for a carrier. It holds the subscriber database (which SIMs may
+    attach, their quotas), checks each phone's SIM, gives phones their
+    IP addresses from a pool, and carries their traffic between the
+    cell sites (celld-site) and its own network interface cell0, whose
+    address is the pool's gateway. A phone keeps its address when it
+    hands over between sites.
+
+    With the core running, commands go to it over its admin socket
+    (127.0.0.1, TCP 7711), as the Carrier Console app does; without it,
+    database commands edit the database file directly.
+
+COMMANDS
+    init <carrier> <pool>
+        Create the database: the carrier name (1-24 of a-z 0-9 _ -) and
+        the phones' address pool, /8 to /30. The gateway defaults to
+        the pool's first address; --dns gives phones a DNS server.
+        --force replaces an existing database.
+
+    start, stop
+        Run the core (background it: cored start &), or stop it.
+
+    status
+        Running or not, the carrier, pool and counters, the connected
+        sites and the phones' sessions.
+
+    sites, subs, sessions
+        The configured sites, the subscribers (IMSI, address, usage,
+        quota, revoked, label, online), the live sessions.
+
+    log [n], handovers
+        The last n lines (default 50) of the log, or the handover log.
+
+    site add <id>
+        Register a cell site with a new random credential, and print
+        the celld-site config line to type on the site's computer.
+        site remove drops it; site-add sets a known secret.
+
+    sim new [--label L] [--quota BYTES]
+        Write the blank SIM card in the Card Reader/Writer next to this
+        computer: a new IMSI and secret key, added to the database.
+        The key is never shown. The card is then released (pushed out
+        when the reader's Auto Eject Sim is on, else take it).
+
+    add <imsi> <key> [quota [label]]
+        Add a subscriber for a SIM written elsewhere (simtool write
+        prints the key).
+
+    revoke, unrevoke
+        Bar a SIM (its phone is disconnected) or allow it again.
+
+    quota <imsi> <bytes>, reset-usage <imsi>
+        Data allowance in bytes (0 = unlimited); reset the usage.
+
+    remove, label, release
+        Delete a subscriber; name it; end its session now.
+
+    config, config set, config keys
+        Show or change /etc/cored.toml (restart cored to apply).
+
+    enable, disable
+        Start (or stop starting) cored at boot ("cored start &" in
+        /services.cfg).
+
+FILES
+    /etc/cored.db
+        The subscriber database (carrier, pool, sites, subscribers).
+
+    /etc/cored.toml
+        Optional settings: db (/etc/cored.db), listen 7700 (sites'
+        TCP), tunnel_port 7701 (UDP), tun cell0, admin_port 7711,
+        imsi_prefix 00101 (new IMSIs start with it), reader (the Card
+        Reader/Writer, empty = the first).
+
+EXAMPLES
+      cored init cell-red 100.65.2.0/24 --dns 10.0.0.1
+      cored site add site-a
+      cored start &
+      cored sim new --label alice --quota 10000000
+      cored subs
+      cored revoke 001011234567890
+      cored enable
+
+NOTES
+    For phones to reach the rest of your network, the core computer
+    must forward (ip routing in the router service) and the LAN must
+    route the pool to the core, e.g.
+    ip route add 100.65.2.0/24 via <core address>.
+
+SEE ALSO
+    celld-site, carrier, simtool, cellular, ip

@@ -1,0 +1,17 @@
+NAME
+    sleep - wait for a number of milliseconds
+
+SYNOPSIS
+    sleep milliseconds
+
+DESCRIPTION
+    Does nothing for the given time, then exits. The time is in
+    milliseconds (1000 is one second), not seconds as on other systems.
+    Useful in scripts, or to test background jobs.
+
+EXAMPLES
+      sleep 1000
+      sleep 60000 &
+
+SEE ALSO
+    jobs, shell

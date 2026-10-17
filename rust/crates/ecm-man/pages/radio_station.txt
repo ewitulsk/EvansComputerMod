@@ -1,0 +1,62 @@
+NAME
+    radio_station - broadcast audio files as an AM or FM radio station
+
+SYNOPSIS
+    radio_station <file|playlist|dir>... <freq> [--mode fm|am|wbfm]
+    [--power DBM] [--loop] [--gap S] [--sdr NAME] [--rate SPS]
+    [--raw-rate HZ] [--iq FILE]
+
+DESCRIPTION
+    Plays audio on the air through a Standard or Advanced SDR, so
+    Handheld Radios and receivers (rx_fm, rx_am) can listen. The
+    frequency is the last argument; everything before it is audio:
+
+      file.wav        a PCM WAV file
+      file.pcm/.raw   raw 16-bit mono PCM (rate from --raw-rate)
+      list.m3u/.txt   a playlist: one path per line, # comments,
+                      paths relative to the playlist
+      directory       its .wav/.pcm/.raw files, in name order
+
+    The songs play in order with --gap seconds of quiet carrier between
+    them. For each it prints "now playing: <title>" (the WAV's title
+    tag, else the file name with _ as spaces). A file that can't be
+    read or played is skipped with a message.
+
+OPTIONS
+    --mode fm|am|wbfm
+        Narrowband FM (default), AM, or wide broadcast FM. wbfm needs a
+        sample rate of at least 150000 (default 240000 for it).
+
+    --power DBM
+        Transmit power. Default the SDR's maximum (37 dBm = 5 W).
+
+    --loop
+        Start the list again at the end, until Ctrl+T.
+
+    --gap S
+        Seconds of carrier between songs, 0-60. Default 1.
+
+    --sdr NAME
+        Which SDR (empty = the first, 0, a side, or a /dev/sdr path).
+
+    --rate SPS
+        Sample rate. Default 48000 (240000 for wbfm).
+
+    --raw-rate HZ
+        Sample rate of raw .pcm/.raw files. Default 8000.
+
+    --iq FILE
+        Write the transmission to FILE (cf32 plus .sigmf-meta) instead
+        of transmitting (plays the list once).
+
+EXAMPLES
+      radio_station /music 11.6M --mode am --loop &
+      radio_station song.wav 146.52M --power 0
+      radio_station /music/party.m3u 98.1M --mode wbfm --loop &
+
+NOTES
+    Shortwave AM (3-30 MHz) carries far over the world, VHF FM is line
+    of sight. Run it in the background with & and stop it with kill.
+
+SEE ALSO
+    rx_am, rx_fm, tx_tone, radio

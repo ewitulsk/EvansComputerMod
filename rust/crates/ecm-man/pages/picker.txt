@@ -1,0 +1,50 @@
+NAME
+    picker - the system file picker that apps open files with
+
+SYNOPSIS
+    picker --req TOKEN --app APPID --mode open|save
+    [--types .txt,.md] [--suggested NAME]
+
+DESCRIPTION
+    When an app asks to open or save a file, the GUI starts picker in a
+    window attached to the app's window. You don't type it yourself: it
+    answers the GUI (on /dev/uictl, with the request's token), and the
+    app is then allowed to read and write the one file you picked, and
+    nothing else it isn't already allowed.
+
+    The title says which app asks ("Open a file for Notes"). On the left
+    are the places: Documents (/home), App data (the app's own folder,
+    /var/apps/APPID) and Computer (/). Up goes to the parent folder.
+    Folders are listed first; files are filtered by the types asked for
+    ("Showing .txt .md") and hidden files are left out.
+
+    To save, type a name in the Name field. It must not be empty, be at
+    most 64 characters, contain / or \, or start with a dot; the first
+    type's extension is added when missing. Picking a file that exists
+    asks first: press Replace to overwrite it.
+
+    Cancel, or closing the window, tells the app nothing was picked.
+
+OPTIONS
+    --req TOKEN
+        The request's token (required).
+
+    --app APPID
+        The asking app's id.
+
+    --mode open|save
+        Open an existing file or save a new one.
+
+    --types .txt,.md
+        The file types to show, separated by commas.
+
+    --suggested NAME
+        The name the Name field starts with when saving.
+
+NOTES
+    The picker never shows or hands out the permission database
+    (/var/lib/apps), other apps' data folders, /dev or the package
+    signing key, and never saves into /apps, /etc, /var/lib or /bin.
+
+SEE ALSO
+    chooser, files, store, scripting

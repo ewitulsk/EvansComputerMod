@@ -1,0 +1,64 @@
+NAME
+    iw - show and change the Wi-Fi interface (wlan0)
+
+SYNOPSIS
+    iw dev
+    iw dev wlan0 <command>
+
+DESCRIPTION
+    iw drives the Wi-Fi Module's interface, wlan0, directly: scanning,
+    the current link, monitor mode, channel and power. It can join
+    open networks only; for WPA2 use wifi or wpa_supplicant. iw dev
+    prints nothing when the computer has no Wi-Fi Module.
+
+COMMANDS
+    dev
+        List the wireless interfaces.
+
+    info
+        Interface details: address, mode, channel, power.
+
+    scan [passive] [ssid S]
+        Scan for Access Points (passive: only listen for beacons; ssid:
+        only that network). Not possible in monitor mode.
+
+    scan dump
+        The results of the last scan, without scanning again.
+
+    link
+        The current connection: Access Point, signal and bitrate.
+
+    station dump
+        Counters for the current connection.
+
+    set type monitor|managed
+        monitor: receive every frame on the channel (for tcpdump -i
+        wlan0); managed (or station): normal use.
+
+    set channel <1-13|36-165>, set freq <MHz>
+        Change channel (mostly useful in monitor mode).
+
+    set txpower fixed <mBm>, set txpower auto
+        Transmit power in hundredths of dBm (0-2000).
+
+    set keepalive <ms>|off
+        How often an idle connection sends a keep-alive (default
+        30000).
+
+    connect <ssid> [bssid]
+        Join an open network (optionally one Access Point). No
+        address is configured; use dhclient wlan0 afterwards.
+
+    disconnect
+        Leave the network.
+
+EXAMPLES
+      iw dev
+      iw dev wlan0 scan
+      iw dev wlan0 link
+      iw dev wlan0 set type monitor
+      iw dev wlan0 set channel 6
+      iw dev wlan0 connect guest-net
+
+SEE ALSO
+    wifi, wpa_supplicant, wpa_cli, tcpdump, networking

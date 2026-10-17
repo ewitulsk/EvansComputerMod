@@ -1,0 +1,43 @@
+NAME
+    aplay - play a sound file on a speaker
+
+SYNOPSIS
+    aplay file.wav [--speaker side] [--volume n]
+    aplay file.raw --rate n [--bits 8|16] [--channels 1|2]
+          [--speaker side]
+
+DESCRIPTION
+    Plays a sound file on a Speaker next to the computer, then exits. It
+    first prints what it plays: the file, the speaker, the format and
+    the length in seconds.
+
+    WAV files (PCM, 8 or 16 bit, mono or stereo) carry their own format.
+    Any other file is played as raw PCM without a header, by default at
+    48000 Hz, 16-bit signed little-endian, mono; the options below
+    describe it. Playback runs at the speaker's pace, so aplay ends when
+    the sound has been sent. Ctrl+T stops it.
+
+OPTIONS
+    --rate n
+        Samples per second of a raw file.
+
+    --bits 8|16
+        Bits per sample of a raw file (8 is unsigned, 16 signed).
+
+    --channels 1|2
+        Mono or stereo raw file.
+
+    --volume n
+        The speaker's volume, 0 to 100.
+
+    --speaker side
+        Which speaker to use, by the side it is attached on (left,
+        left_bay_1, ...). Default: the first speaker.
+
+EXAMPLES
+      aplay /home/bell.wav
+      aplay song.wav --volume 70
+      aplay voice.raw --rate 22050 --bits 16 --channels 1
+
+SEE ALSO
+    beep, upload, video, peripherals

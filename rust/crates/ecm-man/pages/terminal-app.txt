@@ -1,0 +1,57 @@
+NAME
+    terminal-app - the Terminal app: a shell in a GUI window
+
+SYNOPSIS
+    terminal
+
+DESCRIPTION
+    The Terminal app (dev.ecm.terminal, program terminal) opens a window
+    with a shell session of its own: the same shell as the console, so
+    every command works in it. Start it from the desktop's launcher,
+    from the ePhone's home screen, or by typing terminal in another one.
+    Needs the GUI. Programs typed in it run unconfined, as at the
+    console.
+
+    The window's size sets the terminal's size in characters (8x16
+    cells): make the window bigger for more columns and rows. Below 320
+    lu wide (an ePhone) the grid has no border, so a phone gets 30
+    columns.
+
+    Colours, bold, underline and inverse text are shown as programs
+    write them; the cursor is a block. When the shell ends the window
+    says "[session ended - close the window]". Closing the window ends
+    the session. A computer has at most 8 shell sessions; with none free
+    the window says so.
+
+KEYS
+    Ctrl+Shift+C
+        Copy the selected text to the clipboard.
+
+    Ctrl+Shift+V, Shift+Insert
+        Paste the clipboard; every newline becomes Enter.
+
+    Shift+PageUp, Shift+PageDown
+        Scroll back through the last 1000 lines, a page at a time. The
+        mouse wheel scrolls 3 lines. A scrolled-back view stays put
+        while output arrives; typing goes back to the bottom.
+
+    Ctrl+letter
+        Sent to the program as a control character. Ctrl+C or Ctrl+T
+        stops the running program.
+
+    Enter, Backspace, Tab, Esc, arrows, Home, End, PageUp, PageDown,
+    Insert, Delete
+        Sent as the usual terminal (VT100) keys. Holding Alt sends Esc
+        before them.
+
+MOUSE
+    Drag with the left button to select text; a click without a drag
+    clears the selection. The right button opens a menu: Copy, Paste,
+    Clear selection.
+
+NOTES
+    Ctrl+C without Shift goes to the program and stops it: copy with
+    Ctrl+Shift+C or the right-click menu.
+
+SEE ALSO
+    terminal, gui, desktop, phone-guide, keys
