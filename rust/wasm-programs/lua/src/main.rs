@@ -26,6 +26,37 @@ use std::io::{self, Write};
 // shell module — terminal I/O, filesystem access and redstone
 // ============================================================================
 
+/// The name Python and Lua give an upload support state.
+fn upload_support_name(s: ecm_host_abi::upload::Support) -> &'static str {
+    use ecm_host_abi::upload::Support;
+    match s {
+        Support::Ready => "ready",
+        Support::NotInstalled => "not_installed",
+        Support::NoClient => "no_client",
+        Support::NotPermitted => "not_permitted",
+    }
+}
+
+/// Run one upload to the end: the new file's path, or why there is none.
+fn upload_blocking(dir: &str) -> Result<String, String> {
+    use ecm_host_abi::upload::{self, State, Support};
+    let support = upload::supported();
+    if support != Support::Ready {
+        return Err(support.message().to_string());
+    }
+    let ticket = upload::begin(dir).map_err(|e| format!("{dir}: {}", e.message()))?;
+    loop {
+        match upload::poll(ticket) {
+            State::Done(path) => return Ok(path),
+            State::Failed(e) => {
+                upload::cancel(ticket);
+                return Err(e.message().to_string());
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
 fn shell_module(lua: &Lua) -> mlua::Result<Table> {
     let m = lua.create_table()?;
 
@@ -57,6 +88,16 @@ fn shell_module(lua: &Lua) -> mlua::Result<Table> {
     })?)?;
     m.set("get_width", lua.create_function(|_, ()| Ok(80))?)?;
     m.set("get_height", lua.create_function(|_, ()| Ok(24))?)?;
+    // Upload: a file from the player's real computer (the evanscomputermod-upload add-on).
+    // upload_supported() -> "ready" | "not_installed" | "no_client" | "not_permitted".
+    m.set("upload_supported", lua.create_function(|_, ()| Ok(upload_support_name(ecm_host_abi::upload::supported())))?)?;
+    // upload([dir]) -> path of the new file, or nil, reason (dir defaults to /home).
+    m.set("upload", lua.create_function(|_, dir: Option<String>| {
+        Ok(match upload_blocking(dir.as_deref().unwrap_or("/home")) {
+            Ok(path) => (Some(path), None),
+            Err(e) => (None, Some(format!("upload: {e}"))),
+        })
+    })?)?;
     m.set("sleep", lua.create_function(|_, seconds: f64| {
         let ms = (seconds.max(0.0) * 1000.0) as u64;
         std::thread::sleep(std::time::Duration::from_millis(ms));

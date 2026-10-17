@@ -1,0 +1,45 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "MIT"
+
+[[mods]]
+modId = "evanscomputermod_upload"
+version = "1.0.0"
+displayName = "Evans Computer Mod — File Upload"
+description = '''
+Optional companion mod for EvansComputerMod that lets players copy a file from
+their real computer (Windows, Linux or macOS) into a Terminal or ePhone in the
+game: the `upload` command, and the Upload button in Files.
+
+Install it on the server AND in each player's game. A player picks the file in
+their system's file picker; the server receives it over the network and puts it
+in the computer's storage. Servers can limit the file size, the storage a
+computer may use, and who may upload (config/evanscomputermod_upload-server.toml).
+Without it on either side, the rest of EvansComputerMod works and upload is not
+offered.
+'''
+authors = "Example"
+# Either side may lack it: players and servers without it still connect, and
+# upload is only offered when both have it (the server checks the player's channel).
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.evanscomputermod_upload]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_upload]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_upload]]
+modId = "evanscomputermod"
+type = "required"
+versionRange = "[1.0.0,)"
+ordering = "BEFORE"
+side = "BOTH"
