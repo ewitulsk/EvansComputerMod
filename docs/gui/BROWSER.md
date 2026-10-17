@@ -301,7 +301,8 @@ end)
   server on the core's LAN running `httpd 80 /srv/www`, as in `cell_chat`). Control first: with no modem the Browser from
   the home grid shows an error page for the server's address and keeps running. With the LTE Modem and the SIM cored
   wrote it attaches; Reload loads the page over LTE; its end is off screen until finger drags scroll there and the top
-  scrolls away; a tap on the last link loads the second page. About 9 s.
+  scrolls away; a tap on the last link loads the second page. Menu in the bottom bar opens its menu above the bar, every entry on screen; History opens
+  `about:history`. About 9 s.
 
 The plan's `browser_phone` uses a Tech Village Phone Store phone; that needs the naturally generated world of the `tech`
 client suite (`cell_tech_village`), so phase 1 runs it on a player-built network, which a one-minute GameTest can hold.
