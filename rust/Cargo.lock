@@ -1303,6 +1303,7 @@ name = "ecm-web"
 version = "0.1.0"
 dependencies = [
  "ecm-ui-proto",
+ "miniz_oxide",
 ]
 
 [[package]]

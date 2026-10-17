@@ -10,3 +10,4 @@ doctest = false
 
 [dependencies]
 ecm-ui-proto = { workspace = true }
+miniz_oxide = "0.8"

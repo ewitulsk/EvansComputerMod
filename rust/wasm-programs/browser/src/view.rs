@@ -1,8 +1,9 @@
-//! The window. Desktop (medium and wide): `[<] [>] [Reload] [Home] [address] [Go]`
+//! The window. Desktop (medium and wide): `[<] [>] [Reload] [Home] [address] [Go] [Menu]`
 //! over the page and a status line. Phone (compact): `[address] [Go]` over the
-//! page and `[Back] [Fwd] [Reload] [Home]` at the bottom, in thumb reach.
+//! page and `[<] [>] [Reload] [Home] [Menu]` at the bottom, in thumb reach.
+//! Menu: bookmark this page, Bookmarks, History, set as home page.
 
-use crate::model::{Model, Nav, Press, DRAG_SLOP, HOME, SCROLL_STEP};
+use crate::model::{ClickResult, Model, Nav, Press, DRAG_SLOP, SCROLL_STEP};
 use crate::scene;
 use ecm_ui::prelude::*;
 use ecm_ui::window::{self, keys};
@@ -33,6 +34,37 @@ fn go(m: &M, cx: &mut Ctx) {
     cx.focus("page");
 }
 
+pub const MENU: [&str; 4] = ["Bookmark this page", "Bookmarks", "History", "Set as home page"];
+
+fn menu_button(m: &M) -> Element {
+    let m = m.clone();
+    button("Menu").id("menu").on_click(move |cx, _| {
+        let w = cx.window();
+        let at = cx.core().window(w).and_then(|win| win.rect_of("menu")).map_or((0, 0), |r| (r.x, r.y + r.h));
+        let mm = m.clone();
+        cx.popup_menu(at.0, at.1, MENU, move |cx, i| {
+            menu_action(&mm, i);
+            cx.invalidate();
+        });
+    })
+}
+
+/// What a Menu entry does.
+pub fn menu_action(m: &M, i: usize) {
+    let mut mm = m.borrow_mut();
+    match i {
+        0 => {
+            mm.bookmark();
+        }
+        1 => mm.go(Url::parse("about:bookmarks").expect("about")),
+        2 => mm.go(Url::parse("about:history").expect("about")),
+        3 => {
+            mm.set_home();
+        }
+        _ => {}
+    }
+}
+
 fn address_field(m: &M) -> Element {
     let m = m.clone();
     text_field().id("url").placeholder("Address").grow(1).on_submit(move |cx, _| go(&m, cx))
@@ -47,7 +79,14 @@ fn go_button(m: &M) -> Element {
 pub fn page_key(m: &M, cx: &mut Ctx, key: u16, mods: u16) -> bool {
     let alt = mods & (ecm_ui_proto::mods::ALT) != 0;
     let ctrl = mods & (ecm_ui_proto::mods::CTRL) != 0;
+    let shift = mods & (ecm_ui_proto::mods::SHIFT) != 0;
     let mut mm = m.borrow_mut();
+    // A focused form field takes its editing keys first.
+    if !ctrl && !alt && mm.focus.is_some() && mm.edit_key(key, shift) {
+        drop(mm);
+        cx.invalidate();
+        return true;
+    }
     let page = mm.view.1 - 24.0;
     let used = match key {
         keys::LEFT if alt => {
@@ -94,6 +133,21 @@ pub fn page_key(m: &M, cx: &mut Ctx, key: u16, mods: u16) -> bool {
     used
 }
 
+/// Text typed on the page: into the focused field.
+fn on_page_text(m: &M, cx: &mut Ctx, e: &UiEvent) {
+    if let EventValue::Text(t) = &e.value {
+        if m.borrow_mut().type_text(t) {
+            cx.invalidate();
+        }
+    }
+}
+
+/// The page area's top-left in the window (popups are placed in window coordinates).
+fn page_origin(cx: &mut Ctx) -> (i32, i32) {
+    let w = cx.window();
+    cx.core().window(w).and_then(|win| win.rect_of("page")).map_or((0, 0), |r| (r.x, r.y))
+}
+
 fn on_page_pointer(m: &M, cx: &mut Ctx, e: &UiEvent) {
     let EventValue::Pointer(p) = &e.value else {
         if let EventValue::Key { key, mods, down: true, .. } = e.value {
@@ -131,8 +185,16 @@ fn on_page_pointer(m: &M, cx: &mut Ctx, e: &UiEvent) {
         PointerKind::Up => {
             let press = mm.press.take();
             if press.is_some_and(|pr| !pr.dragging) {
-                if let Some(u) = mm.link_at(p.x, p.y) {
-                    mm.go(u);
+                if let ClickResult::Choose { select, labels } = mm.click(p.x, p.y) {
+                    drop(mm);
+                    let (ox, oy) = page_origin(cx);
+                    let mc = m.clone();
+                    cx.popup_menu(ox + p.x, oy + p.y, labels, move |cx, i| {
+                        mc.borrow_mut().choose(select, i);
+                        cx.invalidate();
+                    });
+                    cx.invalidate();
+                    return;
                 }
             }
             true
@@ -160,7 +222,7 @@ pub fn view(m: &M, cx: &ViewCtx) -> Element {
         let mm = m.borrow();
         (mm.can_back(), mm.can_forward())
     };
-    let home = Nav::Go { url: Url::parse(HOME).expect("home"), push: true };
+    let home = Nav::Go { url: m.borrow().home(), push: true };
     let top;
     let bottom;
     if compact {
@@ -169,10 +231,11 @@ pub fn view(m: &M, cx: &ViewCtx) -> Element {
             row()
                 .gap(4)
                 .padding(4)
-                .child(nav_button(m, "back", "Back", Nav::Back, can_back).grow(1))
-                .child(nav_button(m, "forward", "Fwd", Nav::Forward, can_fwd).grow(1))
+                .child(nav_button(m, "back", "<", Nav::Back, can_back).grow(1))
+                .child(nav_button(m, "forward", ">", Nav::Forward, can_fwd).grow(1))
                 .child(nav_button(m, "reload", "Reload", Nav::Reload, true).grow(1))
-                .child(nav_button(m, "home", "Home", home, true).grow(1)),
+                .child(nav_button(m, "home", "Home", home, true).grow(1))
+                .child(menu_button(m).grow(1)),
         );
     } else {
         top = row()
@@ -183,7 +246,8 @@ pub fn view(m: &M, cx: &ViewCtx) -> Element {
             .child(nav_button(m, "reload", "Reload", Nav::Reload, true))
             .child(nav_button(m, "home", "Home", home, true))
             .child(address_field(m))
-            .child(go_button(m));
+            .child(go_button(m))
+            .child(menu_button(m));
         let status = m.borrow().status_text();
         bottom = Some(row().padding(2).child(label(if status.is_empty() { " ".to_string() } else { status }).id("status").style("caption")));
     }
@@ -197,12 +261,14 @@ pub fn view(m: &M, cx: &ViewCtx) -> Element {
         mm.render(pw as f32, ph as f32);
         let scroll = mm.scroll.round() as i32;
         match &mm.cache {
-            Some(c) => scene::page_nodes(&c.rendered.list, pw, ph, scroll, (cx.theme.text_muted & 0xffff_ff00) | 0xa0),
+            Some(c) => scene::page_nodes(&c.rendered.list, pw, ph, scroll, (cx.theme.text_muted & 0xffff_ff00) | 0xa0, &mm.images),
             None => vec![],
         }
     };
     let pm = m.clone();
     let page = custom().id("page").grow(1).nodes(nodes).on_pointer(move |cx, e| on_page_pointer(&pm, cx, e));
+    let tm = m.clone();
+    let page = page.on_text(move |cx, e| on_page_text(&tm, cx, e));
     let km = m.clone();
     let page = page.on_key(move |cx, e| {
         if let EventValue::Key { key, mods, down: true, .. } = e.value {

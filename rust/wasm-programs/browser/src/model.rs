@@ -1,12 +1,16 @@
-//! The browser's state: the page shown, history, scrolling, the pointer, and
+//! The browser's state: the page shown, history, scrolling, the pointer, form
+//! editing, pictures, the saved settings (home page, bookmarks, visits), and
 //! the navigation the driver does next. Handlers only change this; the I/O
 //! happens between loop turns ([`crate::app`]).
 
+use ecm_ui::json::Json;
 use ecm_web::css::Dynamic;
 use ecm_web::dom::NodeId;
+use ecm_web::forms::{self, Control, Submission};
 use ecm_web::page::Rendered;
 use ecm_web::style::UaColors;
 use ecm_web::{Page, Url};
+use std::collections::HashMap;
 
 /// Wheel steps and arrow keys scroll this far, lu.
 pub const SCROLL_STEP: f32 = 36.0;
@@ -14,6 +18,8 @@ pub const SCROLL_STEP: f32 = 36.0;
 pub const DRAG_SLOP: i32 = 6;
 /// History is kept to this many pages.
 pub const MAX_HISTORY: usize = 50;
+/// Visits remembered for the History page.
+pub const MAX_VISITS: usize = 100;
 pub const HOME: &str = "about:home";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +29,8 @@ pub enum Nav {
     Back,
     Forward,
     Reload,
+    /// Send a form.
+    Submit(Submission),
 }
 
 #[derive(Clone, Debug)]
@@ -34,16 +42,71 @@ pub struct Press {
 }
 
 /// The render of the current page for one viewport (re-made when the size,
-/// the theme, the hovered element or the page change).
+/// the theme, the hovered element, the focus or the page change).
 pub struct Cache {
     pub key: (i32, i32, u64, Option<NodeId>),
     pub rendered: Rendered,
 }
 
+/// A picture uploaded as an image resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Img {
+    pub w: u32,
+    pub h: u32,
+    pub resource: u32,
+}
+
+/// What a click on the page asks the window to do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClickResult {
+    Nothing,
+    /// Show a popup menu of a select's options (labels, the chosen one).
+    Choose { select: NodeId, labels: Vec<String> },
+}
+
+/// Saved in the app's data folder (`browser.json`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Settings {
+    /// None: the default home page.
+    pub home: Option<String>,
+    /// (title, address)
+    pub bookmarks: Vec<(String, String)>,
+    /// Recent visits, newest last: (title, address).
+    pub visits: Vec<(String, String)>,
+}
+
+impl Settings {
+    pub fn to_json(&self) -> Json {
+        let pairs = |v: &[(String, String)]| Json::Arr(v.iter().map(|(t, u)| Json::Arr(vec![Json::Str(t.clone()), Json::Str(u.clone())])).collect());
+        Json::Obj(vec![
+            ("home".into(), self.home.clone().map(Json::Str).unwrap_or(Json::Null)),
+            ("bookmarks".into(), pairs(&self.bookmarks)),
+            ("visits".into(), pairs(&self.visits)),
+        ])
+    }
+
+    pub fn from_json(j: &Json) -> Settings {
+        let pairs = |k: &str| -> Vec<(String, String)> {
+            j.get(k)
+                .and_then(|a| a.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|p| {
+                            let p = p.as_array()?;
+                            Some((p.first()?.as_str()?.to_string(), p.get(1)?.as_str()?.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Settings { home: j.get("home").and_then(|h| h.as_str()).map(str::to_string), bookmarks: pairs("bookmarks"), visits: pairs("visits") }
+    }
+}
+
 pub struct Model {
     pub ua: UaColors,
     pub page: Option<Page>,
-    /// Bumped for every new page (the render cache key).
+    /// Bumped for every new page and every change to it (the render cache key).
     pub generation: u64,
     pub history: Vec<Url>,
     pub hist_pos: usize,
@@ -68,6 +131,17 @@ pub struct Model {
     pub status: u16,
     /// Pages loaded (tests and the log).
     pub loads: u32,
+    /// The focused text control and its caret (characters).
+    pub focus: Option<(NodeId, usize)>,
+    /// Pictures by address (None: it didn't load).
+    pub images: HashMap<String, Option<Img>>,
+    pub settings: Settings,
+    /// The home page when none is set.
+    pub default_home: String,
+    /// The settings changed: the driver saves them.
+    pub settings_dirty: bool,
+    /// A short message for the status line ("Bookmarked").
+    pub notice: Option<String>,
 }
 
 impl Default for Model {
@@ -91,6 +165,12 @@ impl Default for Model {
             pending_scroll: None,
             status: 0,
             loads: 0,
+            focus: None,
+            images: HashMap::new(),
+            settings: Settings::default(),
+            default_home: HOME.into(),
+            settings_dirty: false,
+            notice: None,
         }
     }
 }
@@ -106,6 +186,16 @@ impl Model {
 
     pub fn can_forward(&self) -> bool {
         self.hist_pos + 1 < self.history.len()
+    }
+
+    /// The home page: the one set, else the default.
+    pub fn home(&self) -> Url {
+        self.settings
+            .home
+            .as_deref()
+            .and_then(Url::parse)
+            .or_else(|| Url::parse(&self.default_home))
+            .unwrap_or_else(|| Url::parse(HOME).expect("home"))
     }
 
     /// Navigate to what the player typed. False (and nothing happens) if it isn't an address.
@@ -166,15 +256,31 @@ impl Model {
     /// Show a loaded page.
     pub fn show(&mut self, page: Page, status: u16) {
         self.pending_anchor = page.url.fragment.clone();
+        if page.url.scheme != ecm_web::url::Scheme::About {
+            let addr = page.url.without_fragment().to_string();
+            let title = if page.title.is_empty() { addr.clone() } else { page.title.clone() };
+            self.settings.visits.retain(|(_, u)| *u != addr);
+            self.settings.visits.push((title, addr));
+            while self.settings.visits.len() > MAX_VISITS {
+                self.settings.visits.remove(0);
+            }
+            self.settings_dirty = true;
+        }
         self.page = Some(page);
         self.status = status;
-        self.generation += 1;
-        self.cache = None;
+        self.changed();
         self.scroll = 0.0;
         self.hover = None;
         self.hover_link = None;
         self.press = None;
+        self.focus = None;
         self.loads += 1;
+    }
+
+    /// The page changed (a form edit, a picture arrived): render again.
+    pub fn changed(&mut self) {
+        self.generation += 1;
+        self.cache = None;
     }
 
     /// The page's height at the last render.
@@ -196,7 +302,7 @@ impl Model {
         self.scroll = y.clamp(0.0, self.max_scroll());
     }
 
-    /// The `:hover` state for the render.
+    /// The `:hover` / `:focus` state for the render.
     pub fn dynamic(&self) -> Dynamic {
         let mut hover = Vec::new();
         if let (Some(p), Some(mut n)) = (&self.page, self.hover) {
@@ -208,7 +314,7 @@ impl Model {
                 }
             }
         }
-        Dynamic { hover, ..Default::default() }
+        Dynamic { hover, focus: self.focus.map(|f| f.0), active: None }
     }
 
     /// Render the page for a `w x h` area (cached).
@@ -220,8 +326,10 @@ impl Model {
         if self.cache.as_ref().is_some_and(|c| c.key == key) {
             return;
         }
-        let dy = if hover_key.is_some() { self.dynamic() } else { Dynamic::default() };
-        let rendered = page.render(w, h, &self.ua, &dy, &|_| None);
+        let dy = self.dynamic();
+        let images = &self.images;
+        let sizes = |u: &str| images.get(u).copied().flatten().map(|i| (i.w as f32, i.h as f32));
+        let rendered = page.render_with_caret(w, h, &self.ua, &dy, &sizes, self.focus);
         // The hover key only matters for pages with :hover rules.
         let key = (key.0, key.1, key.2, if rendered.dynamic_selectors { self.hover } else { None });
         self.cache = Some(Cache { key, rendered });
@@ -238,9 +346,23 @@ impl Model {
         self.scroll = self.scroll.clamp(0.0, self.max_scroll());
     }
 
+    /// Render again at the last size if a change dropped the render (events
+    /// in one batch: a click right after typing must hit-test the new page).
+    pub fn ensure_rendered(&mut self) {
+        if self.cache.is_none() && self.view.0 > 0.0 {
+            let (w, h) = self.view;
+            self.render(w, h);
+        }
+    }
+
+    /// Pictures the page shows that haven't been fetched yet.
+    pub fn missing_images(&self) -> Vec<String> {
+        self.cache.as_ref().map(|c| c.rendered.images.iter().filter(|u| !self.images.contains_key(*u)).cloned().collect()).unwrap_or_default()
+    }
+
     /// The element at a point of the page area.
     pub fn node_at(&self, x: i32, y: i32) -> Option<NodeId> {
-        self.cache.as_ref()?.rendered.list.hit_test(x as f32, y as f32 + self.scroll)
+        self.cache.as_ref()?.rendered.list.hit_test_view(x as f32, y as f32, self.scroll)
     }
 
     /// The link at a point of the page area.
@@ -251,6 +373,7 @@ impl Model {
 
     /// The pointer moved to `(x, y)` (no button): hover. True if the page must be redrawn.
     pub fn hover_at(&mut self, x: i32, y: i32) -> bool {
+        self.ensure_rendered();
         let n = self.node_at(x, y);
         let link = self.link_at(x, y).map(|u| u.to_string());
         let mut changed = link != self.hover_link;
@@ -264,10 +387,157 @@ impl Model {
         changed
     }
 
-    /// The status line: a link under the pointer, or what is loading.
+    /// A click (press and release without a drag) at a point of the page area:
+    /// form controls, then links.
+    pub fn click(&mut self, x: i32, y: i32) -> ClickResult {
+        self.ensure_rendered();
+        let Some(node) = self.node_at(x, y) else {
+            self.blur();
+            return ClickResult::Nothing;
+        };
+        let Some(page) = self.page.as_mut() else { return ClickResult::Nothing };
+        if let Some(c) = forms::target(&page.dom, node) {
+            if forms::disabled(&page.dom, c) {
+                return ClickResult::Nothing;
+            }
+            match forms::control(&page.dom, c) {
+                Some(Control::Text { .. }) | Some(Control::TextArea) => {
+                    let len = forms::value(&page.dom, c).chars().count();
+                    self.focus = Some((c, len));
+                    self.changed();
+                    return ClickResult::Nothing;
+                }
+                Some(Control::Checkbox) | Some(Control::Radio) => {
+                    forms::toggle(&mut page.dom, c);
+                    self.focus = None;
+                    self.changed();
+                    return ClickResult::Nothing;
+                }
+                Some(Control::Select) => {
+                    let labels = forms::options(&page.dom, c).into_iter().map(|o| forms::option_label(&page.dom, o)).collect();
+                    self.focus = None;
+                    self.changed();
+                    return ClickResult::Choose { select: c, labels };
+                }
+                Some(Control::Submit) => {
+                    self.submit_from(c);
+                    return ClickResult::Nothing;
+                }
+                _ => return ClickResult::Nothing,
+            }
+        }
+        self.blur();
+        if let Some(u) = self.link_at(x, y) {
+            self.go(u);
+        }
+        ClickResult::Nothing
+    }
+
+    pub fn blur(&mut self) {
+        if self.focus.take().is_some() {
+            self.changed();
+        }
+    }
+
+    /// Choose option `index` of a select (its popup's answer).
+    pub fn choose(&mut self, select: NodeId, index: usize) {
+        if let Some(p) = self.page.as_mut() {
+            forms::choose(&mut p.dom, select, index);
+            self.changed();
+        }
+    }
+
+    /// Submit the form of control `c` (a button pressed, or Enter in a field).
+    pub fn submit_from(&mut self, c: NodeId) {
+        let Some(page) = self.page.as_ref() else { return };
+        let Some(form) = forms::form_of(&page.dom, c) else { return };
+        let submitter = match forms::control(&page.dom, c) {
+            Some(Control::Submit) => Some(c),
+            _ => forms::default_button(&page.dom, form),
+        };
+        if let Some(s) = forms::submission(&page.dom, &page.url, form, submitter) {
+            self.pending = Some(Nav::Submit(s));
+        }
+    }
+
+    /// Typed text goes to the focused field. True if it was used.
+    pub fn type_text(&mut self, text: &str) -> bool {
+        let Some((node, caret)) = self.focus else { return false };
+        let Some(page) = self.page.as_mut() else { return false };
+        let multiline = forms::control(&page.dom, node) == Some(Control::TextArea);
+        let text: String = text.chars().filter(|c| !c.is_control() || (multiline && *c == '\n')).collect();
+        if text.is_empty() {
+            return true;
+        }
+        let v: Vec<char> = forms::value(&page.dom, node).chars().collect();
+        let at = caret.min(v.len());
+        let mut nv: String = v[..at].iter().collect();
+        nv.push_str(&text);
+        nv.extend(&v[at..]);
+        let max = page.dom.attr(node, "maxlength").and_then(|m| m.parse::<usize>().ok()).unwrap_or(usize::MAX);
+        if nv.chars().count() > max {
+            return true;
+        }
+        forms::set_value(&mut page.dom, node, &nv);
+        self.focus = Some((node, at + text.chars().count()));
+        self.changed();
+        true
+    }
+
+    /// An editing key for the focused field. True if it was used.
+    pub fn edit_key(&mut self, key: u16, shift: bool) -> bool {
+        use ecm_ui::window::keys;
+        let Some((node, caret)) = self.focus else { return false };
+        let Some(page) = self.page.as_mut() else { return false };
+        let multiline = forms::control(&page.dom, node) == Some(Control::TextArea);
+        let v: Vec<char> = forms::value(&page.dom, node).chars().collect();
+        let caret = caret.min(v.len());
+        let set = |page: &mut Page, nv: String| forms::set_value(&mut page.dom, node, &nv);
+        match key {
+            keys::BACKSPACE => {
+                if caret > 0 {
+                    let nv: String = v[..caret - 1].iter().chain(v[caret..].iter()).collect();
+                    set(page, nv);
+                    self.focus = Some((node, caret - 1));
+                }
+            }
+            keys::DELETE => {
+                if caret < v.len() {
+                    let nv: String = v[..caret].iter().chain(v[caret + 1..].iter()).collect();
+                    set(page, nv);
+                }
+            }
+            keys::LEFT => self.focus = Some((node, caret.saturating_sub(1))),
+            keys::RIGHT => self.focus = Some((node, (caret + 1).min(v.len()))),
+            keys::HOME => self.focus = Some((node, 0)),
+            keys::END => self.focus = Some((node, v.len())),
+            keys::ENTER | keys::KP_ENTER => {
+                if multiline {
+                    return self.type_text("\n");
+                }
+                self.submit_from(node);
+                return true;
+            }
+            keys::ESCAPE => {
+                self.focus = None;
+            }
+            keys::TAB => {
+                let next = forms::next_control(&page.dom, Some(node), shift);
+                self.focus = next.filter(|n| forms::control(&page.dom, *n).is_some_and(|c| c.is_text())).map(|n| (n, forms::value(&page.dom, n).chars().count()));
+            }
+            _ => return false,
+        }
+        self.changed();
+        true
+    }
+
+    /// The status line: a notice, what is loading, or a link under the pointer.
     pub fn status_text(&self) -> String {
         if let Some(l) = &self.loading {
             return format!("Loading {l} ...");
+        }
+        if let Some(n) = &self.notice {
+            return n.clone();
         }
         self.hover_link.clone().unwrap_or_default()
     }
@@ -279,6 +549,30 @@ impl Model {
             Some(t) => format!("{t} - Browser"),
             None => self.current().map(|u| format!("{u} - Browser")).unwrap_or_else(|| "Browser".into()),
         }
+    }
+
+    /// Bookmark the page shown. False if there is none (or it is one of the browser's own).
+    pub fn bookmark(&mut self) -> bool {
+        let Some(p) = &self.page else { return false };
+        if p.url.scheme == ecm_web::url::Scheme::About {
+            return false;
+        }
+        let addr = p.url.to_string();
+        let title = if p.title.is_empty() { addr.clone() } else { p.title.clone() };
+        self.settings.bookmarks.retain(|(_, u)| *u != addr);
+        self.settings.bookmarks.push((title.clone(), addr));
+        self.settings_dirty = true;
+        self.notice = Some(format!("Bookmarked: {title}"));
+        true
+    }
+
+    /// The page shown becomes the home page.
+    pub fn set_home(&mut self) -> bool {
+        let Some(p) = &self.page else { return false };
+        self.settings.home = Some(p.url.to_string());
+        self.settings_dirty = true;
+        self.notice = Some(format!("Home page: {}", p.url));
+        true
     }
 }
 

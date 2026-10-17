@@ -4,15 +4,15 @@
 
 use crate::dom::{NodeId, DOCUMENT};
 use crate::layout::{self, Content, ControlKind, Env, FragKind, LayoutBox, Marker, Replaced};
-use crate::style::{ListStyle, Overflow, Style};
+use crate::style::{ListStyle, Overflow, Position, Style};
 use ecm_ui_proto::Font;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
     Rect { x: i32, y: i32, w: i32, h: i32, fill: u32, radius: u16, border_w: u16, border_color: u32 },
     Text { x: i32, y: i32, text: String, font: Font, size: u8, color: u32 },
-    /// An `<img>` (its pixels come from the image cache by node).
-    Image { x: i32, y: i32, w: i32, h: i32, node: NodeId },
+    /// A picture (`<img>`, `background-image`) by its address, drawn into this rect.
+    Image { x: i32, y: i32, w: i32, h: i32, src: String },
     /// Clip what follows (up to the matching [`Item::Pop`]) to this rect.
     Clip { x: i32, y: i32, w: i32, h: i32 },
     /// Draw what follows (up to the matching [`Item::Pop`]) at this opacity.
@@ -46,12 +46,21 @@ pub struct DisplayList {
     pub height: f32,
     /// What shows behind the page (the root's or body's background).
     pub background: u32,
+    /// `position: fixed` boxes: drawn in viewport coordinates, over the page, not scrolled.
+    pub fixed: Vec<Item>,
+    pub fixed_hits: Vec<Hit>,
 }
 
 impl DisplayList {
-    /// The topmost element at a point.
+    /// The topmost element at a point of the page.
     pub fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
         self.hits.iter().rev().find(|h| h.contains(x, y)).map(|h| h.node)
+    }
+
+    /// The topmost element at a point of the viewport scrolled down by `scroll`
+    /// (fixed boxes first).
+    pub fn hit_test_view(&self, x: f32, y: f32, scroll: f32) -> Option<NodeId> {
+        self.fixed_hits.iter().rev().find(|h| h.contains(x, y)).map(|h| h.node).or_else(|| self.hit_test(x, y + scroll))
     }
 
     /// Where an element is first drawn (anchors, `#fragment`).
@@ -63,6 +72,8 @@ impl DisplayList {
 struct Painter<'a> {
     env: &'a Env<'a>,
     list: DisplayList,
+    /// Painting a fixed box: items and hits go to the fixed layer.
+    in_fixed: bool,
 }
 
 fn r(v: f32) -> i32 {
@@ -114,8 +125,14 @@ impl Painter<'_> {
             self.rect(x, y + h - bw[2], w, bw[2], colors[2], 0.0, 0.0, 0);
             self.rect(x, y, bw[3], h, colors[3], 0.0, 0.0, 0);
         }
-        if s.background_image.is_some() {
-            // Background images are drawn by the image cache (phase 2): a hit is enough here.
+        if let Some(url) = s.background_image.as_deref().and_then(|u| self.env.image_url(u)) {
+            if let Some((iw, ih)) = (self.env.images)(&url) {
+                // Drawn once at the padding box's corner (no repeat in v1), clipped to it.
+                let (px, py, pw, ph) = b.padding_rect();
+                self.list.items.push(Item::Clip { x: r(px), y: r(py), w: r(pw), h: r(ph) });
+                self.list.items.push(Item::Image { x: r(px), y: r(py), w: r(iw), h: r(ih), src: url });
+                self.list.items.push(Item::Pop);
+            }
         }
         self.grow(b.x + b.w, b.y + b.h);
     }
@@ -131,8 +148,10 @@ impl Painter<'_> {
         }
         self.background(b);
         if let Some(n) = b.node.filter(|n| *n != DOCUMENT) {
-            self.list.hits.push(Hit { x: b.x, y: b.y, w: b.w, h: b.h, node: n });
+            self.hit(Hit { x: b.x, y: b.y, w: b.w, h: b.h, node: n });
         }
+        // Negative z-index: behind the box's content.
+        self.positioned(b, |z| z < 0);
         if !s.hidden {
             if let Some(m) = &b.marker {
                 self.marker(m);
@@ -151,6 +170,22 @@ impl Painter<'_> {
             Content::Blocks(kids) | Content::Flex(kids) => {
                 for k in kids {
                     self.paint_box(k);
+                }
+            }
+            Content::Table(t) => {
+                for c in &t.captions {
+                    self.paint_box(c);
+                }
+                for row in &t.rows {
+                    if !row.style.hidden {
+                        self.rect(row.x, row.y, row.w, row.h, row.style.background, 0.0, 0.0, 0);
+                    }
+                    if let Some(n) = row.node {
+                        self.hit(Hit { x: row.x, y: row.y, w: row.w, h: row.h, node: n });
+                    }
+                    for c in &row.cells {
+                        self.paint_box(c);
+                    }
                 }
             }
             Content::Inline(ic) => {
@@ -175,7 +210,7 @@ impl Painter<'_> {
                             }
                         }
                     }
-                    self.list.hits.push(Hit { x: d.x, y: d.y, w: d.w, h: d.h, node: d.el });
+                    self.hit(Hit { x: d.x, y: d.y, w: d.w, h: d.h, node: d.el });
                 }
                 for line in &ic.lines {
                     for f in &line.frags {
@@ -184,7 +219,7 @@ impl Painter<'_> {
                                 let ts = self.env.style(f.el).clone();
                                 self.grow(f.x + f.w, line.y + line.h);
                                 if f.el != DOCUMENT {
-                                    self.list.hits.push(Hit { x: f.x, y: line.y, w: f.w, h: line.h, node: f.el });
+                                    self.hit(Hit { x: f.x, y: line.y, w: f.w, h: line.h, node: f.el });
                                 }
                                 if ts.hidden || text.trim().is_empty() && !ts.underline {
                                     continue;
@@ -209,8 +244,40 @@ impl Painter<'_> {
         if clip {
             self.list.items.push(Item::Pop);
         }
+        // Positioned boxes over the content, by z-index (auto = 0), in tree order.
+        self.positioned(b, |z| z >= 0);
         if opacity < 255 {
             self.list.items.push(Item::Pop);
+        }
+    }
+
+    fn hit(&mut self, h: Hit) {
+        if self.in_fixed {
+            self.list.fixed_hits.push(h);
+        } else {
+            self.list.hits.push(h);
+        }
+    }
+
+    /// Paint `b`'s absolutely positioned boxes whose z-index passes `which`
+    /// (fixed ones go to the fixed layer).
+    fn positioned(&mut self, b: &LayoutBox, which: impl Fn(i32) -> bool) {
+        let mut order: Vec<&LayoutBox> = b.oof.iter().filter(|o| which(o.style.z_index.unwrap_or(0))).collect();
+        order.sort_by_key(|o| o.style.z_index.unwrap_or(0));
+        for o in order {
+            if o.style.position == Position::Fixed && !self.in_fixed {
+                let page = std::mem::take(&mut self.list.items);
+                let (w, h) = (self.list.width, self.list.height);
+                self.in_fixed = true;
+                self.paint_box(o);
+                self.in_fixed = false;
+                let fixed = std::mem::replace(&mut self.list.items, page);
+                self.list.fixed.extend(fixed);
+                self.list.width = w;
+                self.list.height = h;
+            } else {
+                self.paint_box(o);
+            }
         }
     }
 
@@ -239,10 +306,12 @@ impl Painter<'_> {
         match rep {
             Replaced::Image { alt } => {
                 if let Some(n) = b.node {
-                    if (self.env.image_size)(n).is_some() {
-                        self.list.items.push(Item::Image { x: r(cx), y: r(cy), w: r(cw), h: r(ch), node: n });
-                        self.grow(cx + cw, cy + ch);
-                        return;
+                    if self.env.img_size(n).is_some() {
+                        if let Some(src) = self.env.dom.attr(n, "src").and_then(|s| self.env.image_url(s)) {
+                            self.list.items.push(Item::Image { x: r(cx), y: r(cy), w: r(cw), h: r(ch), src });
+                            self.grow(cx + cw, cy + ch);
+                            return;
+                        }
                     }
                 }
                 // Not loaded: a frame with the alt text.
@@ -266,10 +335,36 @@ impl Painter<'_> {
                     } else {
                         s.color
                     };
-                    let tx = if *kind == ControlKind::Button { cx + ((cw - face.text_width(text) as f32) / 2.0).max(0.0).floor() } else { cx };
+                    let mut tx = if *kind == ControlKind::Button { cx + ((cw - face.text_width(text) as f32) / 2.0).max(0.0).floor() } else { cx };
+                    // The focused field: its caret, and the text moved left to keep the caret in view.
+                    let caret = self.env.caret.filter(|(n, _)| Some(*n) == b.node).map(|(_, c)| c);
+                    let mut caret_at = None;
+                    if let (Some(c), Some(n)) = (caret, b.node) {
+                        let value = crate::forms::value(self.env.dom, n);
+                        let shown: String = if matches!(crate::forms::control(self.env.dom, n), Some(crate::forms::Control::Text { password: true })) {
+                            "*".repeat(value.chars().count())
+                        } else {
+                            value
+                        };
+                        let before: String = shown.chars().take(c).collect();
+                        if *kind == ControlKind::TextArea {
+                            let line = before.matches('\n').count();
+                            let col = before.rsplit('\n').next().unwrap_or("");
+                            caret_at = Some((cx + face.text_width(&layout::latin1(col)) as f32, cy + line as f32 * s.line_height_px()));
+                        } else {
+                            let w = face.text_width(&layout::latin1(&before)) as f32;
+                            if w > cw - 2.0 {
+                                tx -= w - (cw - 2.0);
+                            }
+                            caret_at = Some((tx + w, ty));
+                        }
+                    }
                     for (i, l) in lines.iter().enumerate() {
                         let ly = if *kind == ControlKind::TextArea { cy + i as f32 * s.line_height_px() } else { ty };
                         self.text(tx, ly, &layout::latin1(l), font, face.size, color, s);
+                    }
+                    if let Some((x, y)) = caret_at {
+                        self.rect(x, y, 1.0, face.size as f32, s.color, 0.0, 0.0, 0);
                     }
                     self.list.items.push(Item::Pop);
                     if *kind == ControlKind::Select {
@@ -283,7 +378,7 @@ impl Painter<'_> {
 
 /// Paint a laid-out document.
 pub fn paint(root: &LayoutBox, env: &Env) -> DisplayList {
-    let mut p = Painter { env, list: DisplayList::default() };
+    let mut p = Painter { env, list: DisplayList::default(), in_fixed: false };
     p.list.width = env.viewport.0;
     p.paint_box(root);
     p.list.height = p.list.height.ceil();

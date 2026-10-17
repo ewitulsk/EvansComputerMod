@@ -34,6 +34,12 @@ public final class BrowserTests {
         TestDriver.scenario(h, NS, BrowserScenarios.ALL.get("browser_phone"), true);
     }
 
+    /** A Python CGI guestbook and a Lua web.serve guestbook: forms, POST, 303, cookies; control: an empty form refused. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".form")
+    public static void browser_form(GameTestHelper h) {
+        TestDriver.scenario(h, NS, BrowserScenarios.ALL.get("browser_form"), true);
+    }
+
     private BrowserTests() {}
 }
 //?}

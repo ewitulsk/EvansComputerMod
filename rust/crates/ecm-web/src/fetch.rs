@@ -63,6 +63,10 @@ pub trait Transport {
     fn list_dir(&mut self, _path: &str) -> Option<Vec<(String, bool)>> {
         None
     }
+    /// Write a file (downloads), making its folder. `Err` says why.
+    fn save_file(&mut self, path: &str, _data: &[u8]) -> Result<(), FetchError> {
+        Err(FetchError::Io(format!("can't save {path} here")))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

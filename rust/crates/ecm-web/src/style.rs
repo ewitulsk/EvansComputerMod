@@ -60,6 +60,11 @@ pub enum Display {
     Flex,
     InlineFlex,
     ListItem,
+    Table,
+    TableRowGroup,
+    TableRow,
+    TableCell,
+    TableCaption,
 }
 
 impl Display {
@@ -247,6 +252,19 @@ pub struct Style {
     pub overflow: Overflow,
     pub opacity: f32,
     pub text_indent: f32,
+    /// None = auto.
+    pub z_index: Option<i32>,
+    /// Inherited: the gap between table cells.
+    pub border_spacing: f32,
+    /// Table cells: top, middle or bottom.
+    pub vertical_align: VAlign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VAlign {
+    Top,
+    Middle,
+    Bottom,
 }
 
 impl Style {
@@ -298,6 +316,9 @@ impl Style {
             overflow: Overflow::Visible,
             opacity: 1.0,
             text_indent: 0.0,
+            z_index: None,
+            border_spacing: 0.0,
+            vertical_align: VAlign::Top,
         }
     }
 
@@ -317,6 +338,7 @@ impl Style {
         s.text_transform = self.text_transform;
         s.underline = self.underline;
         s.line_through = self.line_through;
+        s.border_spacing = self.border_spacing;
         s
     }
 
@@ -378,7 +400,7 @@ fn css_colour(c: u32) -> String {
 pub fn ua_sheet(ua: &UaColors) -> Stylesheet {
     let src = format!(
         "html, body, div, section, header, footer, nav, main, article, aside, p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, \
-         blockquote, form, hr, address, figure, figcaption, fieldset, legend, dl, dt, dd, table, thead, tbody, tfoot, caption, \
+         blockquote, form, hr, address, figure, figcaption, fieldset, legend, dl, dt, dd, \
          center, details, summary, menu, dir, listing, xmp, plaintext {{ display: block }}
          head, title, style, script, meta, link, base, template, noscript, iframe, video, audio, canvas, object, embed, svg, \
          datalist, param, source, track, map, area {{ display: none }}
@@ -409,15 +431,19 @@ pub fn ua_sheet(ua: &UaColors) -> Stylesheet {
          center {{ text-align: center }}
          a:link {{ color: {link}; text-decoration: underline }}
          mark {{ background-color: #ffe066; color: #000000 }}
-         table {{ margin: 4px 0 }}
-         tr {{ display: flex }}
-         td, th {{ display: block; flex: 1 1 0; padding: 2px 4px }}
-         caption {{ text-align: center }}
+         table {{ display: table; border-spacing: 2px; margin: 4px 0 }}
+         thead, tbody, tfoot {{ display: table-row-group }}
+         tr {{ display: table-row }}
+         td, th {{ display: table-cell; padding: 2px 4px; vertical-align: middle }}
+         th {{ text-align: center }}
+         caption {{ display: table-caption; text-align: center }}
          img {{ display: inline-block }}
          input, select, textarea, button {{ display: inline-block; border: 1px solid {border}; padding: 2px 4px; \
             background-color: {surface}; color: {text}; border-radius: 2px }}
          button, input[type=submit], input[type=button], input[type=reset] {{ background-color: {button} }}
          input[type=hidden] {{ display: none }}
+         input:focus, textarea:focus, select:focus {{ border-color: {link} }}
+         input[type=checkbox], input[type=radio] {{ padding: 0 }}
          textarea {{ white-space: pre-wrap; font-family: monospace }}
          fieldset {{ border: 1px solid {border}; padding: 4px 8px; margin: 4px 0 }}",
         border = css_colour(ua.border),
@@ -634,6 +660,9 @@ fn copy_prop(s: &mut Style, name: &str, src: &Style) {
         "overflow" => s.overflow = src.overflow,
         "opacity" => s.opacity = src.opacity,
         "text-indent" => s.text_indent = src.text_indent,
+        "z-index" => s.z_index = src.z_index,
+        "border-spacing" | "border-collapse" => s.border_spacing = src.border_spacing,
+        "vertical-align" => s.vertical_align = src.vertical_align,
         _ => {}
     }
 }
@@ -642,7 +671,7 @@ const SIDE_NAMES: [&str; 4] = ["top", "right", "bottom", "left"];
 
 const INHERITED: &[&str] = &[
     "color", "font-size", "font-family", "font-weight", "font-style", "text-align", "line-height", "white-space", "list-style-type",
-    "visibility", "text-transform",
+    "visibility", "text-transform", "border-spacing", "border-collapse",
 ];
 
 fn apply(s: &mut Style, d: &Decl, cx: &Ctx) {
@@ -763,9 +792,13 @@ fn apply(s: &mut Style, d: &Decl, cx: &Ctx) {
         "display" => {
             s.display = match lower.as_str() {
                 "none" => Display::None,
-                "block" | "table" | "table-cell" | "table-caption" | "table-row-group" | "table-header-group" | "table-footer-group"
-                | "grid" | "flow-root" | "run-in" => Display::Block,
-                "table-row" | "flex" => Display::Flex,
+                "block" | "grid" | "flow-root" | "run-in" => Display::Block,
+                "table" => Display::Table,
+                "table-row-group" | "table-header-group" | "table-footer-group" => Display::TableRowGroup,
+                "table-row" => Display::TableRow,
+                "table-cell" => Display::TableCell,
+                "table-caption" => Display::TableCaption,
+                "flex" => Display::Flex,
                 "inline" | "contents" => Display::Inline,
                 "inline-block" | "inline-table" | "inline-grid" => Display::InlineBlock,
                 "inline-flex" => Display::InlineFlex,
@@ -939,6 +972,24 @@ fn apply(s: &mut Style, d: &Decl, cx: &Ctx) {
         "text-indent" => {
             if let Some(l) = len(v) {
                 s.text_indent = l.px;
+            }
+        }
+        "z-index" => s.z_index = lower.parse::<i32>().ok(),
+        "border-spacing" => {
+            if let Some(l) = css::components(v).first().and_then(|c| len(c)) {
+                s.border_spacing = l.px.max(0.0);
+            }
+        }
+        "border-collapse" => {
+            if lower == "collapse" {
+                s.border_spacing = 0.0;
+            }
+        }
+        "vertical-align" => {
+            s.vertical_align = match lower.as_str() {
+                "middle" => VAlign::Middle,
+                "bottom" | "text-bottom" => VAlign::Bottom,
+                _ => VAlign::Top,
             }
         }
         _ => {}
