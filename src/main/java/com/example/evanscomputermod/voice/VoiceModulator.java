@@ -6,6 +6,12 @@ package com.example.evanscomputermod.voice;
  * analogue two-way radio does it.
  *
  * <ul>
+ *   <li><b>Mic ALC</b>: first, like every two-way radio's microphone amplifier,
+ *       an automatic level control brings speech up to full modulation (up to
+ *       +30 dB for a quiet voice, fast attack, slow release), so a normal
+ *       voice deviates the carrier properly instead of sitting in the noise.
+ *       Below {@link Alc#NOISE_FLOOR} it stops adding gain, so room hiss
+ *       isn't pumped up between words.</li>
  *   <li><b>FM</b>: the audio is band-limited (3 kHz for a narrow channel,
  *       15 kHz for broadcast), pre-emphasised (75 µs, matched to the
  *       receivers' de-emphasis), clipped at full deviation and integrated into
@@ -27,6 +33,7 @@ public final class VoiceModulator {
     private final int iqRate;
     private final double deviationHz;
 
+    private final Alc alc;
     private final Biquad lowPass1, lowPass2;
     private final double preAlpha;
     private double prevAudio;
@@ -46,6 +53,7 @@ public final class VoiceModulator {
         this.deviationHz = deviationHz;
         double cutoff = mode == Mode.AM ? 4000 : deviationHz > 20_000 ? 15_000 : 3000;
         cutoff = Math.min(cutoff, audioRate * 0.45);
+        alc = new Alc(audioRate);
         lowPass1 = Biquad.lowPass(cutoff, audioRate);
         lowPass2 = Biquad.lowPass(cutoff, audioRate);
         // Inverse of the receivers' de-emphasis y += (x - y)·α at the audio rate.
@@ -62,7 +70,7 @@ public final class VoiceModulator {
         float[] iq = new float[2 * audio.length * up];
         int k = 0;
         for (float a : audio) {
-            double x = lowPass2.step(lowPass1.step(a));
+            double x = lowPass2.step(lowPass1.step(alc.step(a)));
             double v;
             if (mode == Mode.FM) {
                 double pre = (x - (1 - preAlpha) * prevAudio) / preAlpha;
@@ -89,6 +97,42 @@ public final class VoiceModulator {
             prevSample = v;
         }
         return iq;
+    }
+
+    /**
+     * Microphone automatic level control: a peak follower (instant attack, {@link #RELEASE_S} release) sets a
+     * gain that brings the peaks to {@link #TARGET}, at most {@link #MAX_GAIN}; the gain itself moves down fast
+     * and up slowly so speech doesn't pump.
+     */
+    public static final class Alc {
+        /** Peak level speech is brought to. */
+        public static final double TARGET = 0.8;
+        /** Most gain: +30 dB. */
+        public static final double MAX_GAIN = 31.6;
+        /** Below this peak level (about -46 dBFS, room hiss) no more gain is added. */
+        public static final double NOISE_FLOOR = 0.005;
+        static final double RELEASE_S = 0.4;
+
+        private final double release, rise;
+        private double env;
+        private double gain = 1;
+
+        public Alc(int rate) {
+            release = Math.exp(-1 / (rate * RELEASE_S));
+            rise = 1 - Math.exp(-1 / (rate * 0.15));
+        }
+
+        public double step(double x) {
+            double level = Math.abs(x);
+            env = level > env ? level : env * release;
+            double want = Math.max(0.25, Math.min(MAX_GAIN, TARGET / Math.max(env, NOISE_FLOOR)));
+            gain = want < gain ? want : gain + (want - gain) * rise;
+            return Math.max(-1, Math.min(1, x * gain));
+        }
+
+        public double gain() {
+            return gain;
+        }
     }
 
     /** A second-order low-pass section (RBJ cookbook, Q = 0.707). */

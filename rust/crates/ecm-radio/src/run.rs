@@ -472,6 +472,8 @@ pub fn station_live(a: &cli::StationArgs, dev: &str) -> Result<(), String> {
     let block = audio_rate as usize / 20; // 50 ms
     let total = a.duration.map(|s| (s * audio_rate as f64).round() as usize);
     let mut sent = 0usize;
+    // Like a radio's mic amplifier: speech up to full modulation, whatever the microphone's level.
+    let mut alc = crate::audio::MicAlc::new(audio_rate as f32);
     mic.flush_queue().map_err(|e| e.to_string())?;
     loop {
         let want = match total {
@@ -484,7 +486,8 @@ pub fn station_live(a: &cli::StationArgs, dev: &str) -> Result<(), String> {
             break;
         }
         sent += samples.len();
-        let x: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        let mut x: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        alc.process(&mut x);
         if let Buf::C(iq) = chain.process(Buf::R(x))? {
             out.send(&iq)?;
         }

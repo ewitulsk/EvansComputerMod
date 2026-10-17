@@ -189,6 +189,9 @@ public final class VoiceScenarios {
                 .await(r -> listen(r, 700, true, 80), "the talker talks for four seconds", 20_000)
                 .mutate(r -> check(r, "talk", true), "the listener's radio plays the talker's 700 Hz voice")
                 .mutate(VoiceScenarios::checkHalfDuplex, "the talker's own radio played nothing while it talked (half duplex)")
+                .note("The talker speaks quietly (-30 dBFS): the radio's mic ALC still modulates fully")
+                .await(r -> listen(r, 700, true, 60, 0.0316), "the talker talks quietly for three seconds", 20_000)
+                .mutate(r -> check(r, "quiet", true), "the listener hears the quiet voice at a normal level")
                 .note("Control: the listener tunes to the next channel, 462.5875 MHz, while the talker keeps talking")
                 .mutate(r -> tune(r, listener(r), OFF_HZ), "the listener tunes to 462.5875 MHz")
                 .await(r -> listen(r, 700, true, 60), "the talker talks for three seconds", 20_000)
@@ -228,6 +231,11 @@ public final class VoiceScenarios {
      * captures), sent through the server's voice packet handler as the client would.
      */
     static void talk(ScenarioRun r, ScenarioPlayer p, double hz, boolean talkKey) {
+        talk(r, p, hz, talkKey, 0.5);
+    }
+
+    /** {@link #talk} at a given loudness (peak, 0..1 of full scale). */
+    static void talk(ScenarioRun r, ScenarioPlayer p, double hz, boolean talkKey, double amplitude) {
         ServerPlayer sp = p.entity();
         double[] st = PHASE.computeIfAbsent(r, k -> new java.util.concurrent.ConcurrentHashMap<>())
                 .computeIfAbsent(sp.getStringUUID(), k -> new double[] {0, 0, System.nanoTime()});
@@ -237,7 +245,7 @@ public final class VoiceScenarios {
         st[2] = now;
         short[] pcm = new short[n];
         for (int i = 0; i < n; i++) {
-            pcm[i] = (short) Math.round(Math.sin(st[0]) * 0.5 * 32767);
+            pcm[i] = (short) Math.round(Math.sin(st[0]) * amplitude * 32767);
             st[0] += 2 * Math.PI * hz / VoicePackets.VOICE_RATE;
         }
         ImaAdpcm enc = ENCODERS.computeIfAbsent(sp.getStringUUID(), k -> new ImaAdpcm());
@@ -320,10 +328,14 @@ public final class VoiceScenarios {
      * the listener's radio played at {@code hz} to the tally; null after {@code ticks} ticks.
      */
     static String listen(ScenarioRun r, double hz, boolean talking, int ticks) {
+        return listen(r, hz, talking, ticks, 0.5);
+    }
+
+    static String listen(ScenarioRun r, double hz, boolean talking, int ticks, double amplitude) {
         ScenarioPlayer talker = r.player(), lis = listener(r);
         if (talking) {
             VoiceServer.onTalk(talker.entity(), true);
-            talk(r, talker, hz, true);
+            talk(r, talker, hz, true, amplitude);
         }
         HandheldServer.tickPlayer(talker.entity());
         HandheldServer.tickPlayer(lis.entity());
