@@ -25,6 +25,7 @@ members = [
     "crates/ecm-apps",
     "crates/ecm-apps-ui",
     "crates/ecm-web",
+    "crates/ecm-js",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -149,6 +150,7 @@ ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
 ecm-apps = { path = "crates/ecm-apps" }
 ecm-web = { path = "crates/ecm-web" }
+ecm-js = { path = "crates/ecm-js" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

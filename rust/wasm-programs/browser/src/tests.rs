@@ -55,11 +55,11 @@ fn sent_texts(mock: &MockConnection) -> String {
 }
 
 fn title(b: &BrowserApp<Net>) -> String {
-    b.app.core.window(b.window).unwrap().title.clone()
+    b.app.borrow().core.window(b.window).unwrap().title.clone()
 }
 
 fn hit(b: &BrowserApp<Net>, id: &str) -> u32 {
-    b.app.core.window(b.window).unwrap().hit_id_of(id).unwrap_or_else(|| panic!("no widget {id}"))
+    b.app.borrow().core.window(b.window).unwrap().hit_id_of(id).unwrap_or_else(|| panic!("no widget {id}"))
 }
 
 fn click(b: &mut BrowserApp<Net>, mock: &MockConnection, id: &str) {
@@ -88,7 +88,7 @@ fn click_text(b: &mut BrowserApp<Net>, mock: &MockConnection, t: &str) {
         let (x, y) = pos.unwrap_or_else(|| panic!("no {t:?} on the page"));
         (x, y - m.scroll as i32)
     };
-    let r = b.app.core.window(b.window).unwrap().rect_of("page").unwrap();
+    let r = b.app.borrow().core.window(b.window).unwrap().rect_of("page").unwrap();
     let h = hit(b, "page");
     mock.push(&samples::click(h, r.x + x, r.y + y));
     steps(b);
@@ -114,9 +114,9 @@ fn start_page_then_typed_address_then_a_link_and_back() {
     assert_eq!(b.model.borrow().status, 200);
     click_text(&mut b, &mock, "Tech Village 2");
     assert_eq!(title(&b), "Tech Village 2 - AS 65002 - Browser");
-    assert_eq!(b.fetcher.transport.log.last().unwrap(), "100.66.0.10:80 /");
+    assert_eq!(b.fetcher.borrow().transport.log.last().unwrap(), "100.66.0.10:80 /");
     // The address bar follows.
-    assert_eq!(b.app.core.window(1).unwrap().state("url").unwrap().text, "http://100.66.0.10/");
+    assert_eq!(b.app.borrow().core.window(1).unwrap().state("url").unwrap().text, "http://100.66.0.10/");
     click(&mut b, &mock, "back");
     assert_eq!(title(&b), "Tech Village 1 - AS 65001 - Browser");
     click(&mut b, &mock, "forward");
@@ -139,7 +139,8 @@ fn server_404_page_is_shown() {
 #[test]
 fn phone_layout_has_a_bottom_bar() {
     let (b, _mock) = start(ring(), 240, 400, Some("100.65.0.10"));
-    let w = b.app.core.window(1).unwrap();
+    let app = b.app.borrow();
+    let w = app.core.window(1).unwrap();
     let url = w.rect_of("url").unwrap();
     let page = w.rect_of("page").unwrap();
     let back = w.rect_of("back").unwrap();
@@ -210,7 +211,7 @@ fn local_site_with_a_stylesheet_and_without() {
         assert!(xs[1] - xs[0] >= 20, "flex gap between the links: {xs:?}");
         assert!(list.items.iter().any(|i| matches!(i, ecm_web::paint::Item::Rect { fill: 0x102030ff, .. })));
     }
-    assert!(b.fetcher.transport.log.contains(&"file /home/site/style.css".to_string()));
+    assert!(b.fetcher.borrow().transport.log.contains(&"file /home/site/style.css".to_string()));
     // Control: without the stylesheet the page still shows, unstyled.
     let mut net2 = net;
     net2.files.remove("/home/site/style.css");
@@ -248,7 +249,7 @@ fn anchors_scroll_within_the_page() {
     let (mut b, mock) = start(net, 640, 300, Some("10.0.0.1"));
     click_text(&mut b, &mock, "to the end");
     assert!(b.model.borrow().scroll > 500.0);
-    assert_eq!(b.fetcher.transport.log.len(), 1, "no new fetch for #end");
+    assert_eq!(b.fetcher.borrow().transport.log.len(), 1, "no new fetch for #end");
     assert_eq!(b.model.borrow().history.len(), 2);
 }
 
@@ -284,9 +285,9 @@ fn hotkeys_and_reload() {
     mock.push(&[Message::Hotkey(proto::Hotkey { slot: 1, down: true }), Message::Hotkey(proto::Hotkey { slot: 1, down: false })]);
     steps(&mut b);
     assert_eq!(title(&b), "Tech Village 1 - AS 65001 - Browser");
-    let n = b.fetcher.transport.log.len();
+    let n = b.fetcher.borrow().transport.log.len();
     click(&mut b, &mock, "reload");
-    assert_eq!(b.fetcher.transport.log.len(), n + 1);
+    assert_eq!(b.fetcher.borrow().transport.log.len(), n + 1);
 }
 
 // ------------------------------------------------------------------ phase 2: forms, pictures, menu, downloads
@@ -300,7 +301,7 @@ fn click_id(b: &mut BrowserApp<Net>, mock: &MockConnection, id: &str) {
         let r = m.cache.as_ref().unwrap().rendered.list.node_rect(n).unwrap_or_else(|| panic!("#{id} not drawn"));
         ((r.x + r.w / 2.0) as i32, (r.y + r.h / 2.0 - m.scroll) as i32)
     };
-    let r = b.app.core.window(b.window).unwrap().rect_of("page").unwrap();
+    let r = b.app.borrow().core.window(b.window).unwrap().rect_of("page").unwrap();
     let h = hit(b, "page");
     mock.push(&samples::click(h, r.x + x, r.y + y));
     steps(b);
@@ -346,20 +347,21 @@ fn typing_into_a_form_and_posting_it() {
     click_id(&mut b, &mock, "pub");
     click_id(&mut b, &mock, "mood");
     // The select's popup menu opens (a popup surface beside the window).
-    assert_eq!(b.app.core.windows.len(), 2, "a popup for the select");
+    assert_eq!(b.app.borrow().core.windows.len(), 2, "a popup for the select");
     {
         let mut m = b.model.borrow_mut();
         let sel = m.page.as_ref().unwrap().dom.by_id("mood").unwrap();
         m.choose(sel, 1);
     }
-    b.app.core.mark_all_dirty();
+    b.app.borrow_mut().core.mark_all_dirty();
     steps(&mut b);
     click_id(&mut b, &mock, "send");
     assert_eq!(title(&b), "Thanks - Browser");
-    let post = b.fetcher.transport.requests.iter().find(|r| r.starts_with("POST /sign")).expect("a POST");
+    let fetcher = b.fetcher.borrow();
+    let post = fetcher.transport.requests.iter().find(|r| r.starts_with("POST /sign")).expect("a POST");
     assert!(post.ends_with("name=Pat&msg=hi%0D%0Athere&public=yes&mood=busy"), "{post}");
     // The cookie the server set goes back with the next request to it.
-    let thanks = b.fetcher.transport.requests.iter().find(|r| r.starts_with("GET /thanks")).unwrap();
+    let thanks = fetcher.transport.requests.iter().find(|r| r.starts_with("GET /thanks")).unwrap();
     assert!(thanks.contains("Cookie: who=Pat"), "{thanks}");
 }
 
@@ -370,7 +372,7 @@ fn enter_in_a_field_sends_a_get_form() {
     type_text(&mut b, &mock, "fiber tap");
     key(&mut b, &mock, 0x28);
     assert_eq!(title(&b), "Results - Browser");
-    assert_eq!(b.app.core.window(1).unwrap().state("url").unwrap().text, "http://10.0.0.1/search?q=fiber+tap");
+    assert_eq!(b.app.borrow().core.window(1).unwrap().state("url").unwrap().text, "http://10.0.0.1/search?q=fiber+tap");
 }
 
 #[test]
@@ -442,7 +444,7 @@ fn other_files_are_downloads() {
         b"HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\n\r\nPK\x03\x04",
     );
     let (b, _mock) = start(net, 640, 400, Some("10.0.0.1/apps/dev.ecm.x-1.0.0.ecmpkg"));
-    assert_eq!(b.fetcher.transport.saved, vec![("/home/Downloads/dev.ecm.x-1.0.0.ecmpkg".to_string(), b"PK\x03\x04".to_vec())]);
+    assert_eq!(b.fetcher.borrow().transport.saved, vec![("/home/Downloads/dev.ecm.x-1.0.0.ecmpkg".to_string(), b"PK\x03\x04".to_vec())]);
     assert_eq!(title(&b), "Downloaded - Browser");
     assert!(page_text(&b).contains("pkg install /home/Downloads/dev.ecm.x-1.0.0.ecmpkg"));
 }
@@ -478,7 +480,7 @@ fn a_click_right_after_typing_in_the_same_batch() {
         };
         (c("name"), c("q"))
     };
-    let r = b.app.core.window(b.window).unwrap().rect_of("page").unwrap();
+    let r = b.app.borrow().core.window(b.window).unwrap().rect_of("page").unwrap();
     let h = hit(&b, "page");
     let mut batch = samples::click(h, r.x + at_name.0, r.y + at_name.1);
     batch.push(Message::Text(proto::Text { surface: 1, text: "Pat".into() }));
@@ -490,4 +492,134 @@ fn a_click_right_after_typing_in_the_same_batch() {
     let dom = &m.page.as_ref().unwrap().dom;
     assert_eq!(ecm_web::forms::value(dom, dom.by_id("name").unwrap()), "Pat");
     assert_eq!(ecm_web::forms::value(dom, dom.by_id("q").unwrap()), "tap");
+}
+
+// ------------------------------------------------------------------ phase 3: page scripts
+
+const COUNTER: &str = r#"<html><head><title>Counter</title></head><body>
+<p id=count>0</p><button id=plus>+1</button><button id=load>Load</button><button id=hang>Hang</button>
+<p id=news>-</p><a id=away href=/away>away</a>
+<form id=f action=/search><input id=q name=q><button id=go>Go</button></form>
+<script>
+var n = 0;
+document.getElementById('plus').addEventListener('click', function () { n++; document.getElementById('count').textContent = n; });
+document.getElementById('load').onclick = function () {
+  fetch('data.json').then(function (r) { return r.json(); }).then(function (j) { document.getElementById('news').textContent = j.news; });
+};
+document.getElementById('hang').addEventListener('click', function () { while (true) {} });
+document.getElementById('away').addEventListener('click', function (e) { if (n < 2) { e.preventDefault(); console.log('not yet'); } });
+document.getElementById('f').addEventListener('submit', function (e) { if (!document.getElementById('q').value) { e.preventDefault(); document.getElementById('news').textContent = 'type something'; } });
+document.addEventListener('keydown', function (e) { if (e.key === 'k') document.getElementById('news').textContent = 'key k'; });
+</script></body></html>"#;
+
+fn counter_net() -> Net {
+    Net::default()
+        .page("10.0.0.1:80 /", "200 OK", "text/html", COUNTER)
+        .page("10.0.0.1:80 /data.json", "200 OK", "application/json", r#"{"news": "the mast is up"}"#)
+        .page("10.0.0.1:80 /away", "200 OK", "text/html", "<title>Away</title>")
+        .page("10.0.0.1:80 /search?q=tap", "200 OK", "text/html", "<title>Found</title>")
+}
+
+fn text_by_id(b: &BrowserApp<Net>, id: &str) -> String {
+    let m = b.model.borrow();
+    let d = &m.page.as_ref().unwrap().dom;
+    d.text_content(d.by_id(id).unwrap())
+}
+
+#[test]
+fn a_counter_a_fetch_and_a_runaway_script() {
+    let (mut b, mock) = start(counter_net(), 640, 400, Some("10.0.0.1"));
+    assert!(b.script.is_some(), "the page has scripts");
+    click_id(&mut b, &mock, "plus");
+    click_id(&mut b, &mock, "plus");
+    assert_eq!(text_by_id(&b, "count"), "2");
+    // The page shown follows the document the script changed.
+    assert!(b.model.borrow().cache.as_ref().unwrap().rendered.list.items.iter().any(|i| matches!(i, ecm_web::paint::Item::Text { text, .. } if text == "2")));
+    click_id(&mut b, &mock, "load");
+    assert_eq!(text_by_id(&b, "news"), "the mast is up");
+    assert!(b.fetcher.borrow().transport.log.contains(&"10.0.0.1:80 /data.json".to_string()));
+    // while (true) {}: stopped by the budget; the page keeps working.
+    let t = std::time::Instant::now();
+    click_id(&mut b, &mock, "hang");
+    assert!(t.elapsed() < std::time::Duration::from_secs(3));
+    assert!(b.model.borrow().console.iter().any(|l| l.contains("ran too long")), "{:?}", b.model.borrow().console);
+    click_id(&mut b, &mock, "plus");
+    assert_eq!(text_by_id(&b, "count"), "3");
+    // Keys reach the page's listeners.
+    key(&mut b, &mock, 0x0E);
+    assert_eq!(text_by_id(&b, "news"), "key k");
+}
+
+#[test]
+fn scripts_can_stop_links_and_forms() {
+    let (mut b, mock) = start(counter_net(), 640, 400, Some("10.0.0.1"));
+    click_id(&mut b, &mock, "away");
+    assert_eq!(title(&b), "Counter - Browser", "the click listener prevented the link");
+    assert!(b.model.borrow().console.contains(&"not yet".to_string()));
+    click_id(&mut b, &mock, "go");
+    assert_eq!(text_by_id(&b, "news"), "type something", "the submit listener refused the empty form");
+    assert_eq!(title(&b), "Counter - Browser");
+    click_id(&mut b, &mock, "q");
+    type_text(&mut b, &mock, "tap");
+    key(&mut b, &mock, 0x28);
+    assert_eq!(title(&b), "Found - Browser", "Enter: keydown, submit, then the form is sent");
+    b.model.borrow_mut().pending = Some(Nav::Back);
+    steps(&mut b);
+    click_id(&mut b, &mock, "plus");
+    click_id(&mut b, &mock, "plus");
+    click_id(&mut b, &mock, "away");
+    assert_eq!(title(&b), "Away - Browser", "allowed now: the default happens");
+}
+
+#[test]
+fn timers_storage_and_confirm() {
+    let dir = std::env::temp_dir().join(format!("ecm-browser-js-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let dir = dir.to_string_lossy().replace('\\', "/");
+    let html = r#"<title>Timers</title><p id=t>waiting</p><p id=v></p><p id=c></p><script>
+setTimeout(function () { document.getElementById('t').textContent = 'fired'; }, 30);
+var visits = +(localStorage.getItem('visits') || 0) + 1; localStorage.setItem('visits', visits);
+document.getElementById('v').textContent = 'visit ' + visits;
+document.getElementById('c').textContent = confirm('Really?') ? 'yes' : 'no';
+</script>"#;
+    let net = Net::default().page("10.0.0.1:80 /", "200 OK", "text/html", html);
+    let open = |dir: &str| {
+        let mock = MockConnection::new();
+        mock.state.borrow_mut().idle_timeouts = true;
+        mock.push(&[samples::welcome(false)]);
+        let b = BrowserApp::with_settings(Box::new(mock.clone()), net.clone(), None, Some(dir.to_string()), "about:home").unwrap();
+        b.model.borrow_mut().dialog_auto = Some(false);
+        b.model.borrow_mut().go_input("10.0.0.1");
+        mock.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w: 640, h: 400, states: proto::window_states::ACTIVATED })]);
+        (b, mock)
+    };
+    let (mut b, _mock) = open(&dir);
+    for _ in 0..4 {
+        b.step(0);
+    }
+    assert_eq!(text_by_id(&b, "c"), "no", "confirm answered Cancel");
+    assert_eq!(text_by_id(&b, "v"), "visit 1");
+    assert_eq!(text_by_id(&b, "t"), "waiting");
+    let t = std::time::Instant::now();
+    while text_by_id(&b, "t") == "waiting" && t.elapsed() < std::time::Duration::from_secs(2) {
+        b.step(5);
+    }
+    assert_eq!(text_by_id(&b, "t"), "fired");
+    // localStorage is kept per host in the app's data folder.
+    let (mut b2, _m2) = open(&dir);
+    for _ in 0..4 {
+        b2.step(0);
+    }
+    assert_eq!(text_by_id(&b2, "v"), "visit 2");
+}
+
+#[test]
+fn the_dialog_waits_for_the_player() {
+    let (mut b, mock) = start(guest_net(), 640, 400, Some("10.0.0.1"));
+    b.model.borrow_mut().dialog = Some(crate::model::Dialog { text: "Delete all entries?".into(), ask: true });
+    b.app.borrow_mut().core.mark_all_dirty();
+    steps(&mut b);
+    assert!(sent_texts(&mock).contains("Delete all entries?"));
+    click(&mut b, &mock, "dialog_cancel");
+    assert_eq!(b.model.borrow().dialog_answer, Some(false));
 }

@@ -1,15 +1,27 @@
 //! [`BrowserApp`]: the window, the event loop and the loading between turns.
 //!
-//! Handlers only change the [`Model`]; after each loop turn the driver loads
-//! what was asked for: it shows "Loading ..." first (the fetch blocks), then
-//! fetches the page (or sends a form) and its style sheets through the
-//! [`Fetcher`], and shows the page, an error page, a text file, or saves a
-//! download. Pictures the page shows are fetched one per turn afterwards,
-//! decoded and uploaded as image resources. The settings (home page,
-//! bookmarks, visits) are saved in the app's data folder.
+//! Handlers only change the [`Model`]; after each loop turn the driver does
+//! the rest:
+//!
+//! * page events (clicks, typing, keys, form submits) go to the page's
+//!   scripts first; their defaults (follow the link, send the form) happen
+//!   when no listener called `preventDefault()`;
+//! * what was asked for is loaded: "Loading ..." first (the fetch blocks),
+//!   then the page (or a form's answer) and its style sheets and scripts
+//!   through the [`Fetcher`], shown as the page, an error page, a text file,
+//!   or saved as a download;
+//! * the page's timers and animation frames run (`ecm-js`, under its time
+//!   budget), and a document they changed is rendered again, once;
+//! * pictures are fetched one per turn, decoded and uploaded;
+//! * the settings (home page, bookmarks, visits) and each host's
+//!   `localStorage` are saved in the app's data folder.
+//!
+//! A script's `alert` / `confirm` shows a dialog in the window and runs the
+//! UI until the player answers (the page's script waits, as in a browser).
 
-use crate::model::{Img, Model, Nav, HOME};
+use crate::model::{After, Dialog, Img, Model, Nav, PageEvent, HOME};
 use crate::{pages, view};
+use ecm_js::{Fetched, Script};
 use ecm_ui::conn::{ConnError, Connection};
 use ecm_ui::json::Json;
 use ecm_ui::{App, Ctx};
@@ -17,16 +29,24 @@ use ecm_web::fetch::{FetchError, Fetcher, Response, Transport};
 use ecm_web::url::Scheme;
 use ecm_web::{Page, Url};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 /// Where downloads go.
 pub const DOWNLOADS: &str = "/home/Downloads";
+/// Animation frames run at most this often, ms.
+pub const FRAME_MS: u64 = 16;
 
-pub struct BrowserApp<T: Transport> {
-    pub app: App,
+pub struct BrowserApp<T: Transport + 'static> {
+    pub app: Rc<RefCell<App>>,
     pub model: Rc<RefCell<Model>>,
-    pub fetcher: Fetcher<T>,
+    pub fetcher: Rc<RefCell<Fetcher<T>>>,
     pub window: u32,
+    /// The page's scripts (None: the page has none).
+    pub script: Option<Script>,
+    /// When the scripts' next timer is due.
+    next_tick: Option<Instant>,
     /// The app's data folder (`ECM_APP_DATA`); None = settings aren't saved.
     data_dir: Option<String>,
 }
@@ -62,14 +82,24 @@ pub fn download_path(url: &Url) -> String {
     format!("{DOWNLOADS}/{}", if name.is_empty() { "download".into() } else { name })
 }
 
-impl<T: Transport> BrowserApp<T> {
+/// The `localStorage` file of a page's host (`file:` pages share one).
+fn storage_name(url: &Url) -> String {
+    let h = match url.scheme {
+        Scheme::Http => format!("{}_{}", url.host, url.port),
+        _ => "local".into(),
+    };
+    h.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect()
+}
+
+impl<T: Transport + 'static> BrowserApp<T> {
     /// Connect, open the window, and load `start` (an address as typed), the
-    /// restored page, or the home page. `data_dir` holds the settings;
-    /// `default_home` is the home page until one is set.
+    /// restored page, or the home page.
     pub fn new(conn: Box<dyn Connection>, transport: T, start: Option<&str>) -> Result<Self, ConnError> {
         Self::with_settings(conn, transport, start, None, HOME)
     }
 
+    /// [`BrowserApp::new`] with the data folder (settings, `localStorage`) and the
+    /// home page until one is set.
     pub fn with_settings(conn: Box<dyn Connection>, transport: T, start: Option<&str>, data_dir: Option<String>, default_home: &str) -> Result<Self, ConnError> {
         let mut app = App::with_connection(crate::APP_ID, conn)?;
         let mut m = Model { default_home: default_home.to_string(), ..Model::default() };
@@ -108,20 +138,35 @@ impl<T: Transport> BrowserApp<T> {
             h3.borrow_mut().scroll_by(page);
             cx.invalidate();
         });
-        Ok(BrowserApp { app, model, fetcher: Fetcher::new(transport), window, data_dir })
+        Ok(BrowserApp {
+            app: Rc::new(RefCell::new(app)),
+            model,
+            fetcher: Rc::new(RefCell::new(Fetcher::new(transport))),
+            window,
+            script: None,
+            next_tick: None,
+            data_dir,
+        })
     }
 
-    /// One loop turn: draw, wait for input (not while a load waits), then load.
+    /// One loop turn: draw, wait for input (not while a load waits; until
+    /// the next timer), then load and run what is due.
     pub fn step(&mut self, timeout_ms: i32) -> bool {
         let busy = {
             let m = self.model.borrow();
-            m.pending.is_some() || !m.missing_images().is_empty()
+            m.pending.is_some() || !m.events.is_empty() || !m.missing_images().is_empty()
         };
-        if !self.app.step(if busy { 0 } else { timeout_ms }) {
+        let mut wait = if busy { 0 } else { timeout_ms };
+        if let Some(t) = self.next_tick {
+            let ms = t.saturating_duration_since(Instant::now()).as_millis() as i32;
+            wait = if wait < 0 { ms } else { wait.min(ms) };
+        }
+        let alive = self.app.borrow_mut().step(wait);
+        if !alive {
             return false;
         }
         self.process();
-        !self.app.core.is_closed()
+        !self.app.borrow().core.is_closed()
     }
 
     pub fn run(&mut self) {
@@ -130,23 +175,30 @@ impl<T: Transport> BrowserApp<T> {
 
     fn redraw(&mut self) {
         self.sync_window();
-        self.app.core.mark_all_dirty();
-        let _ = self.app.core.render();
+        let mut app = self.app.borrow_mut();
+        app.core.mark_all_dirty();
+        let _ = app.core.render();
+    }
+
+    fn mark_dirty(&self) {
+        self.app.borrow_mut().core.mark_all_dirty();
     }
 
     /// The title and the address bar follow the model.
     fn sync_window(&mut self) {
         let title = self.model.borrow().title();
-        self.app.core.set_title(self.window, &title);
+        let mut app = self.app.borrow_mut();
+        app.core.set_title(self.window, &title);
         let addr = self.model.borrow_mut().set_address.take();
         if let Some(a) = addr {
-            let mut cx = Ctx::new(&mut self.app.core, self.window);
+            let mut cx = Ctx::new(&mut app.core, self.window);
             cx.set_text("url", &a);
         }
     }
 
     /// The I/O between loop turns.
     pub fn process(&mut self) {
+        self.page_events();
         let nav = self.model.borrow_mut().pending.take();
         match nav {
             Some(Nav::Submit(s)) => self.submit(s),
@@ -158,9 +210,108 @@ impl<T: Transport> BrowserApp<T> {
             }
             None => {}
         }
+        self.run_timers();
         self.load_one_image();
         self.save_settings();
         self.sync_window();
+    }
+
+    /// Run `f` with the page moved into the scripts' host (see `ecm_js::Script`).
+    fn with_script<R>(&mut self, f: impl FnOnce(&mut Script, &mut Option<Page>) -> R) -> Option<R> {
+        let script = self.script.as_mut()?;
+        let mut page = self.model.borrow_mut().page.take();
+        let r = f(script, &mut page);
+        self.model.borrow_mut().page = page;
+        Some(r)
+    }
+
+    /// After the scripts ran: their changes, console, storage and navigation.
+    fn after_scripts(&mut self) {
+        let Some(script) = self.script.as_ref() else { return };
+        let dirty = script.take_dirty();
+        let (console, nav, storage) = {
+            let mut h = script.host.borrow_mut();
+            let console = h.console.clone();
+            let nav = h.navigate.take();
+            let storage = std::mem::take(&mut h.storage_dirty).then(|| h.storage.clone());
+            (console, nav, storage)
+        };
+        let mut m = self.model.borrow_mut();
+        if dirty {
+            m.changed();
+        }
+        if m.console.len() != console.len() || m.console.last() != console.last() {
+            m.console = console;
+        }
+        match nav {
+            Some(ecm_js::Nav::Go(u)) => {
+                if let Some(u) = Url::parse(&u) {
+                    m.go(u);
+                }
+            }
+            Some(ecm_js::Nav::Back) => m.pending = Some(Nav::Back),
+            Some(ecm_js::Nav::Forward) => m.pending = Some(Nav::Forward),
+            Some(ecm_js::Nav::Reload) => m.pending = Some(Nav::Reload),
+            None => {}
+        }
+        let host = m.page.as_ref().map(|p| storage_name(&p.url));
+        drop(m);
+        if let (Some(store), Some(dir), Some(host)) = (storage, &self.data_dir, host) {
+            let j = Json::Obj(store.into_iter().map(|(k, v)| (k, Json::Str(v))).collect());
+            let _ = std::fs::create_dir_all(format!("{dir}/storage"));
+            let _ = std::fs::write(format!("{dir}/storage/{host}.json"), j.to_string());
+        }
+        self.mark_dirty();
+    }
+
+    /// Page events to the scripts, then their defaults.
+    fn page_events(&mut self) {
+        let mut queue: std::collections::VecDeque<PageEvent> = std::mem::take(&mut self.model.borrow_mut().events).into();
+        if queue.is_empty() {
+            return;
+        }
+        while let Some(ev) = queue.pop_front() {
+            let prevented = self.with_script(|s, p| s.dispatch(p, ev.target, &ev.kind, &ev.key)).unwrap_or(false);
+            if prevented {
+                continue;
+            }
+            match ev.after {
+                After::Nothing => {}
+                After::Go(u) => self.model.borrow_mut().go(u),
+                After::Submit { form, submitter } => {
+                    if ev.kind == "submit" {
+                        self.model.borrow_mut().send_form(form, submitter);
+                    } else {
+                        // The `submit` event at the form, then the send.
+                        queue.push_front(PageEvent { target: form, kind: "submit".into(), key: String::new(), after: After::Submit { form, submitter } });
+                    }
+                }
+            }
+        }
+        if self.script.is_some() {
+            self.after_scripts();
+            self.schedule();
+        }
+    }
+
+    /// When the scripts' next timer or frame is due.
+    fn schedule(&mut self) {
+        let pending = self.script.as_ref().is_some_and(|s| s.pending());
+        if !pending {
+            self.next_tick = None;
+        } else if self.next_tick.is_none() {
+            self.next_tick = Some(Instant::now());
+        }
+    }
+
+    fn run_timers(&mut self) {
+        let Some(due) = self.next_tick else { return };
+        if Instant::now() < due {
+            return;
+        }
+        let next = self.with_script(|s, p| s.tick(p)).flatten();
+        self.next_tick = next.map(|ms| Instant::now() + Duration::from_millis((ms as u64).max(if ms <= 0.0 { FRAME_MS } else { 1 })));
+        self.after_scripts();
     }
 
     fn save_settings(&mut self) {
@@ -177,16 +328,16 @@ impl<T: Transport> BrowserApp<T> {
     /// Fetch, decode and upload one picture the page wants.
     fn load_one_image(&mut self) {
         let Some(url) = self.model.borrow().missing_images().into_iter().next() else { return };
-        let img = Url::parse(&url)
-            .and_then(|u| self.fetcher.get(&u).ok())
+        let resp = Url::parse(&url).and_then(|u| self.fetcher.borrow_mut().get(&u).ok());
+        let img = resp
             .filter(|r| r.status == 200)
             .and_then(|r| ecm_web::png::decode(&r.body).ok())
-            .and_then(|rgba| self.app.core.image_rgba(rgba.w as i32, rgba.h as i32, &rgba.px).ok().map(|resource| Img { w: rgba.w, h: rgba.h, resource }));
+            .and_then(|rgba| self.app.borrow_mut().core.image_rgba(rgba.w as i32, rgba.h as i32, &rgba.px).ok().map(|resource| Img { w: rgba.w, h: rgba.h, resource }));
         let mut m = self.model.borrow_mut();
         m.images.insert(url, img);
         m.changed();
         drop(m);
-        self.app.core.mark_all_dirty();
+        self.mark_dirty();
     }
 
     /// Show "Loading ..." for `url` before a blocking fetch.
@@ -202,6 +353,7 @@ impl<T: Transport> BrowserApp<T> {
 
     fn shown(&mut self, page: Page, status: u16, push: bool) {
         let shown = page.url.clone();
+        let scripts = self.collect_scripts(&page);
         {
             let mut m = self.model.borrow_mut();
             m.loading = None;
@@ -209,8 +361,73 @@ impl<T: Transport> BrowserApp<T> {
             m.visit(&shown, push);
             m.set_address = Some(shown.to_string());
         }
-        self.app.core.mark_all_dirty();
+        self.start_scripts(&shown, scripts);
+        self.mark_dirty();
         println!("browser: {status} {shown}");
+    }
+
+    /// A page's scripts in document order: (name, source). External ones are fetched.
+    fn collect_scripts(&mut self, page: &Page) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for n in page.dom.find_all("script") {
+            let ty = page.dom.attr(n, "type").unwrap_or("").to_ascii_lowercase();
+            if !(ty.is_empty() || ty.contains("javascript") || ty == "module") {
+                continue;
+            }
+            match page.dom.attr(n, "src") {
+                Some(src) => {
+                    let Some(u) = page.url.join(src) else { continue };
+                    let code = self.fetcher.borrow_mut().get(&u).ok().filter(|r| r.status == 200).map(|r| r.text());
+                    match code {
+                        Some(c) => out.push((u.to_string(), c)),
+                        None => out.push((u.to_string(), format!("console.error({:?})", format!("can't load the script {u}")))),
+                    }
+                }
+                None => out.push((format!("{}#script{}", page.url, out.len() + 1), page.dom.text_content(n))),
+            }
+        }
+        out
+    }
+
+    /// A new script runtime for the page shown, if it has scripts.
+    fn start_scripts(&mut self, url: &Url, scripts: Vec<(String, String)>) {
+        self.script = None;
+        self.next_tick = None;
+        if scripts.is_empty() {
+            return;
+        }
+        let script = match Script::new() {
+            Ok(s) => s,
+            Err(e) => {
+                self.model.borrow_mut().console.push(format!("[error] scripts can't run: {e}"));
+                return;
+            }
+        };
+        {
+            let mut h = script.host.borrow_mut();
+            h.viewport = self.model.borrow().view;
+            if let Some(dir) = &self.data_dir {
+                if let Some(Json::Obj(kv)) = std::fs::read_to_string(format!("{dir}/storage/{}.json", storage_name(url))).ok().and_then(|t| Json::parse(&t).ok()) {
+                    h.storage = kv.into_iter().filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string()))).collect::<BTreeMap<_, _>>();
+                }
+            }
+            let fetcher = self.fetcher.clone();
+            h.fetch = Some(Box::new(move |method, url, body| {
+                let mut f = fetcher.borrow_mut();
+                let r = match body {
+                    Some(b) => f.request(method, url, Some(("text/plain;charset=UTF-8", b.as_bytes()))),
+                    None => f.request(method, url, None),
+                };
+                r.map(|r| Fetched { status: r.status, content_type: r.content_type(), url: r.url.to_string(), body: r.text() }).map_err(|e| e.explain().0)
+            }));
+            let app = self.app.clone();
+            let model = self.model.clone();
+            h.modal = Some(Box::new(move |text, ask| modal(&app, &model, text, ask)));
+        }
+        self.script = Some(script);
+        self.with_script(|s, p| s.run_scripts(p, &scripts));
+        self.after_scripts();
+        self.schedule();
     }
 
     /// Load and show `url`.
@@ -227,7 +444,7 @@ impl<T: Transport> BrowserApp<T> {
             m.cache = None;
             m.set_address = Some(url.to_string());
             drop(m);
-            self.app.core.mark_all_dirty();
+            self.mark_dirty();
             return;
         }
         self.loading(&url);
@@ -238,8 +455,15 @@ impl<T: Transport> BrowserApp<T> {
     /// Send a form and show the answer.
     pub fn submit(&mut self, s: ecm_web::forms::Submission) {
         self.loading(&s.url);
-        let result = if s.post { self.fetcher.post_form(&s.url, s.body.as_deref().unwrap_or("")) } else { self.fetcher.get(&s.url) };
-        let (page, status) = self.answer(&s.url, &s.url, result);
+        let result = {
+            let mut f = self.fetcher.borrow_mut();
+            if s.post {
+                f.post_form(&s.url, s.body.as_deref().unwrap_or(""))
+            } else {
+                f.get(&s.url)
+            }
+        };
+        let (page, status) = self.answer(&s.url, result);
         self.shown(page, status, true);
     }
 
@@ -262,29 +486,31 @@ impl<T: Transport> BrowserApp<T> {
             }
             Scheme::File if url.path.ends_with('/') => {
                 let index = url.join("index.html").expect("index");
-                match self.fetcher.get(&index) {
-                    Ok(_) => self.fetch_http_or_file(&index, url),
-                    Err(_) => match self.fetcher.transport.list_dir(&url.file_path()) {
-                        Some(entries) => (Page::parse(url.clone(), &pages::folder(&url.to_string(), &entries)), 200),
-                        None => {
-                            let e = FetchError::NoFile(url.file_path());
-                            (Page::parse(url.clone(), &pages::error(&url.to_string(), &e)), 0)
+                let found = self.fetcher.borrow_mut().get(&index);
+                match found {
+                    Ok(r) => self.answer(url, Ok(r)),
+                    Err(_) => {
+                        let entries = self.fetcher.borrow_mut().transport.list_dir(&url.file_path());
+                        match entries {
+                            Some(entries) => (Page::parse(url.clone(), &pages::folder(&url.to_string(), &entries)), 200),
+                            None => {
+                                let e = FetchError::NoFile(url.file_path());
+                                (Page::parse(url.clone(), &pages::error(&url.to_string(), &e)), 0)
+                            }
                         }
-                    },
+                    }
                 }
             }
-            _ => self.fetch_http_or_file(url, url),
+            _ => {
+                let r = self.fetcher.borrow_mut().get(url);
+                self.answer(url, r)
+            }
         }
-    }
-
-    fn fetch_http_or_file(&mut self, url: &Url, asked: &Url) -> (Page, u16) {
-        let r = self.fetcher.get(url);
-        self.answer(url, asked, r)
     }
 
     /// The page for a fetch's result: HTML (with its style sheets), text, a
     /// download, or an error page.
-    fn answer(&mut self, _url: &Url, asked: &Url, result: Result<Response, FetchError>) -> (Page, u16) {
+    fn answer(&mut self, asked: &Url, result: Result<Response, FetchError>) -> (Page, u16) {
         match result {
             Ok(resp) => {
                 let mut final_url = resp.url.clone();
@@ -293,8 +519,8 @@ impl<T: Transport> BrowserApp<T> {
                 let attachment = resp.header("content-disposition").is_some_and(|d| d.to_ascii_lowercase().starts_with("attachment"));
                 let mut page = if resp.is_html() && !attachment {
                     let mut p = Page::parse(final_url, &resp.text());
-                    let fetcher = &mut self.fetcher;
-                    p.load_sheets(&mut |u| fetcher.get(u).ok().filter(|r| r.status == 200).map(|r| r.text()));
+                    let fetcher = self.fetcher.clone();
+                    p.load_sheets(&mut |u| fetcher.borrow_mut().get(u).ok().filter(|r| r.status == 200).map(|r| r.text()));
                     p
                 } else if (ct.starts_with("text/") || ct == "application/json") && !attachment {
                     Page::plain_text(final_url, &resp.text())
@@ -304,7 +530,8 @@ impl<T: Transport> BrowserApp<T> {
                 } else if resp.status == 200 && final_url.scheme == Scheme::Http {
                     // Anything else from a server is a download.
                     let path = download_path(&final_url);
-                    match self.fetcher.transport.save_file(&path, &resp.body) {
+                    let saved = self.fetcher.borrow_mut().transport.save_file(&path, &resp.body);
+                    match saved {
                         Ok(()) => Page::parse(final_url.clone(), &pages::downloaded(&final_url.to_string(), &path, resp.body.len(), &ct)),
                         Err(e) => Page::parse(final_url.clone(), &pages::error(&final_url.to_string(), &e)),
                     }
@@ -319,4 +546,37 @@ impl<T: Transport> BrowserApp<T> {
             Err(e) => (Page::parse(asked.clone(), &pages::error(&asked.to_string(), &e)), 0),
         }
     }
+}
+
+/// Show a script's dialog and run the UI until the player answers it.
+fn modal(app: &Rc<RefCell<App>>, model: &Rc<RefCell<Model>>, text: &str, ask: bool) -> bool {
+    {
+        let mut m = model.borrow_mut();
+        // Tests answer dialogs without a player.
+        if let Some(a) = m.dialog_auto {
+            m.console.push(format!("[{}] {text} -> {a}", if ask { "confirm" } else { "alert" }));
+            return a || !ask;
+        }
+        m.dialog = Some(Dialog { text: text.chars().take(2000).collect(), ask });
+        m.dialog_answer = None;
+    }
+    // A dialog from inside a nested loop (it can't happen: handlers don't run scripts) would deadlock: answer it.
+    let Ok(mut a) = app.try_borrow_mut() else {
+        model.borrow_mut().dialog = None;
+        return !ask;
+    };
+    a.core.mark_all_dirty();
+    // Until the player answers (a connection that never blocks, as in tests, gives up after a while).
+    for _ in 0..100_000 {
+        if !a.step(-1) {
+            break;
+        }
+        if model.borrow().dialog_answer.is_some() {
+            break;
+        }
+    }
+    let mut m = model.borrow_mut();
+    m.dialog = None;
+    a.core.mark_all_dirty();
+    m.dialog_answer.take().unwrap_or(false)
 }

@@ -21,4 +21,5 @@ name = "record_browser_sessions"
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 ecm-web = { workspace = true }
+ecm-js = { workspace = true }
 ecm-host-abi = { workspace = true }

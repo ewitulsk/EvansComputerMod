@@ -56,6 +56,41 @@ pub struct Img {
     pub resource: u32,
 }
 
+/// What happens after a page event if no script prevents it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum After {
+    Nothing,
+    /// Follow a link.
+    Go(Url),
+    /// Send a form: fires `submit` at it first.
+    Submit { form: NodeId, submitter: Option<NodeId> },
+}
+
+/// Something that happened on the page, for its scripts (then the default).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageEvent {
+    pub target: NodeId,
+    /// `click`, `input`, `change`, `keydown`, `submit`.
+    pub kind: String,
+    /// Key events: the key's name (`a`, `Enter`, `ArrowUp`).
+    pub key: String,
+    pub after: After,
+}
+
+impl PageEvent {
+    pub fn new(target: NodeId, kind: &str) -> PageEvent {
+        PageEvent { target, kind: kind.into(), key: String::new(), after: After::Nothing }
+    }
+}
+
+/// A script's `alert` / `confirm` on screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dialog {
+    pub text: String,
+    /// `confirm`: OK and Cancel; `alert`: OK.
+    pub ask: bool,
+}
+
 /// What a click on the page asks the window to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClickResult {
@@ -142,6 +177,16 @@ pub struct Model {
     pub settings_dirty: bool,
     /// A short message for the status line ("Bookmarked").
     pub notice: Option<String>,
+    /// Page events waiting for the scripts (then their defaults).
+    pub events: Vec<PageEvent>,
+    /// A script's dialog, and the answer once the player gave it.
+    pub dialog: Option<Dialog>,
+    pub dialog_answer: Option<bool>,
+    /// The page scripts' console, and whether its pane shows.
+    pub console: Vec<String>,
+    pub show_console: bool,
+    /// Answer every dialog with this at once (tests; None: ask the player).
+    pub dialog_auto: Option<bool>,
 }
 
 impl Default for Model {
@@ -171,6 +216,12 @@ impl Default for Model {
             default_home: HOME.into(),
             settings_dirty: false,
             notice: None,
+            events: Vec::new(),
+            dialog: None,
+            dialog_answer: None,
+            console: Vec::new(),
+            show_console: false,
+            dialog_auto: None,
         }
     }
 }
@@ -274,6 +325,8 @@ impl Model {
         self.hover_link = None;
         self.press = None;
         self.focus = None;
+        self.events.clear();
+        self.console.clear();
         self.loads += 1;
     }
 
@@ -405,31 +458,46 @@ impl Model {
                     let len = forms::value(&page.dom, c).chars().count();
                     self.focus = Some((c, len));
                     self.changed();
+                    self.events.push(PageEvent::new(node, "click"));
                     return ClickResult::Nothing;
                 }
                 Some(Control::Checkbox) | Some(Control::Radio) => {
                     forms::toggle(&mut page.dom, c);
                     self.focus = None;
                     self.changed();
+                    self.events.push(PageEvent::new(node, "click"));
+                    self.events.push(PageEvent::new(c, "input"));
+                    self.events.push(PageEvent::new(c, "change"));
                     return ClickResult::Nothing;
                 }
                 Some(Control::Select) => {
                     let labels = forms::options(&page.dom, c).into_iter().map(|o| forms::option_label(&page.dom, o)).collect();
                     self.focus = None;
                     self.changed();
+                    self.events.push(PageEvent::new(node, "click"));
                     return ClickResult::Choose { select: c, labels };
                 }
                 Some(Control::Submit) => {
-                    self.submit_from(c);
+                    let form = forms::form_of(&page.dom, c);
+                    let mut ev = PageEvent::new(node, "click");
+                    if let Some(form) = form {
+                        ev.after = After::Submit { form, submitter: Some(c) };
+                    }
+                    self.events.push(ev);
                     return ClickResult::Nothing;
                 }
-                _ => return ClickResult::Nothing,
+                _ => {
+                    self.events.push(PageEvent::new(node, "click"));
+                    return ClickResult::Nothing;
+                }
             }
         }
         self.blur();
+        let mut ev = PageEvent::new(node, "click");
         if let Some(u) = self.link_at(x, y) {
-            self.go(u);
+            ev.after = After::Go(u);
         }
+        self.events.push(ev);
         ClickResult::Nothing
     }
 
@@ -444,10 +512,13 @@ impl Model {
         if let Some(p) = self.page.as_mut() {
             forms::choose(&mut p.dom, select, index);
             self.changed();
+            self.events.push(PageEvent::new(select, "input"));
+            self.events.push(PageEvent::new(select, "change"));
         }
     }
 
-    /// Submit the form of control `c` (a button pressed, or Enter in a field).
+    /// Submit the form of control `c` (a button pressed, or Enter in a field):
+    /// a `keydown` Enter event whose default sends it.
     pub fn submit_from(&mut self, c: NodeId) {
         let Some(page) = self.page.as_ref() else { return };
         let Some(form) = forms::form_of(&page.dom, c) else { return };
@@ -455,6 +526,12 @@ impl Model {
             Some(Control::Submit) => Some(c),
             _ => forms::default_button(&page.dom, form),
         };
+        self.events.push(PageEvent { target: c, kind: "keydown".into(), key: "Enter".into(), after: After::Submit { form, submitter } });
+    }
+
+    /// What sending `form` (with `submitter`) does.
+    pub fn send_form(&mut self, form: NodeId, submitter: Option<NodeId>) {
+        let Some(page) = self.page.as_ref() else { return };
         if let Some(s) = forms::submission(&page.dom, &page.url, form, submitter) {
             self.pending = Some(Nav::Submit(s));
         }
@@ -481,6 +558,7 @@ impl Model {
         forms::set_value(&mut page.dom, node, &nv);
         self.focus = Some((node, at + text.chars().count()));
         self.changed();
+        self.events.push(PageEvent::new(node, "input"));
         true
     }
 
@@ -499,12 +577,14 @@ impl Model {
                     let nv: String = v[..caret - 1].iter().chain(v[caret..].iter()).collect();
                     set(page, nv);
                     self.focus = Some((node, caret - 1));
+                    self.events.push(PageEvent::new(node, "input"));
                 }
             }
             keys::DELETE => {
                 if caret < v.len() {
                     let nv: String = v[..caret].iter().chain(v[caret + 1..].iter()).collect();
                     set(page, nv);
+                    self.events.push(PageEvent::new(node, "input"));
                 }
             }
             keys::LEFT => self.focus = Some((node, caret.saturating_sub(1))),
@@ -529,6 +609,13 @@ impl Model {
         }
         self.changed();
         true
+    }
+
+    /// A key the page's scripts see (`keydown` at the focused field, else the body).
+    pub fn key_event(&mut self, key: u16, shift: bool) {
+        let Some(name) = key_name(key, shift) else { return };
+        let target = self.focus.map(|f| f.0).or_else(|| self.page.as_ref().and_then(|p| p.dom.find("body"))).unwrap_or(ecm_web::dom::DOCUMENT);
+        self.events.push(PageEvent { target, kind: "keydown".into(), key: name, after: After::Nothing });
     }
 
     /// The status line: a notice, what is loading, or a link under the pointer.
@@ -574,6 +661,34 @@ impl Model {
         self.notice = Some(format!("Home page: {}", p.url));
         true
     }
+}
+
+/// A key's name as scripts see it (`KeyboardEvent.key`).
+pub fn key_name(key: u16, shift: bool) -> Option<String> {
+    use ecm_ui::window::keys;
+    Some(match key {
+        0x04..=0x1D => {
+            let c = (b'a' + (key - 0x04) as u8) as char;
+            if shift { c.to_ascii_uppercase().to_string() } else { c.to_string() }
+        }
+        0x1E..=0x26 => ((b'1' + (key - 0x1E) as u8) as char).to_string(),
+        0x27 => "0".into(),
+        keys::ENTER | keys::KP_ENTER => "Enter".into(),
+        keys::ESCAPE => "Escape".into(),
+        keys::BACKSPACE => "Backspace".into(),
+        keys::TAB => "Tab".into(),
+        keys::SPACE => " ".into(),
+        keys::LEFT => "ArrowLeft".into(),
+        keys::RIGHT => "ArrowRight".into(),
+        keys::UP => "ArrowUp".into(),
+        keys::DOWN => "ArrowDown".into(),
+        keys::DELETE => "Delete".into(),
+        keys::HOME => "Home".into(),
+        keys::END => "End".into(),
+        keys::PAGE_UP => "PageUp".into(),
+        keys::PAGE_DOWN => "PageDown".into(),
+        _ => return None,
+    })
 }
 
 /// A key for the theme colours (the render cache).
