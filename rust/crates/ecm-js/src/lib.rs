@@ -144,7 +144,22 @@ fn style_pairs(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn install(ctx: &Ctx, h: &H) -> rquickjs::Result<()> {
+/// The running entry's deadline: the budget (see [`BUDGET`]).
+type Deadline = Rc<Cell<Option<Instant>>>;
+
+/// Run a native call that waits (the network, the player) without it counting against the
+/// script's budget: the deadline moves on by the time it took. Only JavaScript's own running
+/// time is limited; a slow server or a player reading a dialog never stops a script.
+fn waiting<R>(deadline: &Deadline, f: impl FnOnce() -> R) -> R {
+    let t0 = Instant::now();
+    let r = f();
+    if let Some(d) = deadline.get() {
+        deadline.set(Some(d + t0.elapsed()));
+    }
+    r
+}
+
+fn install(ctx: &Ctx, h: &H, deadline: &Deadline) -> rquickjs::Result<()> {
     let n = Object::new(ctx.clone())?;
     macro_rules! f {
         ($name:expr, $func:expr) => {
@@ -342,12 +357,13 @@ fn install(ctx: &Ctx, h: &H) -> rquickjs::Result<()> {
         hh.borrow_mut().log(line);
     });
     let hh = h.clone();
+    let dl = deadline.clone();
     f!("modal", move |text: String, ask: bool| -> bool {
         // Take the callback out while it runs: it may run the UI, which may run more scripts... no, it only waits.
         let cb = hh.borrow_mut().modal.take();
         match cb {
             Some(mut cb) => {
-                let r = cb(&text, ask);
+                let r = waiting(&dl, || cb(&text, ask));
                 hh.borrow_mut().modal = Some(cb);
                 r
             }
@@ -358,13 +374,14 @@ fn install(ctx: &Ctx, h: &H) -> rquickjs::Result<()> {
         }
     });
     let hh = h.clone();
+    let dl = deadline.clone();
     f!("fetch", move |method: String, href: String, body: Option<String>| -> Vec<String> {
         let url = with_page(&hh, |p| p.url.join(&href));
         let Some(url) = url else { return vec!["error".into(), format!("bad address {href}")] };
         let cb = hh.borrow_mut().fetch.take();
         let r = match cb {
             Some(mut cb) => {
-                let r = cb(&method.to_ascii_uppercase(), &url, body.as_deref());
+                let r = waiting(&dl, || cb(&method.to_ascii_uppercase(), &url, body.as_deref()));
                 hh.borrow_mut().fetch = Some(cb);
                 r
             }
@@ -414,14 +431,14 @@ impl Script {
         let rt = Runtime::new().map_err(|e| e.to_string())?;
         rt.set_memory_limit(MEMORY_LIMIT);
         rt.set_max_stack_size(256 * 1024);
-        let deadline: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let deadline: Deadline = Rc::new(Cell::new(None));
         let d = deadline.clone();
         rt.set_interrupt_handler(Some(Box::new(move || d.get().is_some_and(|t| Instant::now() > t))));
         let ctx = Context::full(&rt).map_err(|e| e.to_string())?;
         let host: H = Rc::new(RefCell::new(Host::default()));
         let started = Instant::now();
         ctx.with(|c| -> rquickjs::Result<()> {
-            install(&c, &host)?;
+            install(&c, &host, &deadline)?;
             c.eval::<(), _>(PRELUDE)
         })
         .map_err(|e| format!("prelude: {e}"))?;
