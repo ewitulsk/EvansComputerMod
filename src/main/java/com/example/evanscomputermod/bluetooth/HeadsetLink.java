@@ -95,6 +95,14 @@ public final class HeadsetLink {
         radio.tune(BtAddress.ADV);
     }
 
+    /** The AirPods go off the air (back in a closed case): tell the phone, so it doesn't wait for the link to time out. */
+    public synchronized void goodbye() {
+        if (phone >= 0) {
+            radio.send(new BtFrame(BtFrame.Type.DISCONNECT, addr, phone, new byte[0]), BtAddress.data(channel));
+            drop();
+        }
+    }
+
     public synchronized void receive(BtFrame f, long now) {
         if (!f.isFor(addr) || f.from() == addr) return;
         switch (f.type()) {

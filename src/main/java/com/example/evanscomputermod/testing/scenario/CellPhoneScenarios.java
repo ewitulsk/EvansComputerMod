@@ -39,7 +39,7 @@ import java.util.Map;
  *       {@code cored} and writes the SIM with its Card Reader/Writer, a cell site (computer + Advanced
  *       SDR + coax + LTE Sector Antenna) runs {@code celld-site}, and the phone attaches, gets its address
  *       from the core and pings a server on the core's LAN; {@code cored status} lists it.</li>
- *   <li>{@code cell_chat} (GameTest {@code ecm_cellular}): the same network with a package and chat server
+ *   <li>{@code cell_chat} (GameTest {@code ecm_cellular}): the same network with a package server and a Discord backend
  *       on the core's LAN; the phone installs Chat from the App Store over LTE, chats with the server, and
  *       gets a notification in the background through background refresh.</li>
  * </ul>
@@ -379,7 +379,7 @@ public final class CellPhoneScenarios {
 
     // ------------------------------------------------------------ cell_chat
 
-    static final String CHAT = "dev.ecm.chat", STORE = "dev.ecm.store";
+    static final String CHAT = "dev.ecm.discord", STORE = "dev.ecm.store";
     static final String CHAT_CORE_IP = "10.0.70.1", CHAT_SITE_IP = "10.0.70.2", CHAT_LAN_IP = "10.0.71.1", CHAT_SERVER_IP = "10.0.71.10";
     static final String CHAT_POOL = "100.65.14.0/24";
     static final String CHAT_HELLO = "hello over lte", CHAT_REPLY = "hi pat, welcome", CHAT_LATER = "still there, pat?";
@@ -394,15 +394,16 @@ public final class CellPhoneScenarios {
         return null;
     }
 
+    /** Null once Discord's window on the phone shows a text containing {@code text}. */
     static String chatShows(ScenarioRun r, String text) {
         var c = PhoneGuiScenarios.comp(r);
         if (c == null) return "no phone GUI";
         for (var w : c.windows()) {
             if (!w.appId().equals(CHAT) || !w.mapped()) continue;
             var texts = c.textsOf(w.id());
-            return texts.stream().anyMatch(t -> t.contains(text)) ? null : "Chat shows " + texts;
+            return texts.stream().anyMatch(t -> t.contains(text)) ? null : "Discord shows " + texts;
         }
-        return "no Chat window";
+        return "no Discord window";
     }
 
     /**
@@ -421,12 +422,13 @@ public final class CellPhoneScenarios {
 
     /**
      * {@code cell_chat} (GameTest {@code ecm_cellular cell_chat}): a cell network (core + site, as in cell_phone_attach)
-     * and, on the core's LAN, a server that runs {@code chatd}, packages the Chat app itself ({@code chatapp --source},
-     * {@code pkg build}) and serves it ({@code pkg serve}). An ePhone with an LTE Modem and a SIM cored wrote attaches; in
-     * the phone's App Store the player adds the server's repository, installs Chat over LTE and opens it; Connect asks
-     * for the network (Allow); messages go both ways with the server's {@code chat} command. Then Chat goes to the
-     * background (home): an ePhone suspends it, so in the phone's Terminal the player allows Chat background refresh and
-     * notifications ({@code pkg perm grant}); the server writes again and the next refresh wake posts the notification.
+     * and, on the core's LAN, a server that runs {@code discordd} (a Discord backend), packages the Discord app itself
+     * ({@code discord --source}, {@code pkg build}) and serves it ({@code pkg serve}). An ePhone with an LTE Modem and a
+     * SIM cored wrote attaches; in the phone's App Store the player adds the server's repository, installs Discord over LTE
+     * and opens it; it asks for the network (Allow); on its + page the player adds the backend by address, opens #general,
+     * and messages go both ways with the server's {@code chat} command. Then Discord goes to the background (home): an
+     * ePhone suspends it, so in the phone's Terminal the player allows Discord background refresh and notifications
+     * ({@code pkg perm grant}); the server writes again and the next refresh wake posts the notification.
      */
     static Scenario cellChat() {
         List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -8, 26, 0, 3));
@@ -437,8 +439,8 @@ public final class CellPhoneScenarios {
         foot.addAll(FramedScenarios.station(SITE));
         foot.add(CORE_READER);
         var b = Scenario.builder("cell_chat",
-                        "a cell network and a package server on the core's LAN: an ePhone installs the Chat app from the App Store over LTE,"
-                                + " chats with the server's chat command, and gets a notification in the background (background refresh)")
+                        "a cell network and a package server on the core's LAN: an ePhone installs Discord from the App Store over LTE,"
+                                + " talks in #general with the server's chat command, and gets a notification in the background (background refresh)")
                 .asPlayer()
                 .realTime()
                 .host("core", CORE, "-")
@@ -464,14 +466,14 @@ public final class CellPhoneScenarios {
         b.expect("server", "eth1: inet 10\\.0\\.71\\.10/24", "server has " + CHAT_SERVER_IP);
         b.send("server", "ip route add " + CHAT_POOL + " via " + CHAT_LAN_IP + " dev eth1");
         b.expect("server", "^Route 100\\.65\\.14\\.0/24 added", "the server reaches the phones through the core");
-        b.note("server: the chat server, the Chat package, a repository");
-        b.send("server", "chatd &");
-        b.expect("server", "chatd listening on port 7777", "chatd listening");
-        b.send("server", "chatapp --source /src/chat");
-        b.expect("server", "chatapp: wrote Chat \\(dev\\.ecm\\.chat\\) 1\\.0\\.0 to /src/chat", "Chat's package folder", "^chatapp: can't");
+        b.note("server: a Discord backend, the Discord package, a repository");
+        b.send("server", "discordd &");
+        b.expect("server", "discordd listening on port 7777", "discordd listening");
+        b.send("server", "discord --source /src/discord");
+        b.expect("server", "discord: wrote Discord \\(dev\\.ecm\\.discord\\) 1\\.0\\.0 to /src/discord", "Discord's package folder", "^discord: can't");
         b.expect("server", PROMPT, "shell");
-        b.send("server", "pkg build /src/chat /srv/repo");
-        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg \\(3 files", "pkg build packs it", "^pkg: ");
+        b.send("server", "pkg build /src/discord /srv/repo");
+        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.discord-1\\.0\\.0\\.ecmpkg \\(3 files", "pkg build packs it", "^pkg: ");
         b.expect("server", PROMPT, "shell");
         b.send("server", "pkg serve /srv/repo 8080 &");
         b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
@@ -500,7 +502,7 @@ public final class CellPhoneScenarios {
                 .await(CellPhoneScenarios::celldRunning, "celld runs", 15_000)
                 .await(r -> statusHas(r, "\ncarrier " + CARRIER + "\n"), "the status bar shows " + CARRIER + " (attached)", 20_000);
 
-        b.note("The App Store (home grid): Repos, the server's address, Add; Chat, Install (over LTE), Open");
+        b.note("The App Store (home grid): Repos, the server's address, Add; Discord, Install (over LTE), Open");
         PhoneGuiScenarios.openApp(b, "App Store", STORE);
         b.await(r -> PhoneGuiScenarios.comp(r).findText("App Store", "No apps yet. Add a repository under Repos.") != null ? null : "store not loaded",
                 "control: no repository, no apps", 15_000);
@@ -508,46 +510,53 @@ public final class CellPhoneScenarios {
         b.await(r -> tapIn(r, "App Store", "http://10.0.30.1:8080/"), "tap the address field", 5_000);
         typeOnPhone(b, CHAT_SERVER_IP + ":8080");
         b.await(r -> tapIn(r, "App Store", "Add"), "tap Add", 5_000);
-        b.await(r -> PhoneGuiScenarios.comp(r).findText("App Store", "Chat") != null ? null : "Chat not listed",
-                "the repository is added and lists Chat (its index fetched over LTE)", 20_000);
+        b.await(r -> PhoneGuiScenarios.comp(r).findText("App Store", "Discord") != null ? null : "Discord not listed",
+                "the repository is added and lists Discord (its index fetched over LTE)", 20_000);
         b.await(r -> tapIn(r, "App Store", "Install"), "tap Install", 5_000);
-        b.expect("server", "GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "the repository served the package");
+        b.expect("server", "GET /dev\\.ecm\\.discord-1\\.0\\.0\\.ecmpkg", "the repository served the package");
         b.await(r -> PhoneGuiScenarios.computer(r).getAppManager().manifest(CHAT) != null ? null : "not installed yet",
-                "Chat is installed on the phone", 30_000);
+                "Discord is installed on the phone", 30_000);
         b.await(r -> tapIn(r, "App Store", "Open"), "tap Open", 15_000);
         b.await(r -> PhoneGuiScenarios.onScreen(r, CHAT) != null ? null : "windows " + PhoneGuiScenarios.comp(r).windows(),
-                "Chat opens full screen", 20_000);
+                "Discord opens full screen", 20_000);
 
-        b.note("Chat: the server's address and a nickname, Connect; the phone asks for the network: Allow");
-        b.await(r -> tapIn(r, "Chat", "10.0.30.1"), "tap the server field", 5_000);
-        typeOnPhone(b, CHAT_SERVER_IP);
-        b.await(r -> tapIn(r, "Chat", "Nickname (optional)"), "tap the nickname field", 5_000);
-        typeOnPhone(b, "pat");
-        b.await(r -> tapIn(r, "Chat", "Connect"), "tap Connect", 5_000);
+        b.note("Discord looks for backends as it opens: the phone asks to allow it the network: Allow; none found (no disco serve)");
         b.await(r -> String.join(" ", PhoneGuiScenarios.comp(r).layerTexts("overlay")).contains("network") ? null
-                : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "the phone asks to allow Chat the network", 20_000);
+                : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "the phone asks to allow Discord the network", 20_000);
         PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
-        b.await(r -> chatShows(r, "as pat"), "Chat is connected as pat (over LTE)", 20_000);
+        b.await(r -> chatShows(r, "No Discord backend found"), "control: nothing found on the network", 20_000);
+        b.note("Discord: +, the backend's address, Add backend, Back; # general; /nick pat");
+        b.await(r -> tapIn(r, "Discord", "+"), "tap +", 5_000);
+        b.await(r -> tapIn(r, "Discord", "Backend address (10.0.8.1)"), "tap the address field", 5_000);
+        typeOnPhone(b, CHAT_SERVER_IP);
+        b.await(r -> tapIn(r, "Discord", "Add backend"), "tap Add backend", 5_000);
+        b.await(r -> chatShows(r, "Discord · " + CHAT_SERVER_IP), "the backend is connected over LTE", 20_000);
+        b.await(r -> tapIn(r, "Discord", "Back"), "tap Back", 5_000);
+        b.await(r -> tapIn(r, "Discord", "# general"), "tap # general", 10_000);
+        b.await(r -> tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
+        typeOnPhone(b, "/nick pat");
+        b.await(r -> tapIn(r, "Discord", "Send"), "tap Send", 5_000);
+        b.expect("server", " is now pat", "discordd: the phone is pat now");
 
         b.note("server: join with the chat command; messages both ways");
         atServer(b, "chat " + CHAT_SERVER_IP + " --nick base");
-        b.expect("server", "Joined Tech Village chat as base", "the server's chat command joins");
-        b.await(r -> tapIn(r, "Chat", "Message Tech Village chat"), "tap the message box", 10_000);
+        b.expect("server", "Joined Discord as base", "the server's chat command joins #general");
+        b.await(r -> tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
         typeOnPhone(b, CHAT_HELLO);
-        b.await(r -> tapIn(r, "Chat", "Send"), "tap Send", 5_000);
+        b.await(r -> tapIn(r, "Discord", "Send"), "tap Send", 5_000);
         b.expect("server", "<pat> " + CHAT_HELLO, "the server's chat shows the phone's message");
         atServer(b, CHAT_REPLY);
-        b.await(r -> chatShows(r, CHAT_REPLY), "the reply shows in Chat", 15_000);
+        b.await(r -> chatShows(r, CHAT_REPLY), "the reply shows in Discord", 15_000);
         b.await(r -> PhoneGuiScenarios.comp(r).notifications().stream().noneMatch(n -> n.appId().equals(CHAT)) ? null : "a notification while on screen",
-                "control: no notification while Chat is on screen", 1_000);
+                "control: no notification while Discord is on screen", 1_000);
 
-        b.note("Chat to the background: home (the phone suspends it). In the phone's Terminal, allow Chat background refresh and"
+        b.note("Discord to the background: home (the phone suspends it). In the phone's Terminal, allow Discord background refresh and"
                 + " notifications; the server writes again; the next refresh wake fetches it and posts a notification");
         b.mutate(r -> PhoneGuiScenarios.altKey(r, PhoneGuiScenarios.HID_H), "Alt+H: home");
         b.await(r -> {
             var a = PhoneGuiScenarios.app(r, CHAT);
-            return a != null && a.state() == com.example.evanscomputermod.computer.apps.AppInstance.State.SUSPENDED ? null : "Chat " + a;
-        }, "Chat is suspended in the background", 10_000);
+            return a != null && a.state() == com.example.evanscomputermod.computer.apps.AppInstance.State.SUSPENDED ? null : "Discord " + a;
+        }, "Discord is suspended in the background", 10_000);
         PhoneScenarios.openTerminal(b);
         // (the phone's Terminal is 30 columns wide: pkg's answer wraps, so it is read with the rows joined)
         for (String perm : List.of("background:refresh", "notifications")) {
@@ -566,15 +575,15 @@ public final class CellPhoneScenarios {
             var p = PhoneGuiScenarios.phone(r).apps().permissions();
             return Boolean.TRUE.equals(p.decision(CHAT, "background:refresh")) && Boolean.TRUE.equals(p.decision(CHAT, "notifications"))
                     ? null : "decisions " + p.decisions().get(CHAT);
-        }, "the phone's app manager has both allowed for Chat", 2_000);
+        }, "the phone's app manager has both allowed for Discord", 2_000);
         b.mutate(r -> PhoneGuiScenarios.phone(r).apps().background().configure(3_000, 2_000, 10),
                 "refresh wakes every 3 s with a 2 s budget for the run [exception: the refresh interval compressed from minutes to"
                         + " seconds; docs/SCENARIO_EXCEPTIONS.md]");
         atServer(b, CHAT_LATER);
         b.await(r -> PhoneGuiScenarios.comp(r).notifications().stream().anyMatch(n -> n.appId().equals(CHAT) && n.body().contains(CHAT_LATER)
-                        && n.title().equals("base in Tech Village chat")) ? null : "notifications " + PhoneGuiScenarios.comp(r).notifications(),
-                "a refresh wake: Chat posts \"base in Tech Village chat: " + CHAT_LATER + "\"", 15_000);
-        b.await(r -> PhoneGuiScenarios.onScreen(r, CHAT) == null ? null : "Chat is on screen", "Chat stayed in the background", 1_000);
+                        && n.title().equals("base in #general (Discord)")) ? null : "notifications " + PhoneGuiScenarios.comp(r).notifications(),
+                "a refresh wake: Discord posts \"base in #general (Discord): " + CHAT_LATER + "\"", 15_000);
+        b.await(r -> PhoneGuiScenarios.onScreen(r, CHAT) == null ? null : "Discord is on screen", "Discord stayed in the background", 1_000);
         b.timeLimit(60_000);
         return b.build();
     }

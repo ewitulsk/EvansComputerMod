@@ -53,11 +53,11 @@ class VillageRepoTest {
     }
 
     @Test
-    void theServerHoldsOnlyChatSignedWithTheWorldsKey() {
+    void theServerHoldsOnlyDiscordSignedWithTheWorldsKey() {
         var packages = VillageRepo.packages();
         assertEquals(1, packages.size(), "the mod's repository (wasm-bin/repo, staged by scripts/stage-wasm.sh): " + packages);
         var chat = packages.get(0);
-        assertEquals("dev.ecm.chat", chat.id());
+        assertEquals("dev.ecm.discord", chat.id());
         assertEquals(chat.id() + "-" + chat.version() + ".ecmpkg", chat.file());
         VillageRepo repo = VillageRepo.of(42L, 7);
         var files = repo.serverFiles();

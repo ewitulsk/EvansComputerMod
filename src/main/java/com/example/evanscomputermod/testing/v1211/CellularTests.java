@@ -69,7 +69,7 @@ public final class CellularTests {
         run(h, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_phone_attach"));
     }
 
-    /** A phone installs Chat from the App Store over LTE, chats with a server, gets a notification in the background. */
+    /** A phone installs Discord from the App Store over LTE, talks with a server in #general, gets a notification in the background. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cell_chat")
     public static void cell_chat(GameTestHelper h) {
         run(h, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_chat"));
@@ -263,7 +263,7 @@ public final class CellularTests {
                 String webScreen = ScenarioRun.screen(web.getDisplay());
                 if (phase[0] == 2) {
                     // The web server's pkg (its /etc/pkg/repos came with the village) fetches the index over HTTP.
-                    if (webScreen.contains("dev.ecm.chat 1.0.0  Chat  [Tech-Village-Apps, signed]") && serverScreen.contains("GET /index.json")) {
+                    if (webScreen.contains("dev.ecm.discord 1.0.0  Discord  [Tech-Village-Apps, signed]") && serverScreen.contains("GET /index.json")) {
                         EvansComputerMod.LOGGER.info("tech_village_repo: the web server fetched the index:\n{}\n--- package server ---\n{}",
                                 webScreen.stripTrailing(), serverScreen.stripTrailing());
                         phase[0] = 3;

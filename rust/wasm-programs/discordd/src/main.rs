@@ -104,9 +104,9 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut backend = match std::fs::read_to_string(&state_file) {
-        Ok(text) => Backend::load(&name, voice_port, seed(), &text),
-        Err(_) => Backend::new(&name, voice_port, seed()),
+    let mut backend = match load(&state_file) {
+        Some(text) => Backend::load(&name, voice_port, seed(), &text),
+        None => Backend::new(&name, voice_port, seed()),
     };
     save(&state_file, &backend);
     let servers = backend.guild_names().len();
@@ -217,13 +217,32 @@ fn main() {
 
 /// Write the state (best effort: a full disk only costs persistence).
 fn save(file: &str, backend: &Backend) {
-    if let Some(dir) = file.rsplit_once('/').map(|(d, _)| d) {
-        let _ = std::fs::create_dir_all(dir);
+    let text = backend.save_text();
+    if std::fs::write(file, &text).is_ok() {
+        return;
     }
-    let tmp = format!("{file}.new");
-    if std::fs::write(&tmp, backend.save_text()).is_ok() && std::fs::rename(&tmp, file).is_err() {
-        let _ = std::fs::write(file, backend.save_text());
+    // The folder doesn't exist yet: make every level of it (the computer's own calls), then write.
+    let rel = file.trim_start_matches('/');
+    let mut dir = String::new();
+    if let Some((parent, _)) = rel.rsplit_once('/') {
+        for part in parent.split('/') {
+            if !dir.is_empty() {
+                dir.push('/');
+            }
+            dir.push_str(part);
+            ecm_host_abi::fs::mkdir(&dir);
+        }
     }
+    if std::fs::write(file, &text).is_err() {
+        ecm_host_abi::fs::write_file(rel, &text);
+    }
+}
+
+/// The saved state, if any.
+fn load(file: &str) -> Option<String> {
+    std::fs::read_to_string(file)
+        .ok()
+        .or_else(|| ecm_host_abi::fs::read_file_bytes(file.trim_start_matches('/')).map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
 
 fn send_all(fd: i32, mut data: &[u8]) -> bool {

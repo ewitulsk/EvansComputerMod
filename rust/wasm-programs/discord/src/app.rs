@@ -116,14 +116,11 @@ pub struct DiscordApp<N: Net, A: Audio> {
 impl<N: Net, A: Audio> DiscordApp<N, A> {
     /// Connect to the compositor and open the window. `data_dir` holds the saved settings;
     /// `chat_conf` is `/etc/chat.conf`'s text, if the computer has one (its backend is used).
-    pub fn new(conn: Box<dyn Connection>, mut net: N, audio: A, data_dir: Option<String>, chat_conf: Option<&str>) -> Result<Self, ConnError> {
+    pub fn new(conn: Box<dyn Connection>, net: N, audio: A, data_dir: Option<String>, chat_conf: Option<&str>) -> Result<Self, ConnError> {
         let mut app = App::with_connection(crate::APP_ID, conn)?;
         let saved = data_dir.as_ref().and_then(|dir| std::fs::read_to_string(format!("{dir}/settings")).ok());
         let mut m = Model::default();
         m.load(saved.as_deref(), chat_conf);
-        if m.nick.is_empty() {
-            m.nick = net.default_nick();
-        }
         m.search();
         if let Ok(id) = app.core.image_png(32, 32, crate::ICON_PNG) {
             m.logo = id;
@@ -218,6 +215,14 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         if shown && !self.model.borrow().searching && now.saturating_sub(self.last_search) >= RESEARCH_MS && self.last_search != 0 {
             self.model.borrow_mut().search();
         }
+        // A nickname from the computer's MAC when none is set (once the window is up and drawn: reading
+        // the network interfaces may wait for the network permission dialog, and the player should see
+        // Discord behind it).
+        if shown && self.model.borrow().nick.is_empty() {
+            self.redraw();
+            let n = self.net.default_nick();
+            self.model.borrow_mut().nick = n;
+        }
         if self.model.borrow().search_wanted && shown {
             self.model.borrow_mut().search_wanted = false;
             self.redraw();
@@ -226,7 +231,9 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             self.model.borrow_mut().on_found(found);
             changed = true;
         }
-        changed |= self.connect_one(now);
+        if shown {
+            changed |= self.connect_one(now);
+        }
         changed |= self.exchange();
         changed |= self.voice(now);
         self.save_settings();

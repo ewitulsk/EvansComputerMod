@@ -222,7 +222,6 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
                 boolean same = Files.isRegularFile(manifest) && java.util.Arrays.equals(Files.readAllBytes(manifest), toml)
                         && Files.isRegularFile(entry) && Files.size(entry) == Files.size(wasm);
                 if (same) continue;
-                boolean fresh = !Files.isRegularFile(manifest);
                 Files.createDirectories(dir);
                 Files.copy(wasm, entry, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 byte[] icon = resource("/assets/evanscomputermod/ecm_apps/" + id + "/icon.png");
@@ -230,7 +229,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
                 Files.write(manifest, toml);
                 Files.writeString(dir.resolve(".pkg-origin"), "builtin\n", StandardCharsets.UTF_8);
                 Files.createDirectories(root.resolve("var/apps").resolve(id));
-                if (fresh && SYSTEM_GRANTED.containsKey(id) && apps != null) {
+                // (a newer manifest's new permission, Bluetooth for one, is granted on update too, unless it was refused)
+                if (SYSTEM_GRANTED.containsKey(id) && apps != null) {
                     // The phone's own Settings: what it declares is allowed once at install (revocable), as SystemApps does.
                     for (String perm : SYSTEM_GRANTED.get(id)) {
                         if (apps.permissions().decision(id, perm) == null) apps.permissions().setDecision(id, perm, true);
@@ -243,7 +243,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     }
 
     /** Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps). */
-    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages"));
+    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings",
+            List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth"));
 
     @Nullable
     private static byte[] resource(String path) throws IOException {

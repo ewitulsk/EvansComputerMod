@@ -113,13 +113,13 @@ fn channel_list(m: &M, st: &Model, cx: &ViewCtx, h: i32) -> Element {
     let mut voice_head = row().gap(4).child(caption("VOICE CHANNELS")).child(spacer());
     if owner {
         let a = m.clone();
-        text_head = text_head.child(button("+").id("new_text").style("flat").on_click(move |_, _| {
+        text_head = text_head.child(button("+ Channel").id("new_text").style("flat").on_click(move |_, _| {
             let mut s = a.borrow_mut();
             s.new_channel_kind = Kind::Text;
             s.page = Page::NewChannel;
         }));
         let a = m.clone();
-        voice_head = voice_head.child(button("+").id("new_voice").style("flat").on_click(move |_, _| {
+        voice_head = voice_head.child(button("+ Voice").id("new_voice").style("flat").on_click(move |_, _| {
             let mut s = a.borrow_mut();
             s.new_channel_kind = Kind::Voice;
             s.page = Page::NewChannel;
@@ -420,7 +420,7 @@ fn create_page(m: &M, st: &Model) -> Element {
         for (i, n) in hosts {
             let p = m.clone();
             let chosen = st.new_server_backend == i;
-            c = c.child(row().child(button(n).id(format!("host:{i}")).style(if chosen { "primary" } else { "flat" }).grow(1).on_click(move |_, _| p.borrow_mut().new_server_backend = i)));
+            c = c.child(row().child(button(format!("Host on {n}")).id(format!("host:{i}")).style(if chosen { "primary" } else { "flat" }).grow(1).on_click(move |_, _| p.borrow_mut().new_server_backend = i)));
         }
     }
     if let Some(n) = &st.notice {
@@ -473,7 +473,7 @@ fn new_channel_page(m: &M, st: &Model) -> Element {
     let text = st.new_channel_kind == Kind::Text;
     let mut c = column()
         .gap(8)
-        .child(heading("Create Channel"))
+        .child(heading("New Channel"))
         .child(caption("CHANNEL TYPE"))
         .child(
             row()

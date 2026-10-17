@@ -122,6 +122,7 @@ public final class Headsets {
         }
         HEADSETS.entrySet().removeIf(en -> {
             if (live.contains(en.getKey())) return false;
+            en.getValue().link.goodbye();
             en.getValue().ep.close();
             return true;
         });
@@ -135,7 +136,11 @@ public final class Headsets {
 
     private static void run(ServerPlayer p, AirPodsData.Pods pods, boolean worn, boolean pairable,
                             Consumer<AirPodsData.Pods> write, long now, int tick) {
-        Headset h = HEADSETS.computeIfAbsent(pods.id(), k -> new Headset(pods, p.getGameProfile().getName()));
+        Headset h = HEADSETS.computeIfAbsent(pods.id(), k -> {
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[bluetooth] AirPods {} ({}) on the air: {}", BtAddress.format(pods.address()),
+                    p.getGameProfile().getName(), worn ? "worn" : "case lid open");
+            return new Headset(pods, p.getGameProfile().getName());
+        });
         h.wearer = p;
         h.worn = worn;
         h.write = write;
@@ -183,6 +188,16 @@ public final class Headsets {
         long n = 0;
         for (Headset h : HEADSETS.values()) if (h.wearer != null && h.wearer.getUUID().equals(player)) n += h.earSamples;
         return n;
+    }
+
+    /** One line per AirPods on the air (scenario messages, debug). */
+    public static String describe() {
+        StringBuilder sb = new StringBuilder();
+        for (Headset h : HEADSETS.values()) {
+            sb.append(BtAddress.format(h.link.addr)).append(h.worn ? " worn" : " in case").append(h.link.connected() ? " connected" : "")
+                    .append(" paired=").append(BtAddress.format(h.link.pairedTo())).append("; ");
+        }
+        return sb.length() == 0 ? "no AirPods on the air" : sb.toString();
     }
 
     /** The AirPods with this id are connected to a phone (tests, debug). */

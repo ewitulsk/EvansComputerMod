@@ -93,6 +93,9 @@ struct Voice {
     addr: Option<([u8; 4], u16)>,
     last_audio: u64,
     speaking: bool,
+    /// Audio packets from this talker, and copies forwarded to the others, since it started talking.
+    packets: u64,
+    copies: u64,
 }
 
 /// One Discord backend.
@@ -756,7 +759,7 @@ impl Backend {
                 let sid = self.next_sid;
                 self.next_sid += 1;
                 let token = self.token();
-                self.voice.insert(sid, Voice { conn: id, channel: cid, token, nick: nick.clone(), addr: None, last_audio: 0, speaking: false });
+                self.voice.insert(sid, Voice { conn: id, channel: cid, token, nick: nick.clone(), addr: None, last_audio: 0, speaking: false, packets: 0, copies: 0 });
                 if let Some(c) = self.conns.get_mut(&id) {
                     c.sid = Some(sid);
                 }
@@ -866,17 +869,26 @@ impl Backend {
             v.last_audio = now;
         }
         let bytes = p.forwarded(sid).encode();
+        let mut copies = 0;
         for (other, v) in &self.voice {
             if *other != sid && v.channel == channel {
                 if let Some((ip, port)) = v.addr {
                     out.push(Out::Udp(ip, port, bytes.clone()));
-                    self.forwarded += 1;
+                    copies += 1;
                 }
             }
+        }
+        self.forwarded += copies;
+        {
+            let v = self.voice.get_mut(&sid).unwrap();
+            v.packets += 1;
+            v.copies += copies;
         }
         if !self.voice[&sid].speaking {
             self.voice.get_mut(&sid).unwrap().speaking = true;
             let v = &self.voice[&sid];
+            let cname = self.channels.get(&channel).map(|c| c.name.clone()).unwrap_or_default();
+            out.push(Out::Log(format!("{} is talking in {}", v.nick, cname)));
             if let Some(guild) = self.channels.get(&channel).map(|c| c.guild) {
                 out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, nick: v.nick.clone(), event: VoiceEvent::Speaking }));
             }
@@ -897,6 +909,9 @@ impl Backend {
             let v = self.voice.get_mut(&sid).unwrap();
             v.speaking = false;
             let (channel, nick) = (v.channel, v.nick.clone());
+            out.push(Out::Log(format!("{} stopped talking ({} packets, {} forwarded)", nick, v.packets, v.copies)));
+            v.packets = 0;
+            v.copies = 0;
             if let Some(guild) = self.channels.get(&channel).map(|c| c.guild) {
                 out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, nick, event: VoiceEvent::Quiet }));
             }

@@ -829,52 +829,44 @@ pub fn app_with(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: O
     refresh(&st, &sys);
     let (s1, y1) = (st.clone(), sys.clone());
     app.window("Settings", move |vcx| view(vcx, &s1, &y1));
-    // Keep the status pages current while open.
+    // One timer (an app has one `every`): the input level meter on Sound (every 500 ms), the
+    // Bluetooth devices on Bluetooth (they come and go: a case lid opens, a pairing lands), and
+    // the Wi-Fi and cellular status every 3 s.
     let (s2, y2) = (st.clone(), sys.clone());
-    app.every(3000, move |_| {
-        let before = {
-            let s = s2.borrow();
-            (s.wifi.clone(), s.cells.clone())
-        };
-        let (wifi, cells) = {
-            let mut y = y2.borrow_mut();
-            (y.wifi(), y.cells())
-        };
-        let mut s = s2.borrow_mut();
-        let changed = before != (wifi.clone(), cells.clone());
-        s.wifi = wifi;
-        s.cells = cells;
-        changed
-    });
-    // Bluetooth: devices come and go (a case lid opens, a pairing lands), while the page is open.
-    let (s5, y5) = (st.clone(), sys.clone());
-    app.every(1000, move |_| {
-        if s5.borrow().section != BLUETOOTH {
-            return false;
-        }
-        let bt = y5.borrow_mut().bluetooth();
-        let mut s = s5.borrow_mut();
-        let changed = s.bt != bt;
-        s.bt = bt;
-        changed
-    });
-    // Sound: the input level meter, while the page is open.
-    let (s4, y4) = (st.clone(), sys.clone());
+    let turns = std::cell::Cell::new(0u32);
     app.every(500, move |_| {
-        let name = {
-            let s = s4.borrow();
-            if s.section != SOUND {
-                return false;
+        turns.set(turns.get().wrapping_add(1));
+        let mut changed = false;
+        let section = s2.borrow().section;
+        if section == SOUND {
+            let name = active(&s2.borrow(), true).map(|d| d.name);
+            if let Some(name) = name {
+                let level = y2.borrow_mut().mic_level(&name);
+                let mut s = s2.borrow_mut();
+                changed |= s.input_level != level;
+                s.input_level = level;
             }
-            match active(&s, true) {
-                Some(d) => d.name,
-                None => return false,
-            }
-        };
-        let level = y4.borrow_mut().mic_level(&name);
-        let mut s = s4.borrow_mut();
-        let changed = s.input_level != level;
-        s.input_level = level;
+        }
+        if section == BLUETOOTH {
+            let bt = y2.borrow_mut().bluetooth();
+            let mut s = s2.borrow_mut();
+            changed |= s.bt != bt;
+            s.bt = bt;
+        }
+        if turns.get() % 6 == 0 {
+            let before = {
+                let s = s2.borrow();
+                (s.wifi.clone(), s.cells.clone())
+            };
+            let (wifi, cells) = {
+                let mut y = y2.borrow_mut();
+                (y.wifi(), y.cells())
+            };
+            let mut s = s2.borrow_mut();
+            changed |= before != (wifi.clone(), cells.clone());
+            s.wifi = wifi;
+            s.cells = cells;
+        }
         changed
     });
     let s3 = st.clone();
