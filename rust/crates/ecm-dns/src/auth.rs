@@ -2,7 +2,7 @@
 //! (NS + glue) at zone cuts, and NXDOMAIN / NODATA with the SOA for negative caching.
 
 use crate::name::{is_sub, parent};
-use crate::wire::{Message, RData, Record, A, ANY, CNAME, MX, NOERROR, NS, NXDOMAIN, REFUSED, SOA};
+use crate::wire::{Message, RData, Record, A, ANY, CNAME, MX, NOERROR, NS, NXDOMAIN, REFUSED, SOA, SRV};
 use crate::zone::Zone;
 
 pub const MAX_CNAME: usize = 8;
@@ -144,11 +144,11 @@ impl Authority {
     }
 }
 
-/// Addresses of NS and MX targets we have, for the additional section.
+/// Addresses of NS, MX and SRV targets we have, for the additional section.
 fn additional_for(auth: &Authority, records: &[Record]) -> Vec<Record> {
     let mut out: Vec<Record> = Vec::new();
     for r in records {
-        if !matches!(r.rtype, NS | MX) {
+        if !matches!(r.rtype, NS | MX | SRV) {
             continue;
         }
         let Some(t) = r.data.target() else { continue };
@@ -233,6 +233,26 @@ mod tests {
         assert!(matches!(z.lookup("x.test", MX), Lookup::NoData { .. }));
         // empty non-terminal
         assert!(matches!(z.lookup("deep.test", A), Lookup::NoData { .. }));
+    }
+
+    #[test]
+    fn naptr_and_srv_answers_with_srv_target_addresses() {
+        let mut a = Authority::default();
+        a.put(Zone::parse(crate::zone::tests::ENUM_ZONE, "5.5.5.4.1.2.1.e164.arpa").unwrap());
+        a.put(Zone::parse("$TTL 60\n@ SOA ns1 a 1 1 1 1 1\n@ NS ns1\nns1 A 10.0.0.3\nsip A 10.0.0.5\n", "carrier.ecm").unwrap());
+        let r = a.respond(&Message::query(1, "2.4.1.0.5.5.5.4.1.2.1.e164.arpa", NAPTR, true)).unwrap();
+        assert!(r.header.aa && r.answers.len() == 2 && r.answers.iter().all(|x| x.rtype == NAPTR));
+        assert!(r.additional.is_empty(), "NAPTR has no address to add");
+        let uri = crate::enum_dns::enum_sip_uri(crate::enum_dns::naptrs(&r.answers), "+12145550142");
+        assert_eq!(uri.as_deref(), Some("sip:+12145550142@carrier.ecm"));
+        let r = a.respond(&Message::query(2, "_sip._udp.5.5.5.4.1.2.1.e164.arpa", SRV, true)).unwrap();
+        assert_eq!(r.answers.len(), 2);
+        // the SRV target's address from the other zone; the apex (no A) adds nothing
+        assert_eq!(r.additional, vec![Record::new("sip.carrier.ecm", 60, RData::A([10, 0, 0, 5]))]);
+        // the right name, another type: NODATA; NAPTR at a name without any: NXDOMAIN
+        assert!(a.respond(&Message::query(3, "2.4.1.0.5.5.5.4.1.2.1.e164.arpa", SRV, true)).unwrap().answers.is_empty());
+        let r = a.respond(&Message::query(4, "9.9.9.9.5.5.5.4.1.2.1.e164.arpa", NAPTR, true)).unwrap();
+        assert_eq!(r.header.rcode, NXDOMAIN);
     }
 
     #[test]

@@ -168,6 +168,22 @@ mod tests {
     }
 
     #[test]
+    fn axfr_carries_naptr_and_srv() {
+        let origin = "5.5.5.4.1.2.1.e164.arpa";
+        let z = Zone::parse(crate::zone::tests::ENUM_ZONE, origin).unwrap();
+        let mut c = AxfrClient::new(origin, 9);
+        let msgs = axfr_messages(&c.query(), &z);
+        let mut got = None;
+        for m in &msgs {
+            got = c.feed(&m.encode()).unwrap();
+        }
+        let got = got.unwrap();
+        assert_eq!(got, z);
+        assert_eq!(got.records.iter().filter(|r| r.rtype == NAPTR).count(), 3);
+        assert_eq!(got.records.iter().filter(|r| r.rtype == SRV).count(), 2);
+    }
+
+    #[test]
     fn axfr_rejects_junk() {
         let z = Zone::parse("$TTL 60\n@ SOA ns1 a 9 1 1 1 1\n@ NS ns1\n", "t").unwrap();
         let mut c = AxfrClient::new("other", 1);

@@ -19,14 +19,19 @@ DESCRIPTION
 
 OPTIONS
     -type=TYPE
-        The record type: A (default), NS, CNAME, SOA, MX, TXT, PTR or
-        ANY. -query=TYPE and -q=TYPE are the same.
+        The record type: A (default), NS, CNAME, SOA, MX, TXT, PTR,
+        SRV, NAPTR or ANY. -query=TYPE and -q=TYPE are the same. SRV
+        answers print as service = priority weight port target,
+        NAPTR answers as naptr = order preference "flags" "services"
+        "regexp" replacement (see dig for what they mean).
 
 EXAMPLES
       nslookup web.v4.ring
       nslookup web
       nslookup -type=MX mybase.ecm
       nslookup -type=NS ring 100.65.0.53
+      nslookup -type=SRV _sip._udp.carrier.ecm
+      nslookup -type=NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa
 
 SEE ALSO
     dig, resolvectl, named, whois, networking

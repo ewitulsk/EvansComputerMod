@@ -15,7 +15,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::air::{self, decode_items, encode_items, Cause, Grant, Item, Measurement, Neighbour, Plain, SysInfo};
+use crate::air::{self, decode_items, encode_items, Bearer, Cause, Grant, ImsInfo, Item, Measurement, Neighbour, Plain, SysInfo};
 use crate::backhaul::{tunnel_split, CellInfo, Ctl, Framer, IpConfig, TunnelJoin, TunnelPacket};
 use crate::codec::fmt_ip;
 use crate::core::Entropy;
@@ -34,6 +34,8 @@ const DL_INFLIGHT: u32 = 4;
 /// Consecutive failed downlink frames that count as a lost phone.
 const DL_FAIL_LIMIT: u32 = 8;
 const DL_QUEUE: usize = 128;
+/// Voice packets held per phone: voice wants fresh audio, so the oldest go first.
+const VOICE_QUEUE: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct SiteConfig {
@@ -58,6 +60,9 @@ pub struct SiteConfig {
     pub rach_sub: u8,
     /// A phone silent this long is lost.
     pub ue_timeout_ms: u64,
+    /// Phones with a voice bearer at once (each gets a data sub-channel to itself
+    /// while there are enough); more calls run best effort.
+    pub max_voice: usize,
 }
 
 impl SiteConfig {
@@ -79,6 +84,7 @@ impl SiteConfig {
             ho_hysteresis_db: 3.0,
             rach_sub: 4,
             ue_timeout_ms: 5000,
+            max_voice: 3,
         }
     }
 }
@@ -141,6 +147,10 @@ struct UeCtx {
     imsi: String,
     session: u32,
     ip: Option<IpConfig>,
+    ims: Option<ImsInfo>,
+    /// Dedicated bearers (voice flows) admitted here.
+    bearers: Vec<Bearer>,
+    dl_voice: VecDeque<(u32, Vec<u8>)>,
     tmsi: u32,
     cipher: Option<AirCipher>,
     grant: Option<Grant>,
@@ -449,7 +459,7 @@ impl Site {
                 if data_ok {
                     loop {
                         if u.dl_segs.is_empty() {
-                            let Some((seq, pkt)) = u.dl_q.pop_front() else { break };
+                            let Some((seq, pkt)) = u.dl_voice.pop_front().or_else(|| u.dl_q.pop_front()) else { break };
                             u.dl_segs.extend(segment(seq, &pkt, FRAME_BUDGET));
                             u.last_activity_ms = now.ms;
                         }
@@ -484,7 +494,9 @@ impl Site {
             let u = self.ues.get_mut(&a).expect("present");
             u.ctl_q.clear();
             u.dl_q.clear();
+            u.dl_voice.clear();
             u.dl_segs.clear();
+            u.bearers.clear();
             u.ctl_q.push_back(Item::Release { cause });
             u.release_after_send = true;
             u.st = St::Connected;
@@ -620,6 +632,9 @@ impl Site {
                 let ip = u.ip.unwrap_or_default();
                 let accept = Item::AttachAccept { ip: ip.ip, prefix: ip.prefix, gateway: ip.gateway, dns: ip.dns, mtu: ip.mtu, tmsi: u.tmsi, session: u.session };
                 u.ctl_q.push_back(accept);
+                if let Some(i) = u.ims.clone() {
+                    u.ctl_q.push_back(Item::Ims(i));
+                }
                 self.reschedule(now, true);
             }
             (Item::AttachComplete, St::Accepting) => {
@@ -672,6 +687,16 @@ impl Site {
                 self.log(format!("{} detached", imsi));
             }
             (Item::MeasGap { from_slot, to_slot }, _) => u.gap = Some((from_slot, to_slot)),
+            (Item::IdleRequest, St::Connected) => {
+                // The phone is going to sleep: idle now (as after inactivity), the core keeps the session.
+                if u.dl_q.is_empty() && u.dl_voice.is_empty() && u.dl_segs.is_empty() && !u.release_after_send {
+                    let session = u.session;
+                    let imsi = u.imsi.clone();
+                    self.ctl(Ctl::UeIdle { session });
+                    self.release_ue(a, Cause::Inactivity, false);
+                    self.log(format!("{} idle on request", imsi));
+                }
+            }
             _ => {}
         }
     }
@@ -789,7 +814,7 @@ impl Site {
                     self.tx_plain(ue, Plain::AuthChallenge { rand });
                 }
             }
-            Ctl::UeAccept { ue, session, ip, tmsi, ctx, smc_mac } => {
+            Ctl::UeAccept { ue, session, ip, tmsi, ctx, smc_mac, ims } => {
                 let Some(u) = self.ues.get_mut(&ue) else {
                     self.ctl(Ctl::UeRelease { session, cause: Cause::RadioLost });
                     return;
@@ -800,6 +825,7 @@ impl Site {
                 u.st = St::Smc;
                 u.session = session;
                 u.ip = Some(ip);
+                u.ims = ims;
                 u.tmsi = tmsi;
                 u.cipher = Some(AirCipher::new(&ctx.k_as, ctx.epoch, false));
                 self.tx_plain(ue, Plain::SecurityModeCommand { epoch: ctx.epoch, mac: smc_mac });
@@ -835,7 +861,7 @@ impl Site {
                     }
                 }
             }
-            Ctl::HoRequest { ho, session, ue, target_cell, ip, tmsi, ctx } => {
+            Ctl::HoRequest { ho, session, ue, target_cell, ip, tmsi, ctx, bearers } => {
                 if target_cell != self.cfg.cell_id {
                     self.ctl(Ctl::HoFailure { ho, session, cause: Cause::HandoverFailed });
                     return;
@@ -851,6 +877,11 @@ impl Site {
                 c.tmsi = tmsi;
                 c.cipher = Some(AirCipher::new(&ctx.k_as, ctx.epoch, false));
                 self.ues.insert(ue, c);
+                // the call's voice bearer moves with the phone: admitted here again (or best effort)
+                for b in bearers {
+                    let ok = self.admit_bearer(ue, b);
+                    self.ctl(Ctl::BearerResult { session, id: b.id, ok });
+                }
                 self.reschedule(now, false);
                 let grant = self.ues[&ue].grant.expect("scheduled");
                 self.ctl(Ctl::HoRequestAck { ho, ue_id, grant });
@@ -869,8 +900,53 @@ impl Site {
             Ctl::Revoked { imsi } => {
                 self.revoked.insert(imsi);
             }
+            Ctl::BearerSetup { session, bearer } => {
+                let Some(a) = self.addr_of(session) else {
+                    self.ctl(Ctl::BearerResult { session, id: bearer.id, ok: false });
+                    return;
+                };
+                let ok = self.admit_bearer(a, bearer);
+                if ok {
+                    if let Some(u) = self.ues.get_mut(&a) {
+                        u.ctl_q.push_back(Item::BearerSetup(bearer));
+                    }
+                    self.log(format!("voice bearer {} for session {} (udp {} <-> {}:{})", bearer.id, session, bearer.ue_port, fmt_ip(bearer.remote), bearer.remote_port));
+                    self.reschedule(now, true);
+                } else {
+                    self.log(format!("voice bearer for session {} refused: {} calls already", session, self.cfg.max_voice));
+                }
+                self.ctl(Ctl::BearerResult { session, id: bearer.id, ok });
+            }
+            Ctl::BearerRelease { session, id } => {
+                if let Some(a) = self.addr_of(session) {
+                    let u = self.ues.get_mut(&a).expect("found");
+                    let had = u.bearers.len();
+                    u.bearers.retain(|b| b.id != id);
+                    if u.bearers.len() != had {
+                        u.ctl_q.push_back(Item::BearerRelease { id });
+                        self.reschedule(now, true);
+                    }
+                }
+            }
             other => self.log(format!("unexpected {} from the core", other.name())),
         }
+    }
+
+    /// Admit a dedicated bearer for phone `a` (true), unless the cell already carries
+    /// `max_voice` calls (false: the flow stays best effort).
+    fn admit_bearer(&mut self, a: u32, b: Bearer) -> bool {
+        let others = self.ues.iter().filter(|(k, u)| **k != a && !u.bearers.is_empty()).count();
+        let Some(u) = self.ues.get_mut(&a) else { return false };
+        if u.bearers.iter().any(|x| x.id == b.id) {
+            u.bearers.retain(|x| x.id != b.id);
+            u.bearers.push(b);
+            return true;
+        }
+        if u.bearers.is_empty() && others >= self.cfg.max_voice {
+            return false;
+        }
+        u.bearers.push(b);
+        true
     }
 
     fn addr_of(&self, session: u32) -> Option<u32> {
@@ -903,6 +979,13 @@ impl Site {
         let Some(a) = self.addr_of(session) else { return };
         self.dl_bytes += pkt.len() as u64;
         let u = self.ues.get_mut(&a).expect("found");
+        if u.bearers.iter().any(|b| b.matches(&pkt)) {
+            if u.dl_voice.len() >= VOICE_QUEUE {
+                u.dl_voice.pop_front();
+            }
+            u.dl_voice.push_back((seq, pkt));
+            return;
+        }
         if u.dl_q.len() >= DL_QUEUE {
             u.dl_q.pop_front();
         }
@@ -919,7 +1002,7 @@ impl Site {
             .fold(0u8, |m, n| m | n.ul_mask);
         let subs = sub_preference(self.cfg.cell_id, self.cfg.rach_sub, nb_mask);
         let ues: Vec<SchedUe> =
-            self.ues.values().filter(|u| u.st.secured() && !u.release_after_send).map(|u| SchedUe { addr: u.addr, bsr: u.bsr, cqi: u.cqi_ul }).collect();
+            self.ues.values().filter(|u| u.st.secured() && !u.release_after_send).map(|u| SchedUe { addr: u.addr, bsr: u.bsr, cqi: u.cqi_ul, voice: !u.bearers.is_empty() }).collect();
         let spw = SCHED_PERIOD_MS * 1000 / self.cfg.profile.slot_us();
         let run = match self.cfg.profile {
             Profile::Lte => 4,
@@ -1045,6 +1128,9 @@ impl UeCtx {
             imsi: String::new(),
             session: 0,
             ip: None,
+            ims: None,
+            bearers: Vec::new(),
+            dl_voice: VecDeque::new(),
             tmsi: 0,
             cipher: None,
             grant,

@@ -15,7 +15,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::air::{decode_items, encode_items, Cause, Grant, Item, Measurement, Plain, RachCause, SysInfo};
+use crate::air::{decode_items, encode_items, Bearer, Cause, Grant, ImsInfo, Item, Measurement, Plain, RachCause, SysInfo};
 use crate::backhaul::IpConfig;
 use crate::crypto::{as_key, ct_eq, smc_mac, sr_mac, AirCipher, PROTECTED, PROTECTED_OVERHEAD};
 use crate::phy::{bytes_in, PhyCmd, PhyConfig, PhyEvent, Profile, Role, RxFrame, TxReq, TxResult};
@@ -88,6 +88,10 @@ pub enum UeEvent {
     SimError,
     Idle,
     Detached,
+    /// The IMS bearer (after `Attached` / `Resumed`, when the carrier gives one).
+    Ims(ImsInfo),
+    /// A dedicated (voice) bearer was set up or released.
+    Bearer { bearer: Bearer, up: bool },
 }
 
 #[derive(Debug, PartialEq)]
@@ -135,6 +139,11 @@ pub struct UeStatus {
     pub sinr_db: Option<f64>,
     pub ip: Option<IpConfig>,
     pub last_cause: Option<Cause>,
+    pub ims: Option<ImsInfo>,
+    /// Voice bearers up.
+    pub bearers: usize,
+    /// The temporary identity paging uses (0 = none).
+    pub tmsi: u32,
 }
 
 pub struct Ue {
@@ -154,6 +163,8 @@ pub struct Ue {
     tmsi: u32,
     sr_count: u32,
     ip: Option<IpConfig>,
+    ims: Option<ImsInfo>,
+    bearers: Vec<Bearer>,
     session: u32,
     ul_q: VecDeque<Vec<u8>>,
     ul_segs: VecDeque<Item>,
@@ -201,6 +212,8 @@ impl Ue {
             tmsi: 0,
             sr_count: 0,
             ip: None,
+            ims: None,
+            bearers: Vec::new(),
             session: 0,
             ul_q: VecDeque::new(),
             ul_segs: VecDeque::new(),
@@ -323,17 +336,46 @@ impl Ue {
             St::Idle { .. } => self.paged = true, // uplink data resumes the session
             _ => return false,
         }
-        if self.ul_q.len() >= UL_QUEUE {
-            self.ul_q.pop_front();
+        if self.bearers.iter().any(|b| b.matches(&pkt)) {
+            // a call's voice goes before everything else waiting
+            let at = self.ul_q.iter().take_while(|p| self.bearers.iter().any(|b| b.matches(p))).count();
+            if self.ul_q.len() >= UL_QUEUE {
+                self.ul_q.pop_back();
+            }
+            self.ul_q.insert(at, pkt);
+        } else {
+            if self.ul_q.len() >= UL_QUEUE {
+                self.ul_q.pop_front();
+            }
+            self.ul_q.push_back(pkt);
         }
-        self.ul_q.push_back(pkt);
         if matches!(self.st, St::Connected { .. }) {
             self.pump_ul(now);
         }
         true
     }
 
+    /// Ask the network to put the phone in idle now (before the phone's computer
+    /// sleeps): the session, both addresses and the TMSI stay, downlink pages.
+    /// False when not connected or still sending.
+    pub fn go_idle(&mut self, now: Now) -> bool {
+        if !matches!(self.st, St::Connected { .. }) || !self.ul_q.is_empty() || !self.ul_segs.is_empty() || !self.bearers.is_empty() {
+            return false;
+        }
+        if !self.ctl_q.iter().any(|i| matches!(i, Item::IdleRequest)) {
+            self.ctl_q.push_back(Item::IdleRequest);
+        }
+        self.pump_ul(now);
+        true
+    }
+
+    /// The temporary identity paging uses (0 = none).
+    pub fn tmsi(&self) -> u32 {
+        self.tmsi
+    }
+
     fn reset_session(&mut self) {
+        self.bearers.clear();
         self.cipher = None;
         self.prev = None;
         self.grant = None;
@@ -632,6 +674,23 @@ impl Ue {
                     self.grant = Some(g);
                 }
             }
+            Item::Ims(info) => {
+                if self.ims.as_ref() != Some(&info) || !from_prev {
+                    self.ims = Some(info.clone());
+                    self.ev(UeEvent::Ims(info));
+                }
+            }
+            Item::BearerSetup(b) => {
+                self.bearers.retain(|x| x.id != b.id);
+                self.bearers.push(b);
+                self.ev(UeEvent::Bearer { bearer: b, up: true });
+            }
+            Item::BearerRelease { id } => {
+                if let Some(i) = self.bearers.iter().position(|x| x.id == id) {
+                    let b = self.bearers.remove(i);
+                    self.ev(UeEvent::Bearer { bearer: b, up: false });
+                }
+            }
             Item::Data { seq, idx, count, bytes } => {
                 if let Some(pkt) = self.reasm.push(seq, idx, count, &bytes, now.ms) {
                     if self.dedup.fresh(seq) {
@@ -656,6 +715,7 @@ impl Ue {
                 }
                 self.auth = None;
                 self.tmsi = 0;
+                self.ims = None;
                 if cause.is_permanent() {
                     self.st = St::Rejected;
                 } else if cause == Cause::QuotaExhausted {
@@ -1026,6 +1086,9 @@ impl Ue {
             sinr_db: seen.map(|c| c.sinr),
             ip: self.ip,
             last_cause: self.last_cause,
+            ims: self.ims.clone(),
+            bearers: self.bearers.len(),
+            tmsi: self.tmsi,
         }
     }
 }

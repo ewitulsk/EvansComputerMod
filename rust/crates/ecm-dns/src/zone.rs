@@ -9,6 +9,8 @@
 //! www  60  A   10.0.0.4
 //! mail     MX  10 www
 //! info     TXT "hello world"
+//! _sip._udp SRV 10 60 5060 sip
+//! 2.4.1.0  NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:\\1@lab.test!" .
 //! ```
 //!
 //! Supported: `$ORIGIN`, `$TTL`, `@`, relative and absolute names, a blank owner
@@ -310,6 +312,7 @@ fn rdata_rel(d: &RData, origin: &str) -> String {
     match d {
         RData::Ns(n) | RData::Cname(n) | RData::Ptr(n) => relative(n, origin),
         RData::Mx(p, n) => format!("{p} {}", relative(n, origin)),
+        RData::Srv(s) => format!("{} {} {} {}", s.priority, s.weight, s.port, relative(&s.target, origin)),
         RData::Soa(s) => format!(
             "{} {} ( {} {} {} {} {} )",
             relative(&s.mname, origin),
@@ -325,7 +328,7 @@ fn rdata_rel(d: &RData, origin: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::wire::*;
 
@@ -348,6 +351,40 @@ mod tests {
         // written back and parsed again: the same zone
         let again = Zone::parse(&z.to_text(), "lab.test").unwrap();
         assert_eq!(again, z);
+    }
+
+    /// The ENUM zone of a carrier's number block 214-555 (country code 1), its SIP SRV
+    /// records in the same file under an absolute name.
+    pub const ENUM_ZONE: &str = "$ORIGIN 5.5.5.4.1.2.1.e164.arpa.\n$TTL 300\n@ SOA ns1.carrier.ecm. admin.carrier.ecm. 1 60 30 600 30\n@ NS ns1.carrier.ecm.\n2.4.1.0 NAPTR 100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:\\\\1@carrier.ecm!\" .\n        NAPTR ( 100 20 \"U\" \"E2U+sip\"\n                \"!^\\\\+1(.*)$!sip:\\\\1@backup.carrier.ecm!\" . )\n3.4.1.0 60 IN NAPTR 10 0 s SIP+D2U \"\" _sip._udp.5.5.5.4.1.2.1.e164.arpa.\n_sip._udp SRV 10 60 5060 sip.carrier.ecm.\n_sip._udp SRV 20 0 5060 @\n";
+
+    #[test]
+    fn parses_naptr_and_srv() {
+        let z = Zone::parse(ENUM_ZONE, "5.5.5.4.1.2.1.e164.arpa").unwrap();
+        let n = z.get("2.4.1.0.5.5.5.4.1.2.1.e164.arpa", NAPTR);
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0].data.to_text(), "100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:\\\\1@carrier.ecm!\" .");
+        assert_eq!(
+            n[1].data,
+            RData::Naptr(Naptr {
+                order: 100,
+                preference: 20,
+                flags: "U".into(),
+                services: "E2U+sip".into(),
+                regexp: "!^\\+1(.*)$!sip:\\1@backup.carrier.ecm!".into(),
+                replacement: String::new(),
+            })
+        );
+        let s = &z.get("3.4.1.0.5.5.5.4.1.2.1.e164.arpa", NAPTR)[0];
+        assert_eq!(s.ttl, 60);
+        assert_eq!(s.data.to_text(), "10 0 \"s\" \"SIP+D2U\" \"\" _sip._udp.5.5.5.4.1.2.1.e164.arpa.");
+        let srv = z.get("_sip._udp.5.5.5.4.1.2.1.e164.arpa", SRV);
+        assert_eq!(srv[0].data, RData::Srv(Srv { priority: 10, weight: 60, port: 5060, target: "sip.carrier.ecm".into() }));
+        assert_eq!(srv[1].data.target(), Some("5.5.5.4.1.2.1.e164.arpa"));
+        // written back (relative names, quoted strings) and parsed again: the same zone
+        let text = z.to_text();
+        assert!(text.contains("_sip._udp\t300\tIN\tSRV\t20 0 5060 @"), "{text}");
+        assert_eq!(Zone::parse(&text, "5.5.5.4.1.2.1.e164.arpa").unwrap(), z);
+        assert!(Zone::parse(&ENUM_ZONE.replace("5060 @", "5060"), "5.5.5.4.1.2.1.e164.arpa").is_err());
     }
 
     #[test]

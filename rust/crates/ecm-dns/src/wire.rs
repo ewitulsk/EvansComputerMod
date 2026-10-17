@@ -1,5 +1,5 @@
 //! RFC 1035 messages: header flags, questions, resource records (A, NS, CNAME, SOA, PTR,
-//! MX, TXT; anything else is kept as raw RDATA), decode with hop and size limits, encode
+//! MX, TXT, SRV, NAPTR; anything else is kept as raw RDATA), decode with hop and size limits, encode
 //! with name compression.
 
 use crate::name::{fqdn, ip_str, normalize, Ip};
@@ -14,6 +14,10 @@ pub const PTR: u16 = 12;
 pub const MX: u16 = 15;
 pub const TXT: u16 = 16;
 pub const AAAA: u16 = 28;
+/// RFC 2782 service location.
+pub const SRV: u16 = 33;
+/// RFC 3403 naming authority pointer (ENUM, RFC 6116; SIP, RFC 3263).
+pub const NAPTR: u16 = 35;
 pub const AXFR: u16 = 252;
 pub const ANY: u16 = 255;
 pub const IN: u16 = 1;
@@ -46,6 +50,8 @@ pub fn type_name(t: u16) -> String {
         MX => "MX".into(),
         TXT => "TXT".into(),
         AAAA => "AAAA".into(),
+        SRV => "SRV".into(),
+        NAPTR => "NAPTR".into(),
         AXFR => "AXFR".into(),
         ANY => "ANY".into(),
         n => format!("TYPE{n}"),
@@ -63,6 +69,8 @@ pub fn type_from_name(s: &str) -> Option<u16> {
         "MX" => MX,
         "TXT" => TXT,
         "AAAA" => AAAA,
+        "SRV" => SRV,
+        "NAPTR" => NAPTR,
         "AXFR" => AXFR,
         "ANY" | "*" => ANY,
         _ => return u.strip_prefix("TYPE")?.parse().ok(),
@@ -93,6 +101,29 @@ pub struct Soa {
     pub minimum: u32,
 }
 
+/// SRV data (RFC 2782): `priority weight port target`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Srv {
+    pub priority: u16,
+    pub weight: u16,
+    pub port: u16,
+    /// The host; the root (`""`, shown as `.`) means "no such service here".
+    pub target: String,
+}
+
+/// NAPTR data (RFC 3403): `order preference "flags" "services" "regexp" replacement`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Naptr {
+    pub order: u16,
+    pub preference: u16,
+    pub flags: String,
+    pub services: String,
+    /// A substitution expression `!pattern!replacement!` (see [`crate::enum_dns`]).
+    pub regexp: String,
+    /// The next name to look up (`""`, shown as `.`, when `regexp` is used).
+    pub replacement: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RData {
     A(Ip),
@@ -102,7 +133,14 @@ pub enum RData {
     Mx(u16, String),
     Txt(Vec<String>),
     Soa(Soa),
+    Srv(Srv),
+    Naptr(Naptr),
     Other(Vec<u8>),
+}
+
+/// A character-string in presentation form: quoted, with `\` and `"` escaped (as BIND).
+pub fn quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 impl RData {
@@ -112,11 +150,17 @@ impl RData {
             RData::A(ip) => ip_str(*ip),
             RData::Ns(n) | RData::Cname(n) | RData::Ptr(n) => fqdn(n),
             RData::Mx(p, n) => format!("{p} {}", fqdn(n)),
-            RData::Txt(parts) => parts
-                .iter()
-                .map(|p| format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\"")))
-                .collect::<Vec<_>>()
-                .join(" "),
+            RData::Txt(parts) => parts.iter().map(|p| quote(p)).collect::<Vec<_>>().join(" "),
+            RData::Srv(s) => format!("{} {} {} {}", s.priority, s.weight, s.port, fqdn(&s.target)),
+            RData::Naptr(n) => format!(
+                "{} {} {} {} {} {}",
+                n.order,
+                n.preference,
+                quote(&n.flags),
+                quote(&n.services),
+                quote(&n.regexp),
+                fqdn(&n.replacement)
+            ),
             RData::Soa(s) => format!(
                 "{} {} {} {} {} {} {}",
                 fqdn(&s.mname),
@@ -140,10 +184,11 @@ impl RData {
         }
     }
 
-    /// A target name the record points at (NS, CNAME, PTR, MX).
+    /// A target name the record points at (NS, CNAME, PTR, MX, SRV).
     pub fn target(&self) -> Option<&str> {
         match self {
             RData::Ns(n) | RData::Cname(n) | RData::Ptr(n) | RData::Mx(_, n) => Some(n),
+            RData::Srv(s) => Some(&s.target),
             _ => None,
         }
     }
@@ -168,6 +213,8 @@ impl Record {
             RData::Mx(..) => MX,
             RData::Txt(_) => TXT,
             RData::Soa(_) => SOA,
+            RData::Srv(_) => SRV,
+            RData::Naptr(_) => NAPTR,
             RData::Other(_) => 0,
         };
         Record { name: name.to_string(), rtype, class: IN, ttl, data }
@@ -429,6 +476,12 @@ impl Writer {
         self.buf.push(0);
     }
 
+    fn char_string(&mut self, p: &str) {
+        let b = &p.as_bytes()[..p.len().min(255)];
+        self.buf.push(b.len() as u8);
+        self.buf.extend_from_slice(b);
+    }
+
     fn record(&mut self, r: &Record) {
         self.name(&r.name, true);
         self.u16(r.rtype);
@@ -445,9 +498,7 @@ impl Writer {
             }
             RData::Txt(parts) => {
                 for p in parts {
-                    let b = &p.as_bytes()[..p.len().min(255)];
-                    self.buf.push(b.len() as u8);
-                    self.buf.extend_from_slice(b);
+                    self.char_string(p);
                 }
             }
             RData::Soa(s) => {
@@ -456,6 +507,21 @@ impl Writer {
                 for v in [s.serial, s.refresh, s.retry, s.expire, s.minimum] {
                     self.u32(v);
                 }
+            }
+            // RFC 2782 / RFC 3403: these names are never compressed.
+            RData::Srv(s) => {
+                self.u16(s.priority);
+                self.u16(s.weight);
+                self.u16(s.port);
+                self.name(&s.target, false);
+            }
+            RData::Naptr(n) => {
+                self.u16(n.order);
+                self.u16(n.preference);
+                for p in [&n.flags, &n.services, &n.regexp] {
+                    self.char_string(p);
+                }
+                self.name(&n.replacement, false);
             }
             RData::Other(b) => self.buf.extend_from_slice(b),
         }
@@ -569,6 +635,44 @@ fn read_record(data: &[u8], off: usize) -> Result<(Record, usize), WireError> {
             }
             RData::Txt(parts)
         }
+        SRV => {
+            if rdlen < 7 {
+                return Err(WireError::BadRdata);
+            }
+            let (target, e) = name_in(start + 6)?;
+            exact(e)?;
+            let n = |i: usize| u16::from_be_bytes([rd[i], rd[i + 1]]);
+            RData::Srv(Srv { priority: n(0), weight: n(2), port: n(4), target })
+        }
+        NAPTR => {
+            if rdlen < 8 {
+                return Err(WireError::BadRdata);
+            }
+            let mut i = 4;
+            let mut strs = Vec::with_capacity(3);
+            for _ in 0..3 {
+                let l = *rd.get(i).ok_or(WireError::BadRdata)? as usize;
+                let s = rd.get(i + 1..i + 1 + l).ok_or(WireError::BadRdata)?;
+                strs.push(String::from_utf8_lossy(s).into_owned());
+                i += 1 + l;
+            }
+            if i >= rdlen {
+                return Err(WireError::BadRdata);
+            }
+            let (replacement, e) = name_in(start + i)?;
+            exact(e)?;
+            let regexp = strs.pop().unwrap_or_default();
+            let services = strs.pop().unwrap_or_default();
+            let flags = strs.pop().unwrap_or_default();
+            RData::Naptr(Naptr {
+                order: u16::from_be_bytes([rd[0], rd[1]]),
+                preference: u16::from_be_bytes([rd[2], rd[3]]),
+                flags,
+                services,
+                regexp,
+                replacement,
+            })
+        }
         _ => RData::Other(rd.to_vec()),
     };
     Ok((Record { name, rtype, class, ttl, data: rdata }, end))
@@ -583,6 +687,10 @@ pub fn rdata_from_text(rtype: u16, tokens: &[String], origin: &str) -> Result<RD
     let num = |i: usize| -> Result<u32, String> {
         let t = tokens.get(i).ok_or("missing number")?;
         crate::zone::parse_ttl(t).ok_or_else(|| format!("bad number '{t}'"))
+    };
+    let u16v = |i: usize| -> Result<u16, String> {
+        let t = tokens.get(i).ok_or("missing number")?;
+        t.parse().map_err(|_| format!("bad number '{t}' (0-65535)"))
     };
     let want = |n: usize| -> Result<(), String> {
         if tokens.len() == n {
@@ -618,6 +726,28 @@ pub fn rdata_from_text(rtype: u16, tokens: &[String], origin: &str) -> Result<RD
                 return Err("TXT needs a string".into());
             }
             RData::Txt(tokens.to_vec())
+        }
+        SRV => {
+            want(4)?;
+            RData::Srv(Srv { priority: u16v(0)?, weight: u16v(1)?, port: u16v(2)?, target: name(3)? })
+        }
+        NAPTR => {
+            want(6)?;
+            let cs = |i: usize| -> Result<String, String> {
+                let t = &tokens[i];
+                if t.len() > 255 {
+                    return Err(format!("character-string longer than 255 bytes: '{t}'"));
+                }
+                Ok(t.clone())
+            };
+            RData::Naptr(Naptr {
+                order: u16v(0)?,
+                preference: u16v(1)?,
+                flags: cs(2)?,
+                services: cs(3)?,
+                regexp: cs(4)?,
+                replacement: name(5)?,
+            })
         }
         SOA => {
             want(7)?;
@@ -737,5 +867,132 @@ mod tests {
         assert_eq!(type_from_name("TYPE99"), Some(99));
         assert_eq!(type_name(99), "TYPE99");
         assert_eq!(type_from_name("nope"), None);
+        assert_eq!((type_from_name("naptr"), type_from_name("SRV")), (Some(NAPTR), Some(SRV)));
+        assert_eq!((type_name(35), type_name(33)), ("NAPTR".to_string(), "SRV".to_string()));
+    }
+
+    fn sip_naptr() -> Naptr {
+        Naptr {
+            order: 100,
+            preference: 10,
+            flags: "u".into(),
+            services: "E2U+sip".into(),
+            regexp: "!^.*$!sip:\\1@carrier.ecm!".into(),
+            replacement: String::new(),
+        }
+    }
+
+    fn sip_srv() -> Srv {
+        Srv { priority: 10, weight: 60, port: 5060, target: "sip.carrier.ecm".into() }
+    }
+
+    /// The RDATA of the only answer of an encoded message without questions.
+    fn rdata_of(b: &[u8]) -> &[u8] {
+        let (_, o) = read_name(b, 12).unwrap();
+        let len = u16::from_be_bytes([b[o + 8], b[o + 9]]) as usize;
+        &b[o + 10..o + 10 + len]
+    }
+
+    fn one(r: Record) -> Message {
+        let mut m = Message::default();
+        m.header.qr = true;
+        m.answers.push(r);
+        m
+    }
+
+    #[test]
+    fn naptr_and_srv_text_like_bind() {
+        let n = Record::new("2.4.1.0.5.5.5.4.1.2.1.e164.arpa", 300, RData::Naptr(sip_naptr()));
+        assert_eq!(n.rtype, NAPTR);
+        assert_eq!(n.data.to_text(), "100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:\\\\1@carrier.ecm!\" .");
+        assert_eq!(
+            n.to_columns(),
+            "2.4.1.0.5.5.5.4.1.2.1.e164.arpa.    300 IN NAPTR 100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:\\\\1@carrier.ecm!\" ."
+        );
+        let s = Record::new("_sip._udp.carrier.ecm", 60, RData::Srv(sip_srv()));
+        assert_eq!(s.rtype, SRV);
+        assert_eq!(s.data.to_text(), "10 60 5060 sip.carrier.ecm.");
+        assert_eq!(s.to_text(), "_sip._udp.carrier.ecm.\t60\tIN\tSRV\t10 60 5060 sip.carrier.ecm.");
+        assert_eq!(s.to_columns(), "_sip._udp.carrier.ecm.      60 IN SRV   10 60 5060 sip.carrier.ecm.");
+        assert_eq!(s.data.target(), Some("sip.carrier.ecm"));
+        assert_eq!(n.data.target(), None);
+    }
+
+    #[test]
+    fn naptr_and_srv_exact_bytes() {
+        let b = one(Record::new("e164.arpa", 300, RData::Naptr(sip_naptr()))).encode();
+        let mut want = vec![0, 100, 0, 10, 1, b'u', 7];
+        want.extend_from_slice(b"E2U+sip");
+        want.push(25);
+        want.extend_from_slice(b"!^.*$!sip:\\1@carrier.ecm!");
+        want.push(0);
+        assert_eq!(rdata_of(&b), &want[..]);
+        assert_eq!(Message::decode(&b).unwrap().answers[0].data, RData::Naptr(sip_naptr()));
+
+        let b = one(Record::new("_sip._udp.carrier.ecm", 60, RData::Srv(sip_srv()))).encode();
+        let mut want = vec![0, 10, 0, 60, 0x13, 0xc4, 3];
+        want.extend_from_slice(b"sip\x07carrier\x03ecm\x00");
+        // the target is written out in full although "carrier.ecm" could be a pointer
+        assert_eq!(rdata_of(&b), &want[..]);
+        assert_eq!(&b[b.len() - 23 - 10..b.len() - 23], &[0, 33, 0, 1, 0, 0, 0, 60, 0, 23]);
+        assert_eq!(Message::decode(&b).unwrap().answers[0].data, RData::Srv(sip_srv()));
+    }
+
+    #[test]
+    fn naptr_and_srv_roundtrip_and_bad_rdata() {
+        let mut m = sample();
+        let mut other = sip_naptr();
+        other.flags = "S".into();
+        other.services = "SIP+D2U".into();
+        other.regexp = String::new();
+        other.replacement = "_sip._udp.lab.test".into();
+        m.answers.push(Record::new("lab.test", 60, RData::Naptr(other)));
+        m.answers.push(Record::new("_sip._udp.lab.test", 60, RData::Srv(Srv { target: "www.lab.test".into(), ..sip_srv() })));
+        m.answers.push(Record::new("_x._tcp.lab.test", 60, RData::Srv(Srv { priority: 0, weight: 0, port: 0, target: String::new() })));
+        let b = m.encode();
+        assert_eq!(Message::decode(&b).unwrap(), m);
+        // mutated copies never panic, and what decodes encodes and decodes again
+        let mut rng = 0x9e37_79b9u32;
+        for _ in 0..20000 {
+            let mut x = b.clone();
+            for _ in 0..2 {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                let i = rng as usize % x.len();
+                x[i] = (rng >> 8) as u8;
+            }
+            if let Ok(d) = Message::decode(&x) {
+                let _ = Message::decode(&d.encode()).unwrap();
+            }
+        }
+        // RDATA that ends early or runs over
+        for (t, rd) in [(SRV, vec![0u8, 1, 0, 2, 0, 3]), (SRV, vec![0, 1, 0, 2, 0, 3, 0, 0]), (NAPTR, vec![0, 1, 0, 2, 1, b'u', 0, 0]), (NAPTR, vec![0, 1, 0, 2, 5, b'u', 0, 0, 0])] {
+            let mut x = vec![0u8; 12];
+            x[7] = 1;
+            x.push(0);
+            x.extend_from_slice(&t.to_be_bytes());
+            x.extend_from_slice(&[0, 1, 0, 0, 0, 1]);
+            x.extend_from_slice(&(rd.len() as u16).to_be_bytes());
+            x.extend_from_slice(&rd);
+            assert_eq!(Message::decode(&x), Err(WireError::BadRdata), "{t} {rd:?}");
+        }
+    }
+
+    #[test]
+    fn naptr_and_srv_from_text() {
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            rdata_from_text(SRV, &t(&["10", "60", "5060", "sip"]), "carrier.ecm"),
+            Ok(RData::Srv(sip_srv()))
+        );
+        assert_eq!(
+            rdata_from_text(NAPTR, &t(&["100", "10", "u", "E2U+sip", "!^.*$!sip:\\1@carrier.ecm!", "."]), "x"),
+            Ok(RData::Naptr(sip_naptr()))
+        );
+        assert!(rdata_from_text(SRV, &t(&["10", "60", "70000", "sip"]), "x").is_err());
+        assert!(rdata_from_text(SRV, &t(&["10", "60", "5060"]), "x").is_err());
+        assert!(rdata_from_text(NAPTR, &t(&["100", "10", "u", "E2U+sip", "."]), "x").is_err());
+        assert!(rdata_from_text(NAPTR, &t(&["100", "10", "u", "E2U+sip", &"x".repeat(256), "."]), "x").is_err());
     }
 }
