@@ -58,7 +58,7 @@ North American style numbers: area code (NPA), exchange (NXX), line. They're wri
 - **Giving a SIM a number.** The number lives in the subscriber record (`sub ... msisdn=+12145550142`), not on the SIM, as in a real network.
   - `cored sim new` takes the next free line of the carrier's blocks, starting at line 0100 (`FIRST_LINE`), and also writes the number to the SIM. The SIM's copy is only for display: its tooltip and Settings show it before the phone attaches, and the network's copy wins.
   - Subscribers without a number get one the first time cored loads a database that has a block (`fill_numbers`).
-  - `cored number <who> [<number>]`, `number-release`, `number-move <number> <who>` and `numbers` manage them by hand.
+  - `cored number <who> [<number>]`, `cored number release <who>`, `cored number move <number> <who>` and `cored numbers` manage them by hand.
 - **Short codes and dialling.** `ecm_tel::number::classify` reads what the keypad typed:
   - 7 digits within your own area code, or 10 digits;
   - `*86` voicemail; `611` support; `*67` withhold your number;
@@ -175,7 +175,7 @@ ianad, the DNS root's TLD desk, is also the numbering administrator. It keeps th
    - A makes a port-out code for the subscriber: `cored port-code <who>`. It prints a code like `3fa2c1-b843a26d`, a nonce and an HMAC of the number under A's key. Each code works once.
    - B gives the number to its new SIM (`cored number <sim> +12145550142 ported`), then asks ianad to move it: `domain enum port +12145550142 cell-blue.ecm <code> <B's key>`.
    - ianad checks the code with A's key and writes a per-number NAPTR that overrides the block.
-   - A releases its old subscriber's number (`cored number-release <who>`). Calls from A's own phones then find B through ENUM like anyone else's.
+   - A releases its old subscriber's number (`cored number release <who>`). Calls from A's own phones then find B through ENUM like anyone else's.
    - Porting back to the block's holder removes the override.
 
 Check with `domain enum list` and `dig -t NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa`.
@@ -272,10 +272,12 @@ telephonyd itself reads and writes the files a client names only under `/home/` 
   - `-p python` and `-p lua` for the phone module and parity, and `-p ecm-man`.
 - **UI goldens** (`UiGoldenTest`): `dialer_*`, `messages_*`, `contacts_*`, `settings_cellular*`.
 - **Java:** `CellPlanTest`.
-- **Scenarios** (`/ecm scenario`, GameTests `ecm_telephony`): see TESTING.md.
+- **Scenarios** (`/ecm scenario`, GameTests `ecm_telephony`): `tel_register`, `tel_call` (with a video playing during the call), `tel_call_asleep`, `tel_sms`, `tel_mms_group`, `tel_scripts`, `tel_ivr`, `tel_interconnect` (two carriers, ENUM, peering, porting); `tel_tech_village` runs in the tech client suite. See TESTING.md.
 
 ## Known limits
 
 - telephonyd's MMS sends and fetches and its visual-voicemail requests are blocking HTTP inside its main loop (up to 30 s). A call in progress stalls meanwhile.
-- **Display pipeline (#86):** telephonyd's audio still writes 20 ms frames straight into the mixer. Moving to the pts/pump pipeline, with RTP timestamps mapped to the shared clock and calls kept out of the video playout delay, waits for #86 to land.
+- **Display pipeline (#86):** call audio is live: a speaker drain that carries the `phone` role goes out at once with `SpeakerAudioPacket.FLAG_LIVE`, not on a video's playout delay (`tel_call` checks it while a video plays). telephonyd still writes its 20 ms frames straight into the mixer; its RTP timestamps are not mapped to the shared clock.
+- **A pocketed phone after a call:** celld goes idle when the phone is pocketed (the computer stays up 800 ms for it). After a page has woken it and the call has ended, celld does not go idle again before the computer sleeps, so a second call to the same pocketed phone isn't paged until it is taken out and pocketed again.
+- **CDRs** say `route=direct` for calls across the border too.
 - No emergency calls, no roaming, no landlines, and no billing beyond CDRs.
