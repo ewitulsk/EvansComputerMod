@@ -473,7 +473,8 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 | `resolvectl` | `resolvectl status` | Show DNS configuration |
 | `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
 | `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
-| `httpd` | `httpd <port>` | Start HTTP file server |
+| `httpd` | `httpd <port> [dir]` | Start HTTP file server (serves `dir`, default the computer's root) |
+| `browser` | `browser [address]` | The Browser app (GUI; see [docs/gui/BROWSER.md](docs/gui/BROWSER.md)) |
 | `curl` | `curl [options] <url>` | HTTP client |
 | `gba` | `gba <rom.gba> [screen]` | Game Boy Advance emulator (see [`gba`](#game-boy-advance-emulator-gba)) |
 | `beep` | `beep [freq_hz] [ms] [--wave sine] [--speaker SIDE]` | Play a tone on a speaker |

@@ -1,10 +1,27 @@
 use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR};
 use std::fs;
+use std::sync::OnceLock;
+
+/// The folder served (`httpd PORT DIR`); empty = the computer's root.
+static ROOT: OnceLock<String> = OnceLock::new();
+
+/// Where a request path's file is on disk.
+fn local(path: &str) -> String {
+    let root = ROOT.get().map(String::as_str).unwrap_or("");
+    let path = path.trim_start_matches('/');
+    if root.is_empty() {
+        if path.is_empty() { ".".to_string() } else { path.to_string() }
+    } else if path.is_empty() {
+        root.to_string()
+    } else {
+        format!("{}/{}", root.trim_end_matches('/'), path)
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: httpd <port>");
+        eprintln!("Usage: httpd <port> [dir]   (dir: the folder to serve, default the computer's root)");
         std::process::exit(1);
     }
 
@@ -12,6 +29,14 @@ fn main() {
         Ok(p) => p,
         Err(_) => { eprintln!("Invalid port number"); std::process::exit(1); }
     };
+
+    if let Some(dir) = args.get(2) {
+        if !std::path::Path::new(dir).is_dir() {
+            eprintln!("httpd: {} is not a folder", dir);
+            std::process::exit(1);
+        }
+        let _ = ROOT.set(dir.clone());
+    }
 
     // Create TCP socket
     let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
@@ -39,7 +64,10 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("HTTP server listening on port {}. Ctrl+T to stop.", port);
+    match ROOT.get() {
+        Some(dir) => println!("HTTP server listening on port {}, serving {}. Ctrl+T to stop.", port, dir),
+        None => println!("HTTP server listening on port {}. Ctrl+T to stop.", port),
+    }
 
     loop {
         let mut peer_addr = SockAddrIn::default();
@@ -122,13 +150,13 @@ fn handle_connection(conn: i32) {
 fn handle_get(conn: i32, path: &str) {
     // A site's front page: index.html when present, else the file listing.
     if path == "/" {
-        if let Ok(page) = fs::read("index.html") {
+        if let Ok(page) = fs::read(local("index.html")) {
             send_response(conn, 200, "OK", "text/html", &page);
             return;
         }
         let mut body = String::from("<html><head><title>Terminal OS File Server</title></head><body>\n");
         body.push_str("<h1>Files</h1>\n<ul>\n");
-        if let Ok(entries) = fs::read_dir(".") {
+        if let Ok(entries) = fs::read_dir(local("")) {
             let mut items: Vec<(String, bool)> = Vec::new();
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -147,11 +175,21 @@ fn handle_get(conn: i32, path: &str) {
         body.push_str("</ul>\n</body></html>");
         send_response(conn, 200, "OK", "text/html", body.as_bytes());
     } else {
-        let filename = path.trim_start_matches('/');
-        match fs::read(filename) {
+        let filename = path.split('?').next().unwrap_or("").trim_start_matches('/');
+        if filename.split('/').any(|seg| seg == "..") {
+            send_response(conn, 404, "Not Found", "text/plain", b"File not found");
+            return;
+        }
+        match fs::read(local(filename)) {
             Ok(content) => {
                 let content_type = if filename.ends_with(".html") || filename.ends_with(".htm") {
                     "text/html"
+                } else if filename.ends_with(".css") {
+                    "text/css"
+                } else if filename.ends_with(".js") {
+                    "text/javascript"
+                } else if filename.ends_with(".png") {
+                    "image/png"
                 } else if filename.ends_with(".json") {
                     "application/json"
                 } else if filename.ends_with(".py") {
@@ -172,7 +210,11 @@ fn handle_post(conn: i32, path: &str, body: &[u8]) {
         send_response(conn, 400, "Bad Request", "text/plain", b"No filename specified");
         return;
     }
-    match fs::write(filename, body) {
+    if filename.split('/').any(|seg| seg == "..") {
+        send_response(conn, 400, "Bad Request", "text/plain", b"Bad path");
+        return;
+    }
+    match fs::write(local(filename), body) {
         Ok(_) => send_response(conn, 200, "OK", "text/plain", b"OK"),
         Err(_) => send_response(conn, 500, "Internal Server Error", "text/plain", b"Failed to write file"),
     }
