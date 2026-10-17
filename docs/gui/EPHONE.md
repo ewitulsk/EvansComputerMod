@@ -21,18 +21,18 @@ and cellular code it builds on).
 
 ## States
 
-`PhoneServer` scans every player's hotbar and off hand each server tick and tells each phone's
-`PhoneHost` where it is.
+`PhoneServer` scans every player's inventory (hotbar, main inventory and off hand) each server tick
+and tells each phone's `PhoneHost` where it is.
 
 | Where | State | What happens |
 | --- | --- | --- |
 | Main hand (selected hotbar slot) or off hand | **AWAKE** | Host attached to the computer's `ComputerHost`, registered by UUID, modules live, `ComputerInstance.wake()`. First time: boots (`terminal_os`, no wired NICs). |
-| Hotbar, not selected | **ASLEEP** | `ComputerInstance.sleep()` (kernel worker and every child stop at their next safe point). Modules stay live (Wi-Fi stays associated; the AP may time it out). |
-| Anywhere else (inventory, chest, ground, dock) | **OFF** | Sleep, modules unloaded (radios leave the air), and once the sleep has landed (`awaitAsleep`, or 40 ticks) the host detaches: the computer stays in memory, paused. Picked up again, it resumes where it was. |
+| Hotbar, not selected, or the main inventory (a pocket) | **ASLEEP** | `ComputerInstance.sleep()` (kernel worker and every child stop at their next safe point). Modules stay live (Wi-Fi stays associated; the AP may time it out). Refresh wakes, wake sockets and background modes keep running, so a call or music goes on in the pocket ([APPS.md](APPS.md#background-ephone)). |
+| Anywhere else (chest, ground, dock) | **OFF** | Sleep, modules unloaded (radios leave the air), and once the sleep has landed (`awaitAsleep`, or 40 ticks) the host detaches: the computer stays in memory, paused. Picked up again, it resumes where it was. |
 | Holder logs out, or the battery hits 0 | stopped | The computer is closed (`ComputerHost.forget()`); it cold-boots next time. Server stop does the same (`ComputerHost.shutdown`). |
 
 Robustness: duplicates of one phone are one computer; when copies are in several places the
-best placement wins (held over hotbar) and on a tie the current holder keeps it, so two players
+best placement wins (held over carried) and on a tie the current holder keeps it, so two players
 holding copies don't make it flap. Swapping hands keeps it awake; dropping it, death (items drop)
 or putting it in a chest turns it off; a dimension change moves its pose (and radios) with the
 player. The FakePlayers of scenarios are included with `PhoneServer.track`.
@@ -202,10 +202,12 @@ app, active background modes, hotkey claims). The shell sends the
 | --- | --- |
 | An app's window gets focus (the shell shows it) | It is the foreground app; if suspended, `resume` (its process group runs again). |
 | Focus leaves it (home, another app) | `suspend`: `WillSuspend{500 ms}` over its UI connection -> `SaveState` kept in `/var/apps/<id>/state` -> its process group paused. Apps started in the last 5 s are left alone while they open their window; a sweep every 0.5 s suspends any other background app. |
-| The phone leaves the hand (hotbar or away) | `PhoneLifecycle.willSleep` -> `PhoneUi.willSleep` suspends every running app on a worker and holds the computer's sleep for their save deadline plus 0.3 s (at most 2 s). |
+| The phone leaves the hand (hotbar, pocket or away) | `PhoneLifecycle.willSleep` -> `PhoneUi.willSleep` suspends every running app on a worker and holds the computer's sleep for their save deadline plus 0.3 s (at most 2 s). |
 | Back in hand | `PhoneUi.wake`: the foreground app resumes. |
-| In the hotbar | Refresh wakes from the app manager's `BackgroundScheduler` (its own 1 s timer): an app that declared `background = { refresh = true }` and holds `background:refresh` is resumed for `apps.refreshBudgetMs` (2 s) every `apps.refreshIntervalMinutes` (5), the computer woken for the window (`wakeFor`), then paused again; `BackgroundDone` ends it early. |
-| Background modes | `audio` starts by itself when an app that declared it (and holds `background:audio`) writes to the phone's speaker (`SpeakerAudio` write listener -> `PhoneUi.audioActivity`) and stops 2 s after its last write. While on, the suspended app runs duty-cycled (10 % of every 100 ms, waking the sleeping computer for each slice); the status bar shows `AUDIO`. The other modes are started by `BackgroundScheduler.startMode` as before (nothing calls them on a phone yet). |
+| In the hotbar or the pocket | Refresh wakes from the app manager's `BackgroundScheduler` (its own 1 s timer): an app that declared `background = { refresh = true }` and holds `background:refresh` is resumed for `apps.refreshBudgetMs` (2 s) every `apps.refreshIntervalMinutes` (5), the computer woken for the window (`wakeFor`), then paused again; `BackgroundDone` ends it early. |
+| Background modes | An app starts `audio`, `call`, `radio`, `transfer` or `navigation` with `BackgroundMode{mode, on}`; `audio` also starts by itself when an app that declared it writes to the phone's speaker (`SpeakerAudio` write listener -> `PhoneUi.audioActivity`) and stops 2 s after its last write. The first time the app is hidden with a mode on, the shell asks once ("Keep Discord running in the background for calls?"). While on and allowed, the suspended app runs duty-cycled (`apps.backgroundCpuPercent.<mode>`: 10 % of every 100 ms, 25 % for a call, waking the sleeping computer for each slice); the status bar shows `AUDIO` / `CALL`, and `MIC` while a hidden app reads the microphone. At most `apps.maxBackgroundApps` (2) apps at once; the oldest is stopped and a notification names it. |
+| Wake sockets | Data on a socket with `SO_ECM_WAKE` gives its suspended app a refresh window at once (a sleeping phone lets network interrupts run the kernel briefly to see it): a Discord message notifies in seconds. |
+| Now Playing | `MediaSession` from an app -> a card in the notification sheet (art, title, progress, previous / play-pause / next); a double-tap on worn AirPods plays or pauses it. The sheet's volume slider expands into the Volume Mixer's strips. |
 
 ### Input
 
@@ -339,8 +341,9 @@ your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, 
 
 - `phone_basics`: held = awake (boots, console 30x25, the phone shell up); a Python counter runs on
   the console behind the GUI; hotkey slot 1 is taken from the holder (it goes to the open app,
-  `phone_gui` checks that; control: refused with the phone only in the hotbar); hotbar = asleep, counter frozen for 1.5 s; back in hand it continues on the same computer; into
-  the inventory = off (detached, same computer paused, frozen); back in the hotbar it resumes
+  `phone_gui` checks that; control: refused with the phone only in the hotbar); hotbar = asleep, counter frozen for 1.5 s; back in hand it continues on the same computer; in
+  the main inventory = asleep and still attached (a pocket); into a chest (placed, opened, the phone
+  shift-clicked in) = off (detached, same computer paused, frozen); taken back and held it resumes
   where it was; off hand = awake.
 - `phone_battery` (real time): drains while held (written to the item); docked = off, lamp lit,
   charging; an almost flat battery powers it off and stops the computer (control: it stays off in

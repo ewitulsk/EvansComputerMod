@@ -368,13 +368,15 @@ The device sets the policy. **ePhones follow iPhone rules. Terminals behave like
 | --- | --- | --- |
 | Foreground | The app is on screen and the phone is awake (held) | Unlimited, with `Frame` events |
 | Suspended | Switched away, or the phone is asleep or off | None. The process is paused in memory |
-| Refresh wake | Every 5 min while the phone is in the hotbar (configurable) | Up to 2 s of run time, then suspended again. The app calls `BackgroundDone` to finish early |
-| Exception mode | A declared and approved `background:<mode>` that is actually in use (audio playing, a download running) | Capped at 10% of a core; status-bar indicator |
+| Refresh wake | Every 5 min while the phone is in the hotbar or pocket (configurable), or at once when data reaches one of its wake sockets (`SO_ECM_WAKE`) | Up to 2 s of run time, then suspended again. The app calls `BackgroundDone` to finish early |
+| Background mode | A declared `background:<mode>` (`audio`, `call`, `radio`, `transfer`, `navigation`) the app turned on with `BackgroundMode{mode, on}` (or, for `audio`, by writing to the speaker), allowed by the player the first time it was hidden with it on | Capped per mode (10 % of a core, 25 % for `call`); status-bar indicator; at most `apps.maxBackgroundApps` apps at once |
 | Terminated | Logout, restart, memory pressure, or a long suspend | None; relaunched cold |
 
 Before any suspend, the app gets `WillSuspend{deadline_ms: 500}` and saves its state with `SaveState{bytes}`, which is kept under `/var/apps/<id>/state`. After a cold start it gets `Restore{bytes}` right after `Welcome` (which says so with `restore_follows`), before its first `Configure`. That's how phones look like they "resume where they left off" across restarts. The limits are documented in [Display Pipeline](DISPLAY_PIPELINE.md#suspend-and-resume-how-it-works-and-its-limits).
 
 **As built (P5b).** `SaveState` from an app the app manager launched goes to `AppManager.onSaveState` (other programs' `SaveState` is dropped and logged); `Hello` from such an app gets `restore_follows` and `Restore` when it has a saved state; `BackgroundDone` goes to `AppManager.onBackgroundDone`. The ePhone's rules (who is suspended when, refresh wakes, the audio exception) are in [EPHONE.md](EPHONE.md#lifecycle-iphone-rules-lifecyclepolicyphone).
+
+**Background modes (as built).** `BackgroundMode{mode, on}` (a>c, 0x0604) starts or stops a mode the app declared (an unknown mode name closes the connection); the app manager answers `BackgroundModeResult{mode, granted}` (c>a, 0x0605) at once when `background:<mode>` is decided, else once the player answered the first-time prompt. The shell gets `AppModes{pid, app_id, modes}` (c>s, 0x0606) whenever an app's active modes change, and again for every app with modes when it connects: the phone's pills and the desktop's tray (close-to-tray applies to apps with modes). See [APPS.md](APPS.md#background-ephone).
 
 ## 12 · Shared services
 
@@ -390,6 +392,8 @@ All four are messages on the same UI connection. The compositor and app manager 
   - **As built (P3):** `PickFile` goes to `Compositor.setFilePicker(picker)`; without one it is answered "cancelled". P4 installs the picker (and the grants).
 - **Open with.** Apps list file types in `open_with`. `Open{path}` from Files or any app launches the default handler, or shows a chooser when there are several. The handler gets `OpenFile{path}` with a one-file grant. Defaults are set in Settings.
   - **As built (integration):** `Open{path}` -> `AppManager.openAny(path, sender pid)`; `OpenFile` is queued until the opened app's connection says Hello and sent right after `Welcome`. Built-in types (`.vpl`, `.gba`) start their program; text opens in the Text Editor app `dev.ecm.editor`. Files sends `Open` for every file but `.wasm` programs.
+
+- **Media sessions (as built).** `MediaSession{info}` (a>c, 0x0540) says what an app plays: `MediaInfo{title, artist, album, art_w, art_h, art_rgba, state none|playing|paused|buffering, position_ms, duration_ms, actions}` (art at most 160 x 160 RGBA, its byte count must be w x h x 4; actions from play, pause, next, previous, seek). It is sent again on every change and about once a second while playing; `state none` ends it, and so does the connection closing. The shell gets `MediaSessionChanged{pid, app_id, info}` (c>s, 0x0542; all current sessions again when it connects) and draws the Now Playing card; its buttons send `MediaControl{pid, action, position_ms}` (s>c, 0x0543), which reaches the app as `MediaAction{action, position_ms}` (c>a, 0x0541). Java callers (AirPods) use `Compositor.activeMedia()` and `mediaAction(pid, action, ms)`.
 
 ## 13 · ecm-ui toolkit
 
