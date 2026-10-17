@@ -423,6 +423,18 @@ public final class TelephonyScenarios {
                 "two phones on one carrier: Ann dials Bea on the Phone app's keypad, Bea's phone shows the incoming call and she answers;"
                         + " voice flows both ways (tel calls' packet counters); Ann hangs up; control: Bea declines, Ann's log says declined");
         network(b, List.of(ANN, BEA), List.of());
+        b.await(VideoScenarios::videoInstalled, "the server has video support (evanscomputermod-ffmpeg)", 1_000);
+        b.mutate(r -> {
+            try (java.io.InputStream in = VideoScenarios.class.getResourceAsStream(VideoScenarios.RESOURCES + VideoScenarios.VIDEO)) {
+                if (in == null) throw new IllegalStateException(VideoScenarios.VIDEO + " is missing from the mod jar");
+                java.nio.file.Path dir = hand(r, ANN).computer(r).storagePath().resolve("home/videos");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Files.write(dir.resolve(VideoScenarios.VIDEO), in.readAllBytes());
+            } catch (Exception e) {
+                r.fail(e.toString());
+            }
+        }, "a video in Ann's phone's documents (/home/videos/" + VideoScenarios.VIDEO + ") [exception: the binary file is copied into the"
+                + " phone's folder; docs/SCENARIO_EXCEPTIONS.md]");
         b.note("Ann: Phone, Keypad, Bea's number (local: without +1 and the area code), Call");
         openApp(b, ANN, "Phone", DIALER);
         dialOnKeypad(b, ANN, r -> local(hand(r, BEA).number), "Bea's number");
@@ -441,6 +453,9 @@ public final class TelephonyScenarios {
         b.note("Voice: on Ann's phone, home and Terminal (the call keeps going): tel calls twice, the voice counters move both ways");
         openTerminal(b, ANN);
         voiceFlows(b, ANN, "tel calls: the call to Bea is active, voice packets both ways");
+        videoDuringCall(b);
+        openTerminal(b, ANN);
+        run(b, ANN, "tel calls", "active", null, "tel calls: the call is still up after the video", 10_000);
         b.note("Ann hangs up (tel hangup): Bea's phone shows Call ended");
         run(b, ANN, "tel hangup", PROMPT, "^tel: ", "tel hangup", 10_000);
         b.await(r -> hand(r, BEA).shows(r, "Phone", "Call ended"), "Bea's Phone: Call ended", 10_000);
@@ -464,6 +479,93 @@ public final class TelephonyScenarios {
         b.expect("core", "result=declined", "the core's call record: declined");
         b.timeLimit(120_000);
         return b.build();
+    }
+
+    /** Per run, the live-audio watch while a video plays: ticks seen, ticks whose speaker drain was live, samples, picture. */
+    private static final Map<ScenarioRun, long[]> LIVE = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** Ann's Video Player window (full screen), or null. */
+    static Compositor.WindowInfo video(ScenarioRun r) {
+        return hand(r, ANN).onScreen(r, VideoScenarios.APP);
+    }
+
+    static String videoTime(ScenarioRun r) {
+        return VideoScenarios.timeText(hand(r, ANN).comp(r), video(r));
+    }
+
+    /**
+     * Ann plays a video with sound (timed frames, the display pipeline's playout delay) while the call is up
+     * and Bea talks. The call's sound must not wait on the picture: every speaker drain on Ann's phone that
+     * carries Bea's voice is live (SpeakerAudio.lastDrainLive, sent with SpeakerAudioPacket.FLAG_LIVE at
+     * once), while the video's time, picture and sound keep going.
+     */
+    static void videoDuringCall(Scenario.Builder b) {
+        b.note("A video during the call: Ann opens the Video Player and plays a video while Bea talks; the call's"
+                + " sound stays live, not on the picture's playout delay");
+        b.mutate(r -> {
+            PhoneUi u = hand(r, ANN).ui(r);
+            if (u != null && u.foreground() != null) hand(r, ANN).altKey(r, PhoneGuiScenarios.HID_H);
+        }, "Ann: Alt+H (home)");
+        b.await(r -> {
+            Compositor c = hand(r, ANN).comp(r);
+            String label = c == null ? null : c.layerTexts("home").stream().filter(t -> t.startsWith("Video")).findFirst().orElse(null);
+            return label == null ? "Ann's home grid " + (c == null ? "-" : c.layerTexts("home")) : hand(r, ANN).tapLayer(r, "home", label, false);
+        }, "Ann: tap Video Player on the home grid", 20_000);
+        b.await(r -> video(r) != null && hand(r, ANN).comp(r).textsOf(video(r).id()).contains(VideoScenarios.VIDEO) ? null
+                : "Ann's windows " + hand(r, ANN).comp(r).windows(), "its library lists the video", 30_000);
+        b.mutate(r -> {
+            Compositor c = hand(r, ANN).comp(r);
+            if (!hand(r, ANN).tapAt(r, c.locateText(video(r).id(), VideoScenarios.VIDEO, false))) r.fail("Ann's phone refused the touch");
+        }, "Ann taps " + VideoScenarios.VIDEO);
+        b.await(r -> video(r) != null && hand(r, ANN).comp(r).textsOf(video(r).id()).contains("Pause") && videoTime(r).startsWith("0:01") ? null
+                : "Video Player: " + (video(r) == null ? "-" : hand(r, ANN).comp(r).textsOf(video(r).id())), "the video plays: its time runs", 15_000);
+        b.mutate(r -> {
+            var h = hand(r, ANN).host(r);
+            LIVE.put(r, new long[]{0, 0, h.speakerAudio().samplesDrained(), VideoScenarios.pictureCrc(hand(r, ANN).comp(r), video(r)), System.currentTimeMillis()});
+        }, "-");
+        b.note("Bea talks for 3 s (a 440 Hz tone) [exception: a scenario player's voice is a test tone, docs/SCENARIO_EXCEPTIONS.md];"
+                + " every tick, the last speaker drain of Ann's phone is checked");
+        b.await(r -> {
+            VoiceScenarios.talk(r, hand(r, BEA).other, 440, false);
+            long[] s = LIVE.get(r);
+            var h = hand(r, ANN).host(r);
+            long ms = System.currentTimeMillis() - s[4];
+            if (ms > 600) { // the first 0.6 s: the voice crosses the network and the jitter buffer
+                s[0]++;
+                if (h.speakerAudio().lastDrainLive()) s[1]++;
+            }
+            if (ms < 3_600) return "watching (" + s[1] + "/" + s[0] + " drains live)";
+            long samples = h.speakerAudio().samplesDrained() - s[2];
+            long crc = VideoScenarios.pictureCrc(hand(r, ANN).comp(r), video(r));
+            String why = s[0] > 0 && s[1] * 10 >= s[0] * 9 ? null : "only " + s[1] + " of " + s[0] + " speaker drains were live while Bea talked";
+            if (why == null && samples < 16_000) why = "Ann's speaker played only " + samples + " samples in 3 s";
+            if (why == null && crc == s[3]) why = "the picture didn't move";
+            if (why == null && !videoTime(r).matches("0:0[2-6].*")) why = "the video's time is " + videoTime(r);
+            if (why != null) r.fail(why);
+            r.say("§7  " + s[1] + " of " + s[0] + " speaker drains live; " + samples + " samples; video at " + videoTime(r));
+            return null;
+        }, "while the video plays, the call's sound goes out live (no playout delay) and the video keeps its time and picture", 6_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, hand(r, ANN).comp(r), "tel_call_video"), "snapshot: the video on Ann's phone during the call");
+        b.note("Control: Bea stops talking and taps Mute (her microphone also hears Ann's phone 3 blocks away); the call is silent, so"
+                + " Ann's speaker carries only the video's sound, which goes out on the picture's playout delay (not live)");
+        b.await(r -> hand(r, BEA).tap(r, "Phone", "Mute"), "Bea taps Mute on her in-call screen", 5_000);
+        b.waitMs(800, "what was on its way plays out");
+        b.mutate(r -> LIVE.put(r, new long[]{0, 0, hand(r, ANN).host(r).speakerAudio().samplesDrained(), 0, System.currentTimeMillis()}), "-");
+        b.await(r -> {
+            long[] s = LIVE.get(r);
+            var h = hand(r, ANN).host(r);
+            long ms = System.currentTimeMillis() - s[4];
+            if (ms > 600) {
+                s[0]++;
+                if (h.speakerAudio().lastDrainLive()) s[1]++;
+            }
+            if (ms < 1_400) return "watching";
+            long samples = h.speakerAudio().samplesDrained() - s[2];
+            if (s[1] * 10 > s[0]) r.fail(s[1] + " of " + s[0] + " drains live with Bea silent");
+            else if (samples < 4_000) r.fail("the video's sound stopped (" + samples + " samples)");
+            else r.say("§7  silent call: " + s[1] + " of " + s[0] + " drains live; the video's sound plays (" + samples + " samples)");
+            return null;
+        }, "control: Bea silent, the video's sound alone is not live", 4_000);
     }
 
     // ------------------------------------------------------------ tel_call_asleep
