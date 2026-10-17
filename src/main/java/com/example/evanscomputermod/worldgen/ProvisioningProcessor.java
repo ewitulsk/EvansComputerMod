@@ -51,8 +51,8 @@ public final class ProvisioningProcessor extends StructureProcessor {
                         village == chat ? "chat " + WorldNetwork.chatAddress(chat) : "chat: see website"};
                 case "rack" -> new String[] {"Free racks: put a", "computer here, its", "top face (eth1)",
                         "is on the LAN (DHCP)"};
-                case "store" -> new String[] {"PHONE STORE", cells.displayName(), "Tech Village " + village,
-                        "phones + SIM cards"};
+                case "store" -> new String[] {"PHONE STORE", cells.displayName(), "area code " + cells.areaCode(village),
+                        "help: call 611"};
                 case "sims" -> new String[] {"FREE SIM CARDS", cells.displayName() + " LTE", "put one in your",
                         "phone SIM tray"};
                 case "site" -> new String[] {"CELL SITE", CellPlan.storeSiteId(village), "LTE channel " + cells.channel,

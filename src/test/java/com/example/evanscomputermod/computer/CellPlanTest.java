@@ -128,7 +128,9 @@ class CellPlanTest {
         long seed = 123456L;
         CellPlan plan = CellPlan.of(seed, ring(seed));
         String db = plan.coreDb();
-        Pattern sub = Pattern.compile("^sub (\\d{15}) key=([0-9a-f]{32}) quota=0 used=0 revoked=0 label=(v\\d+-(phone|sim)\\d+)$");
+        Pattern sub = Pattern.compile("^sub (\\d{15}) key=([0-9a-f]{32}) quota=0 used=0 revoked=0 label=(v\\d+-(phone|sim)\\d+) msisdn=(\\+1\\d{10})$");
+        Map<String, String> numbers = new TreeMap<>();
+        Set<String> blocks = new TreeSet<>();
         Pattern site = Pattern.compile("^site ([a-z0-9-]+) ([0-9a-f]{32})$");
         Map<String, String> subs = new TreeMap<>(), sites = new TreeMap<>();
         List<String> order = new ArrayList<>();
@@ -139,9 +141,12 @@ class CellPlanTest {
             var s = site.matcher(line);
             if (m.matches()) {
                 assertNull(subs.put(m.group(1), m.group(2)), "IMSI twice");
+                assertNull(numbers.put(m.group(5), m.group(1)), "number twice");
                 order.add(m.group(1));
             } else if (s.matches()) assertNull(sites.put(s.group(1), s.group(2)), "site twice");
             else if (line.equals("version 1")) version++;
+            else if (line.startsWith("block ")) assertTrue(blocks.add(line.substring(6)), "block twice: " + line);
+            else if (line.startsWith("ims ")) assertEquals("ims pool=10.250.0.0/22 pcscf=100.80.0.1 domain=" + plan.carrier + ".ecm net=100.80.0.1/32", line);
             else assertTrue(Set.of("carrier " + plan.carrier, "pool 100.80.0.0/22", "gateway 100.80.0.1", "dns 1.1.1.1", "mtu 1500")
                     .contains(line), "unexpected line '" + line + "'");
         }
@@ -151,7 +156,11 @@ class CellPlanTest {
         for (CellPlan.Sim m : plan.sims()) {
             assertTrue(m.imsi().startsWith(CellPlan.IMSI_PREFIX) && m.imsi().length() == 15, m.imsi());
             assertEquals(m.keyHex(), subs.get(m.imsi()), "the database holds the SIM's key: " + m.label());
+            assertEquals(m.imsi(), numbers.get(m.msisdn()), "and its number: " + m.label());
+            assertTrue(m.msisdn().startsWith("+1" + plan.areaCode(m.village()) + "555"), "a number in its village's block: " + m.msisdn());
         }
+        assertEquals(10, blocks.size(), "a block (area code) per village");
+        assertEquals(plan.number(1, true, 1), "+1" + plan.areaCode(1) + "5550100", "the first phone on display has line 0100");
         assertEquals(new TreeSet<>(plan.siteIds()), sites.keySet());
         for (String id : plan.siteIds()) {
             assertEquals(CellPlan.hex(plan.siteSecret(id)), sites.get(id));
