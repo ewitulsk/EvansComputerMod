@@ -39,7 +39,14 @@ _results = {
     "read": "11" * 64, "set_key": True, "raw": "8100", "rssi": -40,
     "print": {"dyes": {"white": 1, "black": 1}}, "cost": {"dyes": {"white": 1, "black": 1}},
 }
-_events = [("redstone", "left"), ("card_inserted", "left", "bank", ["bank"]), ("card_removed", "left")]
+# Peripheral events reach programs through the console's one event queue.
+import _console
+class _Queue(list):
+    def append(self, e):
+        _console.queue(e[0], list(e[1:]))
+_events = _Queue()
+for _e in [("redstone", "left"), ("card_inserted", "left", "bank", ["bank"]), ("card_removed", "left")]:
+    _events.append(_e)
 
 def _type_of(name):
     for n, t in _devices:
@@ -71,16 +78,10 @@ def _call(name, method, args):
         return (True, True)
     return (True, _results[method])
 
-def _wait_event(filter, ms):
-    if _events:
-        return _events.pop(0)
-    return None
-
 _m = type(sys)("_peripheral")
 _m.list = _list
 _m.methods = _methods_of
 _m.call = _call
-_m.wait_event = _wait_event
 sys.modules["_peripheral"] = _m
 "#;
 
@@ -89,6 +90,7 @@ sys.modules["_peripheral"] = _m
 fn run_py(code: &str, vars: &[(&str, String)]) {
     let interp = Interpreter::with_init(Settings::default(), |vm| {
         vm.add_native_module("_ui".to_owned(), Box::new(crate::ui_module::ui_native::make_module));
+        vm.add_native_module("_console".to_owned(), Box::new(crate::console_module::make_native_module));
     });
     interp.enter(|vm| {
         let scope = vm.new_scope_with_builtins();

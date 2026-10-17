@@ -4,6 +4,12 @@ extern "C" {
     fn redstone_set_output(side: i32, power: i32) -> i32;
     fn redstone_get_input(side: i32) -> i32;
     fn redstone_get_all_input(buf_ptr: i32) -> i32;
+    fn redstone_get_output(side: i32) -> i32;
+}
+
+/// The power (0-15) this computer itself puts out on a side (0-5): what it last set.
+pub fn get_output(side: i32) -> i32 {
+    unsafe { redstone_get_output(side) }
 }
 
 /// Set redstone output power (0-15) on a side (0-5).

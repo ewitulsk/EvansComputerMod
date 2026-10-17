@@ -79,6 +79,12 @@ public final class PeripheralHub {
             if (attached.get(name) != this) return; // detached: stale access
             post(event, name, arguments);
         }
+
+        @Override
+        public IPeripheral getAvailablePeripheral(String other) {
+            Attachment a = attached.get(other);
+            return a == null ? null : a.peripheral;
+        }
     }
 
     private final Owner owner;
@@ -118,6 +124,10 @@ public final class PeripheralHub {
             BlockPos neighbor = pos.relative(dir);
             if (!level.isLoaded(neighbor)) continue;
             IPeripheral p = level.getCapability(PeripheralCapability.PERIPHERAL, neighbor, dir.getOpposite());
+            //? if <=1.21.1 {
+            // Any mod's inventory, tank or battery (NeoForge capabilities) when it has no peripheral of its own.
+            if (p == null) p = com.example.evanscomputermod.computer.peripheral.generic.GenericPeripheral.of(level, neighbor, dir.getOpposite());
+            //?}
             if (p != null) sides.put(sideName(facing, dir), p);
         }
         apply();

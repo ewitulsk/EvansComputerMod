@@ -23,4 +23,15 @@ public interface IComputerAccess {
      * value mapping as {@link IPeripheral#callMethod} results.
      */
     void queueEvent(String event, Object... arguments);
+
+    /**
+     * Another peripheral attached to the same computer, by its attachment
+     * name ({@code "right"}, {@code "left_bay_1"}), or null. Peripherals that
+     * move things between each other (an inventory's {@code push_items}) find
+     * their partner this way.
+     */
+    @org.jetbrains.annotations.Nullable
+    default IPeripheral getAvailablePeripheral(String name) {
+        return null;
+    }
 }

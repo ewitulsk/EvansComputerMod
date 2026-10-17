@@ -1,0 +1,11 @@
+[package]
+name = "ecm-console"
+version = "0.1.0"
+edition = "2021"
+description = "Console programs' screen, keyboard and event loop, shared by the Python and Lua interpreters: a term (16 colours, cursor, blit, scroll) drawn with the console's escape sequences, one merged event queue (keys, chars, timers, alarms, peripheral and queued events) and the computer's clocks. ComputerCraft-compatible in behaviour, written from its public docs (tweaked.cc). Pure: the host is reached through the Sources trait."
+
+[lib]
+name = "ecm_console"
+
+[dependencies]
+ecm-host-abi = { workspace = true }

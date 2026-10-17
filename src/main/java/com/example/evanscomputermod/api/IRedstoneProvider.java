@@ -23,6 +23,15 @@ public interface IRedstoneProvider {
     int getRedstoneInput(int absoluteSide);
 
     /**
+     * The power this computer itself puts out on a side (what it last set; 0-15).
+     *
+     * @param absoluteSide The Direction ordinal, as for {@link #setRedstoneOutput}
+     */
+    default int getRedstoneOutput(int absoluteSide) {
+        return 0;
+    }
+
+    /**
      * Converts a relative side (FRONT/BACK/LEFT/RIGHT/UP/DOWN) to an
      * absolute Minecraft Direction based on the host's facing.
      * @param relativeSide The relative side (0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT)

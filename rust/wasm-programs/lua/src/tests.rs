@@ -445,12 +445,9 @@ package.loaded._peripheral = {
     if method == "get_axis" then return true, 0.5 end
     return false, "no method " .. method
   end,
-  wait_event = function(filter, ms)
-    last_wait = {filter, ms}
-    local e = table.remove(events, 1)
-    if e then return (table.unpack or unpack)(e) end
-  end,
 }
+-- Peripheral events reach programs through the console's one event queue.
+for _, e in ipairs(events) do require("_console").queue((table.unpack or unpack)(e)) end
 "#;
 
 #[test]
@@ -477,7 +474,7 @@ local ok, e = pcall(peripheral.call, "right", "status")
 assert(not ok and tostring(e):find("no peripheral"), tostring(e))
 assert(peripheral.find("speaker").name == "left" and #peripheral.find_all("xbox_controller") == 2)
 local ev, att = peripheral.pull_event("redstone", 2.5)
-assert(ev == "redstone" and att == "left" and last_wait[1] == "redstone" and last_wait[2] == 2500)
+assert(ev == "redstone" and att == "left")
 -- controller (skips other events, sorted by player number)
 local pads = controller.all()
 assert(#pads == 2 and pads[1].name == "controller_1" and pads[1].player == 1)
@@ -539,6 +536,386 @@ assert(s.rate == 8000 and s.buffered_ms == 40 and s.underruns == 0)
     let ctl = std::fs::read_to_string(d.join("audioctl")).unwrap();
     assert_eq!(ctl, "channels 1\n", "each control command is its own write");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ---------------------------------------------------------------- console (term, events, CC globals)
+
+use ecm_console::session::fake::Fake;
+use ecm_host_abi::peripheral::Value as PValue;
+
+/// A Lua whose console is `fake`: a 20 x 6 screen, the cursor at 1,1.
+fn console_lua(fake: &Fake) -> Lua {
+    let l = Lua::new();
+    let term = ecm_console::term::Term::new(20, 6, 1, Some(1));
+    register_console(&l, ecm_console::session::Session::new(term, Box::new(fake.clone()))).unwrap();
+    install(&l).unwrap();
+    l
+}
+
+fn type_at(fake: &Fake, ms: f64, bytes: &[u8]) {
+    fake.0.borrow_mut().typed.push_back((ms, bytes.to_vec()));
+}
+
+fn get<T: mlua::FromLua>(l: &Lua, expr: &str) -> T {
+    l.load(format!("return {expr}")).eval::<T>().unwrap_or_else(|e| panic!("{expr}: {e}"))
+}
+
+#[test]
+fn cc_term_draws_with_colours_and_clips() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r#"
+term.setBackgroundColour(colours.blue)
+term.clear()
+term.setCursorPos(18, 2)
+term.setTextColor(colors.red)
+term.write("abcdef")
+X, Y = term.getCursorPos()
+W, H = term.getSize()
+term.set_cursor_pos(1, 3)
+term.blit("hi", "04", "ff")
+TC = term.get_text_color()
+"#);
+    let out = fake.output();
+    assert_eq!(out, "\x1b[0;97;44m\x1b[2J\x1b[?25l\x1b[2;18H\x1b[0;31;44mabc\x1b[3;1H\x1b[0;97;40mh\x1b[0;93;40mi");
+    assert_eq!((get::<i64>(&l, "X"), get::<i64>(&l, "Y")), (24, 2));
+    assert_eq!((get::<i64>(&l, "W"), get::<i64>(&l, "H")), (20, 6));
+    assert_eq!(get::<i64>(&l, "TC"), 16384);
+    // Errors CC programs check for.
+    assert!(l.load("term.setTextColour(0)").exec().is_err());
+    assert!(l.load("term.blit('ab', '0', 'ff')").exec().is_err());
+}
+
+#[test]
+fn print_and_write_wrap_and_scroll_through_the_term() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r#"
+term.setCursorPos(1, 5)
+A = print("one two three four five")   -- 23 chars on a 20-wide screen: two lines
+B = write("x")
+X, Y = term.getCursorPos()
+io.write("y", 2)
+"#);
+    assert_eq!(get::<i64>(&l, "A"), 2);
+    assert_eq!(get::<i64>(&l, "B"), 0);
+    assert_eq!((get::<i64>(&l, "X"), get::<i64>(&l, "Y")), (2, 6));
+    let out = fake.output();
+    assert!(out.contains("one two three four") && out.contains("five"), "{out:?}");
+    assert_eq!(out.matches("\x1b[1S").count(), 1, "the screen scrolled once: {out:?}");
+    assert!(out.ends_with("xy2"), "{out:?}");
+}
+
+#[test]
+fn pull_event_merges_keys_timers_peripherals_and_queued_events() {
+    let fake = Fake::default();
+    type_at(&fake, 20.0, b"a");
+    fake.0.borrow_mut().periph.push_back((
+        120.0,
+        vec![PValue::Str("redstone_link".into()), PValue::Str("left".into()), PValue::Int(3)],
+    ));
+    let l = console_lua(&fake);
+    run(&l, r##"
+got = {}
+local function add(...) got[#got + 1] = table.concat({...}, " ", 1, select("#", ...)) end
+local t = os.startTimer(0.25)
+os.queueEvent("mine", "x", 2)
+add(os.pullEvent())                -- the queued event
+add(os.pullEvent("char"))          -- key/key_up discarded
+add(os.pullEvent("redstone_link")) -- the peripheral event at 120 ms (the key_up discarded)
+local ev, id = os.pullEvent("timer")
+add(ev, tostring(id == t))
+"##);
+    let got: Vec<String> = get::<Table>(&l, "got").sequence_values::<String>().map(Result::unwrap).collect();
+    assert_eq!(got, ["mine x 2", "char a", "redstone_link left 3", "timer true"]);
+    assert!(fake.0.borrow().now >= 250.0);
+    // peripheral.pull_event reads the same queue, with a timeout in seconds.
+    fake.0.borrow_mut().periph.push_back((400.0, vec![PValue::Str("peripheral".into()), PValue::Str("top".into())]));
+    run(&l, r#"package.loaded._peripheral = {list = function() return {} end}"#);
+    run(&l, r#"os.queueEvent("other") P1, P2 = peripheral.pull_event("peripheral", 1) N = peripheral.pull_event(nil, 0)"#);
+    assert_eq!((get::<String>(&l, "P1"), get::<String>(&l, "P2")), ("peripheral".into(), "top".into()));
+    assert!(get::<mlua::Value>(&l, "N").is_nil(), "the other event was discarded by the filter");
+    // terminate reaches pullEvent through any filter and stops the program.
+    run(&l, r#"os.queueEvent("terminate") OK, E = pcall(os.pullEvent, "char")"#);
+    assert_eq!(get::<String>(&l, "E"), "Terminated");
+    run(&l, r#"os.queueEvent("terminate") R = os.pullEventRaw("char")"#);
+    assert_eq!(get::<String>(&l, "R"), "terminate");
+}
+
+#[test]
+fn sleep_and_cc_clocks() {
+    let fake = Fake::default();
+    {
+        let mut s = fake.0.borrow_mut();
+        s.ticks = Some(18000 + 24000); // midnight before day 3
+        s.unix_ms = 86_400_000 + 3_600_000;
+        s.id = Some(7);
+    }
+    let l = console_lua(&fake);
+    run(&l, r##"
+os.queueEvent("lost")
+sleep(0.1)
+N = select("#", events.pull(nil, 0))
+T, D, E = os.time(), os.day(), os.epoch()
+U, UD, UE = os.time("utc"), os.day("UTC"), os.epoch("utc")
+TABLE = os.time({year = 1970, month = 1, day = 2, hour = 0})
+C = os.clock()
+ID = os.getComputerID()
+os.setComputerLabel("base")
+L = os.computerLabel()
+BAD = pcall(os.time, "mars")
+"##);
+    assert_eq!(get::<i64>(&l, "N"), 0, "sleep discarded the queued event");
+    // 100 ms of sleeping is 2 ticks past midnight.
+    assert!((get::<f64>(&l, "T") - 0.002).abs() < 1e-9);
+    assert_eq!(get::<i64>(&l, "D"), 3);
+    assert_eq!(get::<i64>(&l, "E"), (18000 + 24000 + 2 + 6000) * 3600);
+    assert!((get::<f64>(&l, "U") - 1.0).abs() < 0.001);
+    assert_eq!(get::<i64>(&l, "UD"), 1);
+    assert_eq!(get::<i64>(&l, "UE"), 86_400_000 + 3_600_000 + 100);
+    assert!(get::<f64>(&l, "TABLE") > 0.0, "a table still gives Unix seconds");
+    assert!((get::<f64>(&l, "C") - 0.1).abs() < 0.01);
+    assert_eq!(get::<i64>(&l, "ID"), 7);
+    assert_eq!(get::<String>(&l, "L"), "base");
+    assert!(!get::<bool>(&l, "BAD"));
+}
+
+#[test]
+fn read_edits_a_line_with_history() {
+    let fake = Fake::default();
+    // "helo", backspace, "lo world" -> "hello world"; then the up arrow twice recalls "first".
+    type_at(&fake, 0.0, b"helo\x08lo world\n");
+    type_at(&fake, 100.0, b"\x1b[A\x1b[A\n");
+    type_at(&fake, 200.0, b"secret\n");
+    let l = console_lua(&fake);
+    run(&l, r#"
+A = read()
+B = read(nil, {"first", "second"})
+C = read("*")
+"#);
+    assert_eq!(get::<String>(&l, "A"), "hello world");
+    assert_eq!(get::<String>(&l, "B"), "first");
+    assert_eq!(get::<String>(&l, "C"), "secret");
+    let out = fake.output();
+    assert!(out.contains("******"), "the password is masked: {out:?}");
+    assert!(!out.contains("secret"));
+}
+
+#[test]
+fn term_redirect_sends_print_to_another_target() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r#"
+lines = {}
+local x, y = 1, 1
+local t = {}
+for _, n in ipairs({"blit", "clear", "clearLine", "scroll", "setCursorBlink", "getCursorBlink",
+  "isColour", "isColor", "getTextColour", "setTextColour", "getBackgroundColour", "setBackgroundColour",
+  "getPaletteColour", "setPaletteColour"}) do t[n] = function() end end
+function t.getSize() return 10, 3 end
+function t.getCursorPos() return x, y end
+function t.setCursorPos(a, b) x, y = a, b end
+function t.write(s) lines[#lines + 1] = s x = x + #s end
+local old = term.redirect(t)
+N = print("abc defghijkl")
+SAME = term.current() == t
+term.redirect(old)
+NATIVE = term.current() == term.native()
+"#);
+    let lines: Vec<String> = get::<Table>(&l, "lines").sequence_values::<String>().map(Result::unwrap).collect();
+    assert_eq!(lines, ["abc", " ", "defghijkl"]);
+    assert_eq!(get::<i64>(&l, "N"), 2);
+    assert!(get::<bool>(&l, "SAME") && get::<bool>(&l, "NATIVE"));
+    assert_eq!(fake.output(), "", "nothing reached the console");
+    assert!(l.load("term.redirect({})").exec().is_err(), "a target needs the term functions");
+}
+
+#[test]
+fn colours_keys_and_lazy_globals() {
+    let l = lua();
+    run(&l, r#"
+assert(colors.white == 1 and colors.black == 32768 and colours.grey == colors.gray and colours.gray == nil)
+assert(colors.combine(colors.white, colors.magenta, colors.lightBlue) == 13)
+assert(colors.subtract(colors.lime, colors.orange, colors.white) == 32)
+assert(colors.test(colors.combine(colors.red, colors.blue), colors.red))
+assert(colors.packRGB(0.7, 0.2, 0.6) == 0xb23399)
+local r, g, b = colors.unpackRGB(0xb23399)
+assert(math.abs(r - 0.698) < 0.01 and math.abs(g - 0.2) < 0.01)
+assert(colors.toBlit(colors.red) == "e" and colors.fromBlit("e") == 16384 and colors.from_blit("z") == nil)
+assert(keys.enter == 257 and keys.a == 65 and keys.getName(265) == "up" and keys["end"] == 269)
+local tr, tg = term.nativePaletteColour(colors.red)
+assert(math.abs(tr - 0.8) < 0.01 and math.abs(tg - 0.3) < 0.01)
+assert(_HOST and os.version() == "CraftOS 1.9")
+"#);
+}
+
+// ---------------------------------------------------------------- CC phase 2 (fs, textutils, rs, parallel, peripheral names)
+
+/// A console whose files are in a fresh temporary folder.
+fn console_with_files(name: &str) -> (Fake, PathBuf) {
+    let fake = Fake::default();
+    let d = tmpdir(name);
+    fake.0.borrow_mut().root = Some(d.clone());
+    (fake, d)
+}
+
+#[test]
+fn cc_fs_and_file_handles() {
+    let (fake, d) = console_with_files("ccfs");
+    let l = console_lua(&fake);
+    run(&l, r##"
+assert(fs.combine("a", "b/../c", "/d") == "a/c/d" and fs.getName("/x/y.lua") == "y.lua" and fs.getDir("x/y") == "x")
+fs.makeDir("/data/old")
+local h = assert(fs.open("data/log.txt", "w"))
+h.writeLine("one") h.write("two") h.write(3) h.close()
+assert(not pcall(h.write, "x"), "a closed handle")
+h = fs.open("/data/log.txt", "a") h.writeLine("") h.writeLine("four") h.close()
+h = fs.open("data/log.txt", "r")
+L1, L2 = h.readLine(), h.readLine(true)
+REST = h.readAll()
+h.close()
+local b = fs.open("data/bin", "wb") b.write(65) b.write("BC") b.close()
+b = fs.open("data/bin", "rb") B1 = b.read() B2 = b.read(2) b.seek("set", 0) B3 = b.read() b.close()
+LIST = table.concat(fs.list("data"), ",")
+SIZE = fs.getSize("data/log.txt")
+ATTR = fs.attributes("data")
+fs.copy("data", "backup")
+FIND = table.concat(fs.find("backup/*.txt"), ",")
+fs.move("backup/bin", "moved")
+OK1, E1 = pcall(fs.list, "nope")
+OK2, E2 = pcall(fs.copy, "data", "backup")
+N3, E3 = fs.open("nope.txt", "r")
+N4, E4 = fs.open("../x", "w")
+fs.delete("backup")
+GONE = not fs.exists("backup") and fs.exists("moved") and fs.isDir("data") and not fs.isDir("moved")
+FREE, DRIVE = fs.getFreeSpace("/"), fs.getDrive("data")
+"##);
+    assert_eq!((get::<String>(&l, "L1"), get::<String>(&l, "L2")), ("one".into(), "two3\n".into()));
+    assert_eq!(get::<String>(&l, "REST"), "four\n");
+    assert_eq!((get::<i64>(&l, "B1"), get::<String>(&l, "B2"), get::<i64>(&l, "B3")), (65, "BC".into(), 65));
+    assert_eq!(get::<String>(&l, "LIST"), "bin,log.txt,old");
+    assert_eq!(get::<i64>(&l, "SIZE"), 14);
+    assert!(get::<bool>(&l, "ATTR.isDir"));
+    assert_eq!(get::<String>(&l, "FIND"), "backup/log.txt");
+    assert!(get::<String>(&l, "E1").ends_with("/nope: No such file"), "{}", get::<String>(&l, "E1"));
+    assert!(get::<String>(&l, "E2").ends_with("/backup: File exists"));
+    assert!(get::<mlua::Value>(&l, "N3").is_nil() && get::<String>(&l, "E3") == "/nope.txt: No such file");
+    assert_eq!(get::<String>(&l, "E4"), "/../x: Invalid Path");
+    assert!(get::<bool>(&l, "GONE"));
+    assert_eq!((get::<String>(&l, "FREE"), get::<String>(&l, "DRIVE")), ("unlimited".into(), "hdd".into()));
+    assert!(d.join("moved").is_file(), "the files are real files under the computer's root");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn cc_textutils_round_trips_and_formats() {
+    let l = lua();
+    run(&l, r##"
+local t = {"a", 2, name = "x", nested = {true}}
+S = textutils.serialize(t)
+C = textutils.serialise(t, {compact = true})
+local back = textutils.unserialize(S)
+assert(back[1] == "a" and back[2] == 2 and back.name == "x" and back.nested[1] == true)
+assert(textutils.unserialize("os.exit()") == nil, "only literals")
+local r = {} r.me = r
+OK, E = pcall(textutils.serialize, r)
+OKF, EF = pcall(textutils.serialize, {f = print})
+J = textutils.serializeJSON({list = {1, 2}, empty = {}, arr = textutils.empty_json_array, s = "q\""})
+local j = textutils.unserializeJSON('{"a": [1, {"b": null}], "c": "\\u00e9"}')
+assert(j.a[1] == 1 and j.c == "\195\169")
+T12, T24 = textutils.formatTime(13.5), textutils.formatTime(13.5, true)
+U = textutils.urlEncode("a b&c")
+"##);
+    assert_eq!(get::<String>(&l, "S"), "{\n  \"a\",\n  2,\n  name = \"x\",\n  nested = {\n    true,\n  },\n}");
+    assert_eq!(get::<String>(&l, "C"), "{\"a\",2,name=\"x\",nested={true,},}");
+    assert!(!get::<bool>(&l, "OK") && get::<String>(&l, "E").contains("Cannot serialize table with recursive entries"));
+    assert!(!get::<bool>(&l, "OKF") && get::<String>(&l, "EF").contains("Cannot serialize type function"));
+    assert_eq!(get::<String>(&l, "J"), r#"{"arr":[],"empty":{},"list":[1,2],"s":"q\""}"#);
+    assert_eq!((get::<String>(&l, "T12"), get::<String>(&l, "T24")), ("1:30 PM".into(), "13:30".into()));
+    assert_eq!(get::<String>(&l, "U"), "a+b%26c");
+}
+
+#[test]
+fn cc_redstone_by_side_name() {
+    let fake = Fake::default();
+    fake.0.borrow_mut().redstone_in[4] = 9; // left
+    let l = console_lua(&fake);
+    run(&l, r##"
+rs.setOutput("top", true)
+redstone.setAnalogueOutput("back", 7)
+IN, ANALOG, OFF = rs.getInput("left"), rs.getAnalogInput("left"), rs.getInput("right")
+OUT, AOUT = rs.getOutput("top"), rs.getAnalogOutput("back")
+SIDES = table.concat(rs.getSides(), ",")
+BAD = pcall(rs.getInput, "up")
+BADP = pcall(rs.setAnalogOutput, "top", 16)
+assert(rs == redstone and rs.getBundledInput("left") == 0)
+"##);
+    assert!(get::<bool>(&l, "IN") && !get::<bool>(&l, "OFF") && get::<i64>(&l, "ANALOG") == 9);
+    assert!(get::<bool>(&l, "OUT") && get::<i64>(&l, "AOUT") == 7);
+    assert_eq!(get::<String>(&l, "SIDES"), "top,bottom,left,right,front,back");
+    assert!(!get::<bool>(&l, "BAD") && !get::<bool>(&l, "BADP"));
+    assert_eq!(fake.0.borrow().redstone_out, [0, 15, 0, 7, 0, 0], "top is side 1, back side 3");
+}
+
+#[test]
+fn cc_parallel_runs_functions_side_by_side() {
+    let fake = Fake::default();
+    type_at(&fake, 120.0, b"k");
+    let l = console_lua(&fake);
+    run(&l, r##"
+log = {}
+local function add(s) log[#log + 1] = s end
+-- A sleeper and a key waiter: the key comes at 120 ms, the sleep ends at 300 ms.
+ANY = parallel.waitForAny(
+  function() sleep(0.3) add("slept") end,
+  function() local _, c = os.pullEvent("char") add("char " .. c) end)
+-- waitForAll: both finish; a queued event reaches the one waiting for it.
+parallel.waitForAll(
+  function() local _, v = os.pullEvent("ping") add("ping " .. v) end,
+  function() sleep(0.05) os.queueEvent("ping", 7) add("queued") end)
+OK, E = pcall(parallel.waitForAny, function() error("boom", 0) end, function() sleep(1) end)
+"##);
+    let log: Vec<String> = get::<Table>(&l, "log").sequence_values::<String>().map(Result::unwrap).collect();
+    assert_eq!(log, ["char k", "queued", "ping 7"]);
+    assert_eq!(get::<i64>(&l, "ANY"), 2, "the key waiter finished first");
+    assert!(!get::<bool>(&l, "OK") && get::<String>(&l, "E") == "boom");
+}
+
+#[test]
+fn cc_peripheral_names() {
+    let fake = Fake::default();
+    let l = console_lua(&fake);
+    run(&l, r##"
+package.loaded._peripheral = {
+  list = function() return {{"left", "chest"}, {"right", "chest"}, {"top", "speaker"}} end,
+  methods = function(n) return true, (n == "top" and "speaker" or "chest"), {"size"} end,
+  call = function(n, m) return true, n == "left" and 27 or 54 end,
+}
+local a, b = peripheral.find("chest")
+NAMES = a.name .. "," .. b.name
+BIG = peripheral.find("chest", function(name, p) return p.size() > 30 end).name
+assert(peripheral.getName(a) == "left" and peripheral.getType(b) == "chest" and peripheral.getType("top") == "speaker")
+assert(#peripheral.getNames() == 3 and peripheral.isPresent("top") and peripheral.getMethods("left")[1] == "size")
+assert(peripheral.find("nothing") == nil)
+"##);
+    assert_eq!(get::<String>(&l, "NAMES"), "left,right");
+    // CC's camelCase method names reach the snake_case methods.
+    run(&l, r##"
+package.loaded._peripheral.methods = function(n) return true, "inventory", {"get_item_detail", "size"} end
+package.loaded._peripheral.call = function(n, m, a) return true, m .. ":" .. tostring(a) end
+local chest = peripheral.wrap("left")
+CAMEL = chest.getItemDetail(3)
+VIA_CALL = peripheral.call("left", "getItemDetail", 4)
+SNAKE = chest.get_item_detail(5)
+NOARGS = select("#", chest.size()) == 1 and chest.size() == "size:nil" and chest:size() == "size:nil"
+package.loaded._peripheral.call = function(n, m, ...) return true, select("#", ...) end
+COUNT0, COUNT1 = chest.size(), chest:get_item_detail(1)
+"##);
+    assert_eq!(get::<String>(&l, "CAMEL"), "get_item_detail:3");
+    assert_eq!(get::<String>(&l, "VIA_CALL"), "get_item_detail:4");
+    assert_eq!(get::<String>(&l, "SNAKE"), "get_item_detail:5");
+    assert_eq!((get::<i64>(&l, "COUNT0"), get::<i64>(&l, "COUNT1")), (0, 1), "a method called without arguments gets none");
+    assert_eq!(get::<String>(&l, "BIG"), "right");
 }
 
 #[test]
@@ -639,11 +1016,9 @@ package.loaded._peripheral = {
     if method == "write" and t == "nfc_reader" then return true, true end
     return true, results[method]
   end,
-  wait_event = function(filter, ms)
-    local e = table.remove(events, 1)
-    if e then return table.unpack(e) end
-  end,
 }
+-- Peripheral events reach programs through the console's one event queue.
+for _, e in ipairs(events) do require("_console").queue(table.unpack(e)) end
 "#;
 
 /// docs/cards/NFC_MIX.md: every Mix, TAG and PIN-hash vector, through the
@@ -963,6 +1338,8 @@ const NOT_IN_LUA: &[(&str, &str)] = &[
     ("radio.IqSink", "made by radio.iq_sink()"),
     ("radio.FramesSink", "made by radio.frames()"),
     ("radio.Framed", "made by radio.framed()"),
+    // fs: a handle is a table of functions.
+    ("fs.Handle", "fs.open returns the handle table"),
     // ui: handlers get a plain event table.
     ("ui.Event", "handlers receive {kind, value, widget}"),
 ];
@@ -986,6 +1363,9 @@ fn lua_offers_every_python_module_and_name() {
         .filter(|n| !n.starts_with('_'))
         .collect();
     py_modules.extend(boot.split("sys.modules['").skip(1).map(|r| r.split('\'').next().unwrap().to_string()));
+    // The console modules are loaded in a loop over their names.
+    let console_loop = boot.split("for _name in (").nth(1).and_then(|r| r.split(')').next()).expect("the console modules' loop");
+    py_modules.extend(console_loop.split(',').map(|n| n.trim().trim_matches('\'').to_string()).filter(|n| !n.is_empty()));
     let lua_main = lua_src("main.rs");
     for m in &py_modules {
         let in_lua = MODULES.iter().any(|(n, _)| n == m) || lua_main.contains(&format!("(\"{m}\", &"));
@@ -1000,7 +1380,9 @@ fn lua_offers_every_python_module_and_name() {
     set(&l, "POINTS", "");
     run(&l, FAKE_PERIPHERALS);
     for (name, file) in [("peripheral", "peripheral.py"), ("sensors", "sensors.py"), ("controller", "controller.py"),
-        ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py")]
+        ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py"),
+        ("term", "term.py"), ("events", "events.py"), ("computer", "computer.py"), ("colors", "colors.py"),
+        ("keys", "keys.py"), ("fs", "fs.py"), ("textutils", "textutils.py"), ("redstone", "redstone.py")]
     {
         let module: Table = l.load(format!("return require('{name}')")).eval().unwrap();
         for n in python_names(&read(file)) {

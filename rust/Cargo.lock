@@ -1255,6 +1255,13 @@ name = "ecm-chat"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-console"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "ecm-disco"
 version = "0.1.0"
 dependencies = [
@@ -2151,6 +2158,7 @@ name = "lua"
 version = "0.1.0"
 dependencies = [
  "ecm-cards",
+ "ecm-console",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-lineedit",
@@ -2913,6 +2921,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "ecm-cards",
+ "ecm-console",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-lineedit",
