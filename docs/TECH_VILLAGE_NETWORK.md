@@ -93,11 +93,12 @@ Every house reuses `192.168.1.0/24`: each home LAN is its own segment behind NAT
 
 ## 3. Computers, roles and ports
 
-A terminal's network ports are its faces: the non-screen faces in the order DOWN, UP,
-NORTH, SOUTH, WEST, EAST, then the free faces of attached Interface Blocks. For a
-terminal with a horizontal screen, **DOWN is always eth0 and UP always eth1**; the side
-faces depend on which way the screen faces, so use the Interface Probe on a face to see
-its name.
+A terminal's network ports are its faces, numbered relative to the screen: bottom, top,
+back, left, right (the computer's own left and right), skipping the screen and faces
+covered by an Interface Block, then the free faces of attached Interface Blocks in the
+same relative order. So **eth0 is always the bottom, eth1 the top, eth2 the back, eth3
+the left and eth4 the right**, however the terminal is turned; with an Interface Block
+attached, use the Interface Probe on a face to see its name.
 
 | Role (identity) | Where | Ports | Services |
 |---|---|---|---|

@@ -113,6 +113,14 @@ public final class RouterScenarioTests {
   @GameTest(
       template = TestDriver.STRUCTURE,
       timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.facing")
+  public static void ports_follow_facing(GameTestHelper h) {
+    run(h, "router_ports_follow_facing");
+  }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
       batch = "ecm_router_scenarios.chat")
   public static void chat(GameTestHelper h) {
     run(h, "router_chat");
