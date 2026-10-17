@@ -111,6 +111,30 @@ public final class PhoneHost implements IComputerHost {
                     return true;
                 }
             });
+    /**
+     * The phone's own microphone (peripheral {@code microphone}, {@code /dev/mic}): at the holder's
+     * hand, so it hears the holder close up and everything around them.
+     */
+    private final com.example.evanscomputermod.voice.MicAudio micAudio = new com.example.evanscomputermod.voice.MicAudio(
+            (start, n, rate, out) -> {
+                com.example.evanscomputermod.voice.VoiceServer.Spot s = micSpot();
+                if (s != null) com.example.evanscomputermod.voice.SoundField.get().render(s.dimension(), s.x(), s.y(), s.z(), start, n, rate, out);
+            });
+    private final com.example.evanscomputermod.voice.MicrophonePeripheral mic = new com.example.evanscomputermod.voice.MicrophonePeripheral(
+            new com.example.evanscomputermod.voice.MicrophonePeripheral.Owner() {
+                @Override public com.example.evanscomputermod.voice.MicAudio mic() { return micAudio; }
+                @Override public void markGainChanged() {}
+            });
+
+    /** Where the phone's microphone is: a little below the holder's mouth; null while nobody holds it. */
+    @Nullable
+    private com.example.evanscomputermod.voice.VoiceServer.Spot micSpot() {
+        ServerPlayer p = holder;
+        if (p == null) return null;
+        var eye = p.getEyePosition();
+        return new com.example.evanscomputermod.voice.VoiceServer.Spot(p.level().dimension().location().toString(), eye.x, eye.y - 0.4, eye.z);
+    }
+
     /** The PhoneUi the status source was last given to (PhoneApps). */
     private Object statusSource;
 
@@ -365,6 +389,8 @@ public final class PhoneHost implements IComputerHost {
         bays.load();
         peripherals.setWireless(PhonePeripheral.NAME, phonePeripheral);
         peripherals.setWireless("speaker", speaker);
+        peripherals.setWireless("microphone", mic);
+        com.example.evanscomputermod.voice.VoiceServer.addMic(micAudio, this::micSpot);
         peripherals.setWireless(com.example.evanscomputermod.card.SimPeripheral.TYPE, simPeripheral);
     }
 
@@ -375,6 +401,7 @@ public final class PhoneHost implements IComputerHost {
         }
         controllers.disconnectAll();
         peripherals.detachAll();
+        com.example.evanscomputermod.voice.VoiceServer.removeMic(micAudio);
     }
 
     /** The sleep landed (or timed out): let go of the computer. It stays in memory, paused. */
@@ -708,6 +735,12 @@ public final class PhoneHost implements IComputerHost {
         short[] pcm = speakerAudio.drain();
         ServerPlayer h = holder;
         if (pcm.length == 0 || h == null) return;
+        if (com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
+            // The phone's speaker is in the air for microphones too (in the holder's hand).
+            var eye = h.getEyePosition();
+            com.example.evanscomputermod.voice.SoundField.get().emit("phone:" + id, h.level().dimension().location().toString(),
+                    eye.x, eye.y - 0.5, eye.z, pcm, 0, pcm.length, speakerAudio.rate(), 1f);
+        }
         double range = com.example.evanscomputermod.EcmConfig.speakerRange();
         List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
         BlockPos at = h.blockPosition();
@@ -723,6 +756,11 @@ public final class PhoneHost implements IComputerHost {
     /** The phone's controller receiver (ControllerServer). */
     public com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
         return controllers;
+    }
+
+    /** The phone's microphone. */
+    public com.example.evanscomputermod.voice.MicAudio micAudio() {
+        return micAudio;
     }
 
     /** The phone's speaker (tests read how much it played). */

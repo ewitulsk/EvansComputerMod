@@ -36,6 +36,7 @@ public interface ProcessSandbox {
             case "sdr", "amplifier", "antenna", "dish", "microwave_radio", "wifi" -> "radio";
             case "framed_radio", "sim" -> "cellular";
             case "xbox_controller", "controller_receiver" -> "controller";
+            case "microphone" -> "microphone";
             default -> "peripherals:" + type;
         };
     }
@@ -44,6 +45,7 @@ public interface ProcessSandbox {
     static String devicePermission(String devName) {
         if (devName.startsWith("sdr") || devName.startsWith("frames")) return "radio";
         if (devName.startsWith("audio")) return "peripherals:speaker";
+        if (devName.startsWith("mic")) return "microphone";
         return null;
     }
 

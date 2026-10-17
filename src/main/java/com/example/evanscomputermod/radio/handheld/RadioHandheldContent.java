@@ -54,13 +54,17 @@ public final class RadioHandheldContent {
         r.playToClient(HandheldPackets.Audio.TYPE, HandheldPackets.Audio.STREAM_CODEC,
                 (p, ctx) -> ctx.enqueueWork(() -> com.example.evanscomputermod.speaker.client.HandheldAudioClient.onAudio(p)));
         r.playToServer(HandheldPackets.Settings.TYPE, HandheldPackets.Settings.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {
-            if (!(ctx.player() instanceof ServerPlayer player)) return;
-            ItemStack stack = player.getItemInHand(p.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
-            if (!(stack.getItem() instanceof HandheldRadioItem)) return;
-            HandheldBand band = HandheldBand.values()[Math.floorMod(p.band(), HandheldBand.values().length)];
-            new HandheldSettings(p.on(), band, band.clamp(p.freqHz()), Math.max(0, Math.min(100, p.volume())),
-                    Math.max(0, Math.min(100, p.squelch()))).write(stack);
+            if (ctx.player() instanceof ServerPlayer player) applySettings(player, p);
         }));
+    }
+
+    /** The tuning screen's settings arrived for the radio in a hand. */
+    public static void applySettings(ServerPlayer player, HandheldPackets.Settings p) {
+        ItemStack stack = player.getItemInHand(p.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+        if (!(stack.getItem() instanceof HandheldRadioItem)) return;
+        HandheldBand band = HandheldBand.values()[Math.floorMod(p.band(), HandheldBand.values().length)];
+        new HandheldSettings(p.on(), band, band.clamp(p.freqHz()), Math.max(0, Math.min(100, p.volume())),
+                Math.max(0, Math.min(100, p.squelch()))).write(stack);
     }
 }
 //?}

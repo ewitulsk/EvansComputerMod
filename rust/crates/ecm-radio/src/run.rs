@@ -361,6 +361,12 @@ pub fn station_main() {
 }
 
 pub fn station(a: &cli::StationArgs) -> Result<(), String> {
+    if let Some(dev) = a.sources.iter().find(|s| cli::is_mic(s)) {
+        if a.sources.len() > 1 {
+            return Err("a microphone is a live source: give it on its own".into());
+        }
+        return station_live(a, dev);
+    }
     let songs = expand_sources(&a.sources)?;
     if songs.is_empty() {
         return Err("no audio files to play".into());
@@ -440,6 +446,51 @@ pub fn station(a: &cli::StationArgs) -> Result<(), String> {
     }
     out.finish()?;
     println!("radio_station: done");
+    Ok(())
+}
+
+/// Audio rate a live microphone is read at for `mode` (broadcast FM gets the full 15 kHz).
+fn live_audio_rate(mode: &str) -> u32 {
+    if mode == "wbfm" {
+        48_000
+    } else {
+        24_000
+    }
+}
+
+/// Broadcast a microphone live (`radio_station /dev/mic 146.52M`): whatever it hears is modulated
+/// and transmitted as it is captured, until killed or `--duration` runs out.
+pub fn station_live(a: &cli::StationArgs, dev: &str) -> Result<(), String> {
+    let side = dev.strip_prefix("/dev/mic.").filter(|s| !s.is_empty());
+    let mut mic = ecm_audio::Mic::open(side).map_err(|e| format!("{dev}: no microphone ({e}); place a Microphone next to the computer"))?;
+    let audio_rate = live_audio_rate(&a.mode);
+    mic.set_format(audio_rate, 16, 1).map_err(|e| format!("{}: {e}", mic.name()))?;
+    let mut chain = transmitter(&a.mode, audio_rate as f64, a.rate as f64)?;
+    let mut out = TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, &format!("radio_station {}", mic.name()))?;
+    println!("radio_station: live from {} on {} {}", mic.name(), fmt_freq(a.freq), a.mode.to_ascii_uppercase());
+    let _ = std::io::stdout().flush();
+    let block = audio_rate as usize / 20; // 50 ms
+    let total = a.duration.map(|s| (s * audio_rate as f64).round() as usize);
+    let mut sent = 0usize;
+    mic.flush_queue().map_err(|e| e.to_string())?;
+    loop {
+        let want = match total {
+            Some(t) if sent >= t => break,
+            Some(t) => (t - sent).min(block),
+            None => block,
+        };
+        let samples = mic.read_samples(want).map_err(|e| format!("{}: {e}", mic.name()))?;
+        if samples.is_empty() {
+            break;
+        }
+        sent += samples.len();
+        let x: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        if let Buf::C(iq) = chain.process(Buf::R(x))? {
+            out.send(&iq)?;
+        }
+    }
+    out.finish()?;
+    println!("radio_station: done ({:.1} s live)", sent as f64 / audio_rate as f64);
     Ok(())
 }
 

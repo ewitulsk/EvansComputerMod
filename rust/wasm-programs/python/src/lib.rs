@@ -3,3 +3,6 @@
 
 pub mod radio_module;
 pub mod ui_module;
+
+#[cfg(test)]
+mod audio_tests;

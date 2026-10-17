@@ -67,6 +67,7 @@ members = [
     "wasm-programs/controllertest",
     "wasm-programs/beep",
     "wasm-programs/aplay",
+    "wasm-programs/arecord",
     "wasm-programs/gba",
     "wasm-programs/phone",
     "wasm-programs/gba-app",

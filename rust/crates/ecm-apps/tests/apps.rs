@@ -713,6 +713,43 @@ fn settings_apps_section_at_every_size() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn settings_sound_picks_default_devices_and_sets_the_gain() {
+    use ecm_apps::sys::SoundDevice;
+    let root = temp_root("sound");
+    let m = mock("settings", 600, 400);
+    let sys = settings_sys(&root);
+    {
+        let mut s = sys.state.borrow_mut();
+        s.sound = vec![
+            SoundDevice { name: "left".into(), input: false, volume: 80 },
+            SoundDevice { name: "back".into(), input: true, volume: 50 },
+            SoundDevice { name: "top".into(), input: true, volume: 40 },
+        ];
+        s.mic_levels = vec![("back".into(), -23), ("top".into(), -40)];
+    }
+    let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("sound")).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 380, proto::window_states::ACTIVATED)]);
+    for want in ["Sound", "Output", "left", "Input", "back", "top", "Input volume", "Input level"] {
+        assert!(t.has(1, want), "{want}: {:?}", t.of(1));
+    }
+    // Pick the second microphone: it becomes the default in /etc/sound.conf.
+    let first = app.core.window(1).unwrap().hit_id_of_row("inputs", 1).unwrap();
+    run(&mut app, &m, &mut t, click(1, first));
+    let conf = std::fs::read_to_string(root.join("etc/sound.conf")).unwrap();
+    assert_eq!(ecm_audio::parse_sound_conf(&conf, "input").as_deref(), Some("top"), "{conf}");
+    assert!(t.has(1, "Default input: top"), "{:?}", t.of(1));
+    // Drag the input volume to the far right: the microphone's gain is 100.
+    let vol = hit(&app, 1, "input_volume");
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Down, 10_000, 5, vol, proto::Button::Left)]);
+    run(&mut app, &m, &mut t, vec![pointer(1, proto::PointerKind::Up, 10_000, 5, vol, proto::Button::Left)]);
+    assert!(sys.state.borrow().log.contains(&"gain top 100".to_string()), "{:?}", sys.state.borrow().log);
+    assert_eq!(settings::meter(-30), "||||||||||..........");
+    assert_eq!(settings::meter(-99), "....................");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// What celld says on a phone attached to cell 1 of cell-red (two cells heard).
 fn celld_cell() -> CellState {
     let st = celld::ctl::Status::parse(

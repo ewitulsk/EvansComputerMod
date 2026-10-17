@@ -142,7 +142,8 @@ public final class RadioVisualLayout {
           new Spec("amplifier", "power_amplifier", "", Setup.NONE),
           new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE),
           new Spec("misc", "card_reader", "card=false", Setup.NONE),
-          new Spec("misc", "card_reader", "card=true", Setup.CARD));
+          new Spec("misc", "card_reader", "card=true", Setup.CARD),
+          new Spec("misc", "microphone", "lit=false", Setup.NONE));
 
   /**
    * Items shown in frames besides the block items of the row: the radio items, then the
@@ -152,6 +153,7 @@ public final class RadioVisualLayout {
   static final List<String> ITEM_SPECS =
       List.of(
           "handheld_radio",
+          "microphone",
           "controller_receiver_module",
           "interface_probe",
           "fiber_span",
