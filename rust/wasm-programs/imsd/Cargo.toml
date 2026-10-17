@@ -1,0 +1,23 @@
+[package]
+name = "imsd"
+version = "0.1.0"
+edition = "2021"
+description = "imsd: the carrier's IMS core (P/S/I-CSCF, registrar with IMS AKA, TAS call features, the interconnect border and the media relay). The machine is ecm_tel::ims; this is its configuration and the computer's loop."
+
+[lib]
+name = "imsd"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "imsd"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-tel = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-tel-net = { workspace = true }
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }

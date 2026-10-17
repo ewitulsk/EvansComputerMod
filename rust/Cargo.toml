@@ -34,6 +34,7 @@ members = [
     "crates/ecm-js",
     "crates/ecm-tel",
     "crates/ecm-rtp",
+    "crates/ecm-tel-net",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -144,6 +145,10 @@ members = [
     "wasm-programs/domain",
     "wasm-programs/whois",
     "wasm-programs/browser",
+    "wasm-programs/imsd",
+    "wasm-programs/smscd",
+    "wasm-programs/mmscd",
+    "wasm-programs/mrfd",
 ]
 resolver = "2"
 
@@ -176,6 +181,7 @@ ecm-web = { path = "crates/ecm-web" }
 ecm-js = { path = "crates/ecm-js" }
 ecm-tel = { path = "crates/ecm-tel" }
 ecm-rtp = { path = "crates/ecm-rtp" }
+ecm-tel-net = { path = "crates/ecm-tel-net" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

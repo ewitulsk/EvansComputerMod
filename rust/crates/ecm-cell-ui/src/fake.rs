@@ -69,7 +69,7 @@ impl CardWriter for FakeReader {
     fn card(&mut self) -> Result<Card, String> {
         Ok(self.card.clone().unwrap_or(Card::Empty))
     }
-    fn write(&mut self, imsi: &str, carrier: &str, key: &str) -> Result<bool, String> {
+    fn write(&mut self, imsi: &str, carrier: &str, key: &str, _msisdn: &str) -> Result<bool, String> {
         if self.card != Some(Card::Blank) {
             return Err("the card is not blank".into());
         }
