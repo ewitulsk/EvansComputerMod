@@ -27,6 +27,8 @@ WHAT PROGRAMS CAN USE
       ESC[?7727h  ESC[?7727l        the program reads Ctrl+C itself
       ESC[6n                        ask for the cursor: ESC[row;colR
       ESC[18t                       ask for the size: ESC[8;rows;colst
+      ESC[?2048h  ESC[?2048l        size reports on / off: ESC[48;rows;
+                                    cols;0;0t now and on every resize
 
     Colours: 30-37 and 90-97 set the text colour, 40-47 and 100-107 the
     background, 1 bold, 4 underline, 5 blink, 7 inverse, 0 resets. The
@@ -38,21 +40,34 @@ WHAT PROGRAMS CAN USE
     lines as - | +, curly quotes as straight ones) or as ?.
 
     The size is in the COLUMNS and LINES environment variables when a
-    program starts, and ESC[18t asks for it at any time.
+    program starts, and ESC[18t asks for it at any time. The answers to
+    ESC[6n, ESC[18t and ESC[?2048h arrive on the program's input, as if
+    typed, the way a real terminal answers.
+
+KEYBOARD INPUT
+    A running program reads the keys as they are typed, byte by byte:
+    there is no echo and no line editing (the program does its own).
+    Enter arrives as \n (a newline), Backspace as \b, Esc as ESC, and
+    the arrows, Home, End, PgUp, PgDn, Insert, Delete and F1-F12 as
+    xterm's escape sequences (man terminal-app). A program can wait for
+    a key with a time limit (poll or select on its input, WASI
+    poll_oneoff): vim tells Esc from the escape sequences of other keys
+    that way.
 
 BELL AND RESIZING
     The bell character (Ctrl+G, BEL, \a) makes the Terminal block chime.
     When a new display panel changes the screen's width, the text is
     re-wrapped: lines that wrapped at the old edge are joined and wrapped
     at the new one, the scrollback included, and the line being typed is
-    drawn again where it belongs.
+    drawn again where it belongs. A program that turned size reports on
+    (ESC[?2048h, vim does) gets the new size and can redraw.
 
 FULL-SCREEN PROGRAMS
-    A program that switches to full-screen mode (ESC[?1049h), like edit,
-    man and less, gets a screen of its own; the shell's text comes back
-    when it switches off or exits. While it runs, Ctrl+C and the mouse
+    A program that switches to full-screen mode (ESC[?1049h), like vim,
+    edit, man and less, gets a screen of its own; the shell's text comes
+    back when it switches off or exits. While it runs, Ctrl+C and the mouse
     wheel (as Up and Down) go to it. If a program exits without
     switching back, the terminal switches back for it.
 
 SEE ALSO
-    keys, shell, terminal-app, edit, less
+    keys, shell, terminal-app, vim, edit, less

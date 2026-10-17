@@ -35,6 +35,17 @@ public interface WasmRuntime extends AutoCloseable {
                 || name.startsWith("arc4random");
     }
 
+    /**
+     * What a stub for an import the host doesn't supply returns (as an i32 /
+     * i64 result). A WASI preview1 function that is missing answers ENOSYS (52):
+     * its result is an errno, and 0 would claim success with the out-parameters
+     * never written (path_readlink "succeeding" with a garbage length sent vim
+     * writing far past its buffer). Everything else returns 0.
+     */
+    static long stubResult(String module, String name) {
+        return "wasi_snapshot_preview1".equals(module) || "wasi_unstable".equals(module) ? 52 : 0;
+    }
+
     /** Provider name for diagnostics: {@code "chicory"} / {@code "wasmtime"}. */
     String providerName();
 

@@ -1,0 +1,40 @@
+NAME
+    vi - the visual editor (Vim)
+
+SYNOPSIS
+    vi [options] [file ...]
+
+DESCRIPTION
+    vi is Vim (see man vim), started under the classic name, as on
+    most Linux systems: the same program with the same keys, commands
+    and ~/.vimrc. Use whichever name you are used to.
+
+    In a hurry: i starts typing, Shift+Esc stops (plain Esc closes the
+    Terminal screen), :wq Enter saves and quits,
+    :q! Enter quits without saving, u undoes.
+
+    The shell knows a few more names for Vim. Each starts Vim under that
+    name, which changes how it starts:
+
+    view
+        Open the files read-only (:w! still writes).
+
+    vimdiff
+        Compare two or three files side by side, differences
+        highlighted (]c and [c jump between them, do and dp copy).
+
+    ex
+        Start in Ex mode (a line editor: type :visual to go full
+        screen).
+
+NOTES
+    A program of your own named vi (bin/vi.wasm, or vi.wasm in the
+    current folder) wins over the alias.
+
+EXAMPLES
+      vi notes.txt
+      view log.txt
+      vimdiff a.txt b.txt
+
+SEE ALSO
+    vim, edit
