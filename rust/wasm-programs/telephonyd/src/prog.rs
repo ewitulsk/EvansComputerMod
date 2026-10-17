@@ -588,7 +588,7 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
         ["status"] => {
             let calls = ua.calls();
             Ok(format!(
-                "registration {}\nmsisdn {}\ndomain {}\nvolte {}\nhd {}\nvoicemail {}\nunread {}\nmissed {}\ncalls {}\nmmsc {}\n",
+                "registration {}\nmsisdn {}\ndomain {}\nvolte {}\nhd {}\nvoicemail {}\nunread {}\nmissed {}\ncalls {}\nmmsc {}\nspeaker {}\nnow {}\n",
                 ua.registration().name(),
                 if ua.msisdn().is_empty() { "-" } else { ua.msisdn() },
                 ua.bearer().map(|b| b.domain.clone()).filter(|d| !d.is_empty()).unwrap_or_else(|| "-".into()),
@@ -598,7 +598,9 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
                 st.unread(),
                 st.missed(),
                 calls.len(),
-                if ua.mmsc_url.is_empty() { "-" } else { &ua.mmsc_url }
+                if ua.mmsc_url.is_empty() { "-" } else { &ua.mmsc_url },
+                audio.speaker_on as u8,
+                now
             ))
         }
         ["calls"] => Ok(ua
@@ -647,7 +649,8 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
         }
         ["play", i, path] => {
             let call = id(i)?;
-            let data = std::fs::read(dec(path)).map_err(|e| format!("{}: {e}", dec(path)))?;
+            let path = telephonyd::user_path(&dec(path))?;
+            let data = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
             let w = ecm_rtp::wav::read_16k(&data).ok_or("not a WAV file")?;
             audio.play = Some((call, w));
             Ok(String::new())
@@ -655,7 +658,8 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
         ["record", i, secs, path] => {
             let call = id(i)?;
             let s: u64 = secs.parse().map_err(|_| "seconds")?;
-            audio.record = Some((call, now + s.clamp(1, 300) * 1000, dec(path), Vec::new()));
+            let path = telephonyd::user_path(&dec(path))?;
+            audio.record = Some((call, now + s.clamp(1, 300) * 1000, path, Vec::new()));
             Ok(String::new())
         }
         ["sms", to, text] => {
@@ -675,6 +679,7 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
             let mut fv = Vec::new();
             if *files != "-" {
                 for f in files.split(',').map(dec) {
+                    let f = telephonyd::user_path(&f)?;
                     let data = std::fs::read(&f).map_err(|e| format!("{f}: {e}"))?;
                     let ct = if f.ends_with(".png") {
                         "image/png"
@@ -755,7 +760,7 @@ fn handle(line: &str, ua: &mut Ua, st: &mut Store, audio: &mut Audio, sms_ids: &
             if r.status != 200 {
                 return Err(format!("visual voicemail: HTTP {}", r.status));
             }
-            sys::write_file(&dec(path), &r.body)?;
+            sys::write_file(&telephonyd::user_path(&dec(path))?, &r.body)?;
             Ok(String::new())
         }
         ["voicemail-heard", i] => sys::http_request("POST", &format!("{}/{}/heard", ua.vvm_url, i), None, &[], Duration::from_secs(10)).map(|_| String::new()),

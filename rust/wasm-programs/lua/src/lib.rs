@@ -30,6 +30,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("ui", include_str!("lua/ui.lua")),
     ("web", include_str!("lua/web.lua")),
     ("auth", include_str!("lua/auth.lua")),
+    ("phone", include_str!("lua/phone.lua")),
 ];
 
 /// Module loader, `require` of the computer's files, compat names, lazy globals.
@@ -51,6 +52,8 @@ fn ecm_module(lua: &Lua) -> mlua::Result<Table> {
         }
         Ok(())
     })?)?;
+    // Make a directory and its parents (Lua has no mkdir); true when it exists after.
+    m.set("mkdir", lua.create_function(|_, path: String| Ok(std::fs::create_dir_all(&path).is_ok() || std::path::Path::new(&path).is_dir()))?)?;
     // Little-endian float32 values packed in a string (lidar ranges, points) as a list.
     m.set("unpack_f32", lua.create_function(|lua, data: LuaString| {
         let bytes = data.as_bytes();
@@ -92,3 +95,5 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests;
 #[cfg(test)]
 mod auth_tests;
+#[cfg(test)]
+mod phone_tests;

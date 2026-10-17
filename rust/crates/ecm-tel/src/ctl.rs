@@ -9,7 +9,7 @@
 //!
 //! | Request | Reply body |
 //! |---|---|
-//! | `status` | `key value`: `registration msisdn domain carrier bars volte hd voicemail unread missed` |
+//! | `status` | `key value`: `registration msisdn domain carrier bars volte hd voicemail unread missed calls mmsc speaker now` (`now`: telephonyd's clock in ms, the clock every time in the replies and events uses) |
 //! | `calls` | `call <id> <state> <number> <hidden 0/1> <outgoing 0/1> <seconds> <muted> <hd> <codec> <loss%> <merged>` |
 //! | `dial <number> [hide]` | `call <id>` |
 //! | `answer <id>`, `hangup <id>`, `decline <id>`, `hold <id> on\|off`, `swap`, `merge`, `mute <id> on\|off` | |

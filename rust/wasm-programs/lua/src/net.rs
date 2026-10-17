@@ -389,6 +389,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         buf.truncate(n as usize);
         lua.create_string(buf)
     })?)?;
+    // Whether a connection has data to read (or was closed): net.tcp_ready(conn [, timeout_ms]).
+    m.set("tcp_ready", lua.create_function(|_, (conn, timeout): (i32, Option<i32>)| Ok(net_ipc::tcp_ready(conn, timeout.unwrap_or(0))))?)?;
     m.set("tcp_close", lua.create_function(|_, conn: i32| {
         net_ipc::tcp_close(conn);
         Ok(())
