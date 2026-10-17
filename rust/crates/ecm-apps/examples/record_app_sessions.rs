@@ -18,6 +18,8 @@
 //! * `settings_cellular` (640x400) and `settings_cellular_compact` (320x200):
 //!   Settings -> Cellular with celld's status (Cellular v2): the SIM's identity,
 //!   the serving cell, signal, address, data, the roaming switch, cells heard.
+//! * `settings_bluetooth` (640x400): Settings -> Bluetooth on a phone-like computer with
+//!   AirPods paired and connected (sound on them) and a second pair nearby in pairing mode.
 //! * `desktop_apps` (640x400): Files and the Text Editor in frames, a toast,
 //!   and the launcher opened from the taskbar's Apps button (the core apps
 //!   with the Visual Programmer, then the installed App Store).
@@ -373,6 +375,40 @@ fn settings_cellular_session(name: &str, w: i32, h: i32) -> Vec<u8> {
     out
 }
 
+/// Settings opened on Bluetooth (`settings bluetooth`): AirPods connected, another pair nearby.
+fn settings_bluetooth_session(name: &str, w: i32, h: i32) -> Vec<u8> {
+    use ecm_apps::sys::{BtDevice, BtState};
+    let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
+    let dir = root(name);
+    let (mut d, shell) = start_desktop(&s, computer(&dir), w, h);
+    let (conn, ap) = connect(&s, 2, 11, 0, "settings", w, h);
+    let sys = computer(&dir);
+    sys.state.borrow_mut().bluetooth = BtState {
+        present: true,
+        powered: true,
+        name: "Alex's ePhone".into(),
+        address: "4E:21:9C:07:B3:10".into(),
+        audio: "headphones".into(),
+        last: "connected".into(),
+        devices: vec![BtDevice {
+            address: "AC:DE:48:00:11:22".into(),
+            name: "Alex's AirPods".into(),
+            paired: true,
+            connected: true,
+            battery: Some(87),
+            ..Default::default()
+        }],
+        nearby: vec![BtDevice { address: "AC:DE:48:00:33:44".into(), name: "Sam's AirPods".into(), pairable: true, rssi_dbm: Some(-61), ..Default::default() }],
+    };
+    let mut app = settings::app(conn, Box::new(sys), Some("bluetooth")).unwrap();
+    open_window(&mut d, &shell, &mut app, &ap, 1, 2, 11, "settings", "Settings");
+    s.borrow_mut().advance(0);
+    s.borrow_mut().snap(name);
+    let _ = std::fs::remove_dir_all(dir);
+    let out = std::mem::take(&mut s.borrow_mut().out);
+    out
+}
+
 fn desktop_apps() -> Vec<u8> {
     let (w, h) = (640, 400);
     let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
@@ -500,6 +536,7 @@ fn main() {
         ("settings_apps_wide", settings_apps_session("settings_apps_wide", 960, 480)),
         ("settings_cellular", settings_cellular_session("settings_cellular", 640, 400)),
         ("settings_cellular_compact", settings_cellular_session("settings_cellular_compact", 320, 200)),
+        ("settings_bluetooth", settings_bluetooth_session("settings_bluetooth", 640, 400)),
         ("desktop_apps", desktop_apps()),
     ];
     for (name, bytes) in sessions {

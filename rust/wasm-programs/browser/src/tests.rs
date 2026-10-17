@@ -638,6 +638,35 @@ fn the_phone_menu_opens_above_the_bottom_bar() {
     assert!(create.x >= 0 && create.x + create.w <= 240, "inside the phone's width: {create:?}");
 }
 
+// ------------------------------------------------------------------ phase 5: the village home page
+
+#[test]
+fn the_home_page_from_browser_conf() {
+    use crate::model::home_from_conf;
+    let conf = "# The Browser's home page\n# home http://commented.out/\nhome http://web.v3.ring/\n";
+    assert_eq!(home_from_conf(conf).as_deref(), Some("http://web.v3.ring/"));
+    assert_eq!(home_from_conf("home   100.67.0.10/  \n").as_deref(), Some("100.67.0.10/"));
+    assert_eq!(home_from_conf("homepage x\n"), None);
+    assert_eq!(home_from_conf("home has spaces in it\n"), None, "not an address");
+    assert_eq!(home_from_conf(""), None);
+    // The Browser opens on it, Home goes back to it, and a home the player sets wins.
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[samples::welcome(false)]);
+    let net = ring();
+    let mut b = BrowserApp::with_settings(Box::new(mock.clone()), net, None, None, "http://100.67.0.10/").unwrap();
+    mock.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w: 640, h: 400, states: proto::window_states::ACTIVATED })]);
+    steps(&mut b);
+    assert!(title(&b).starts_with("Tech Village 3"), "{}", title(&b));
+    type_address(&mut b, &mock, "100.66.0.10");
+    assert!(title(&b).starts_with("Tech Village 2"));
+    click(&mut b, &mock, "home");
+    assert!(title(&b).starts_with("Tech Village 3"), "Home: the configured page");
+    b.model.borrow_mut().settings.home = Some("http://100.66.0.10/".into());
+    click(&mut b, &mock, "home");
+    assert!(title(&b).starts_with("Tech Village 2"), "the player's own home page wins");
+}
+
 // ------------------------------------------------------------------ phase 4: the registrar's pages
 
 #[test]

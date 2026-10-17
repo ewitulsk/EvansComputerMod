@@ -8,6 +8,36 @@ pub struct Audio {
 }
 
 /// f32 (-1..1, clipped) -> 16-bit signed little-endian PCM.
+/// A microphone's automatic level control (the two-way radio kind): brings speech peaks up to `TARGET`
+/// with at most +30 dB, instant attack and a slow release, and adds no more gain below `NOISE_FLOOR` so
+/// room hiss isn't pumped up between words. Used for live microphone transmissions.
+pub struct MicAlc {
+    release: f32,
+    rise: f32,
+    env: f32,
+    gain: f32,
+}
+
+impl MicAlc {
+    pub const TARGET: f32 = 0.8;
+    pub const MAX_GAIN: f32 = 31.6;
+    pub const NOISE_FLOOR: f32 = 0.005;
+
+    pub fn new(rate: f32) -> MicAlc {
+        MicAlc { release: (-1.0 / (rate * 0.4)).exp(), rise: 1.0 - (-1.0 / (rate * 0.15)).exp(), env: 0.0, gain: 1.0 }
+    }
+
+    pub fn process(&mut self, x: &mut [f32]) {
+        for v in x.iter_mut() {
+            let level = v.abs();
+            self.env = if level > self.env { level } else { self.env * self.release };
+            let want = (Self::TARGET / self.env.max(Self::NOISE_FLOOR)).clamp(0.25, Self::MAX_GAIN);
+            self.gain = if want < self.gain { want } else { self.gain + (want - self.gain) * self.rise };
+            *v = (*v * self.gain).clamp(-1.0, 1.0);
+        }
+    }
+}
+
 pub fn to_pcm16(x: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(x.len() * 2);
     for &v in x {
@@ -222,6 +252,20 @@ pub fn wav_title(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mic_alc_brings_a_quiet_voice_up_and_leaves_hiss_down() {
+        let mut alc = MicAlc::new(24_000.0);
+        let mut quiet: Vec<f32> = (0..48_000).map(|i| 0.0316 * (std::f32::consts::TAU * 800.0 * i as f32 / 24_000.0).sin()).collect();
+        alc.process(&mut quiet);
+        let peak = quiet[24_000..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.6, "a -30 dBFS voice reaches full modulation, peak {peak}");
+        let mut alc = MicAlc::new(24_000.0);
+        let mut hiss: Vec<f32> = (0..48_000).map(|i| if i % 2 == 0 { 1.8e-4 } else { -1.8e-4 }).collect();
+        alc.process(&mut hiss);
+        let peak = hiss.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak < 0.01, "hiss stays quiet, peak {peak}");
+    }
 
     #[test]
     fn wav_title_from_info_chunk() {

@@ -1,0 +1,13 @@
+[package]
+name = "ecm-discord"
+version = "0.1.0"
+edition = "2021"
+description = "Discord for the mod's computers: the DISCORD/1 line protocol, the backend (discordd) as a state machine with servers, text and voice channels, members and saved state, and the UDP voice packets, jitter mixer and voice gate. Pure Rust (no host calls) so it is tested on the host."
+
+[lib]
+name = "ecm_discord"
+doctest = false
+
+[dependencies]
+ecm-chat = { workspace = true }
+ecm-audio = { workspace = true }

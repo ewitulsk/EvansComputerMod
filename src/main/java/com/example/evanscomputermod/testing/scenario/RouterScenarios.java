@@ -602,17 +602,18 @@ public final class RouterScenarios {
   }
 
   /**
-   * The chat service: chatd on "server", with alice cabled to its eth0 (bottom) and bob to its
-   * eth1 (top, a second LAN); alice and bob read the server from /etc/chat.conf. Control first:
-   * a port with no chatd gets the "refused" fix-it hint.
+   * The chat command against a Discord backend: discordd on "server", with alice cabled to its
+   * eth0 (bottom) and bob to its eth1 (top, a second LAN); alice and bob read the server from
+   * /etc/chat.conf and talk in the backend's home server #general. Control first: a port with no
+   * backend gets the "refused" fix-it hint.
    */
   private static Scenario chat() {
     var b =
         nodes(
             "router_chat",
-            "Instant messaging: chatd on 'server', 'alice' and 'bob' run chat (server from"
-                + " /etc/chat.conf), talk, /who and /quit. Control: a port without chatd is"
-                + " refused with a fix-it hint.",
+            "Instant messaging: discordd on 'server', 'alice' and 'bob' run chat (server from"
+                + " /etc/chat.conf), talk in #general, /who and /quit. Control: a port without a"
+                + " backend is refused with a fix-it hint.",
             "server",
             "alice",
             "bob");
@@ -624,14 +625,14 @@ public final class RouterScenarios {
         b,
         ordered(
             Map.entry("server", Map.of("network.cfg", "iface eth0 10.95.0.1/24\niface eth1 10.95.1.1/24\n",
-                "services.cfg", "chatd 7777 &\n")),
+                "services.cfg", "discordd 7777 &\n")),
             Map.entry("alice", Map.of("network.cfg", "iface eth0 10.95.0.2/24\n", "etc/chat.conf",
                 "server 10.95.0.1\nport 7777\nnick alice\n")),
             Map.entry("bob", Map.of("network.cfg", "iface eth0 10.95.1.3/24\n", "etc/chat.conf",
                 "server 10.95.1.1\nnick bob\n"))));
-    b.note("server runs chatd 7777 & on both of its LANs; cat /etc/chat.conf on alice and bob.");
+    b.note("server runs discordd 7777 & (a Discord backend) on both of its LANs; cat /etc/chat.conf on alice and bob.");
     b.send("alice", "chat 10.95.0.1:7778");
-    b.expect("alice", "refused", "control: no chat server on port 7778 (fix-it hint)");
+    b.expect("alice", "refused", "control: no Discord backend on TCP port 7778 (fix-it hint; 7778 is its voice port, UDP)");
     b.expect("alice", "/ >", "shell");
     b.send("alice", "chat");
     b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server and nick from /etc/chat.conf)");
@@ -1323,7 +1324,7 @@ public final class RouterScenarios {
             var d = WorldNetwork.get(level);
             var host = ComputerHost.get(level.getServer(), d.identity(level, d.chatVillage(), WorldNetwork.CHAT));
             String log = host.instance() == null ? "" : ScenarioRun.screen(host.headlessDisplay());
-            return log.contains("tapper joined from 10.200." + a + ".10") ? null : "chatd log:\n" + log;
+            return log.contains("tapper joined from 10.200." + a + ".10") ? null : "discordd log:\n" + log;
           },
           "the chat server saw tapper join from 10.200." + a + ".10 (no NAT: the tap's own prefix is routed)",
           15_000);

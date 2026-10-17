@@ -1452,6 +1452,7 @@ fn prompt_view(p: &Prompt, st: &Shared) -> Element {
         "cellular" => "the cellular modem",
         "files" => "your files",
         "controller" => "Wireless Controllers",
+        "microphone" => "the microphone",
         "location" => "your location",
         "notifications" => "notifications",
         "background" => "running in the background",

@@ -113,7 +113,12 @@ impl Transport for HostTransport {
 
 /// The home page until one is set: a Tech Village computer's own village
 /// site (its address is 100.(64+n).x.y), else the start page.
+/// The home page when the player hasn't set one: `/etc/browser.conf`'s, else the village
+/// site for a computer on a village's own network, else the start page.
 fn default_home() -> String {
+    if let Some(h) = std::fs::read_to_string(browser_app::model::CONF).ok().as_deref().and_then(browser_app::model::home_from_conf) {
+        return h;
+    }
     for i in 0..ecm_host_abi::net_config::iface_count() {
         let Some(info) = ecm_host_abi::net_config::iface_info(i) else { continue };
         let Some(at) = info.find("\"ip\"") else { continue };

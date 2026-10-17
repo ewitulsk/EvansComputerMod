@@ -265,7 +265,17 @@ public final class SpeakerAudio {
     public synchronized String status() {
         return String.format(Locale.ROOT,
                 "rate %d\nbits %d\nchannels %d\nvolume %d\nlatency %d\nbuffered_ms %d\nunderruns %d\n",
-                rate, bits, channels, volume, latencyMs, bufferedMs(), underruns);
+                rate, bits, channels, volume, latencyMs, bufferedMs(), underruns) + statusExtra.get();
+    }
+
+    private volatile java.util.function.Supplier<String> statusExtra = () -> "";
+
+    /**
+     * More {@code key value} lines for {@code /dev/audioctl}, from the device that owns this
+     * sound card (an ePhone adds {@code headphones 1} while its audio goes to AirPods).
+     */
+    public void setStatusExtra(java.util.function.Supplier<String> extra) {
+        statusExtra = extra == null ? () -> "" : extra;
     }
 
     /**

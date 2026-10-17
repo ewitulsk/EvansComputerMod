@@ -52,6 +52,12 @@ public final class BrowserTests {
         DnsTests.ring(h, NS, BrowserScenarios.ALL.get("browser_dns"));
     }
 
+    /** At a Tech Village house PC: the Browser opens on the village's website (/etc/browser.conf), Home; controls: about:home, the player's own home wins. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".home")
+    public static void browser_home(GameTestHelper h) {
+        DnsTests.ring(h, NS, BrowserScenarios.ALL.get("browser_home"));
+    }
+
     private BrowserTests() {}
 }
 //?}
