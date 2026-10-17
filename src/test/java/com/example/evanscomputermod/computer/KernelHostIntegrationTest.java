@@ -63,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "gba.wasm", "rng_test.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "lua.wasm", "gba.wasm", "rng_test.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -291,6 +291,52 @@ public class KernelHostIntegrationTest {
     }
 
     /**
+     * The Lua 5.2 interpreter runs a script: the C library's errors (setjmp/longjmp
+     * over WASM exception handling) are caught by pcall, coroutines resume, `arg`
+     * holds the arguments, files written with Lua's io are read back through the
+     * shell module, and peripherals are listed and called.
+     */
+    @Test
+    void luaRunsAScriptWithErrorsCoroutinesFilesAndPeripherals() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("lua.wasm")),
+                "lua not built (WASI_SDK_PATH=... cargo build --release --target wasm32-wasip1 -p lua)");
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        hub.setWireless("left", new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                }));
+        Files.writeString(dataDir.resolve("t.lua"), String.join("\n",
+                "print('VER', _VERSION, 7 / 2, bit32.band(12, 10), unpack({4, 5}))",
+                "local ok, err = pcall(function() error('boom', 0) end)",
+                "print('PCALL', ok, err)",
+                "local co = coroutine.wrap(function(a) local b = coroutine.yield(a + 1) return b * 2 end)",
+                "print('CO', co(1), co(21))",
+                "print('ARG', arg[0], arg[1], select('#', ...))",
+                "local f = assert(io.open('out.txt', 'w')) f:write('written by lua') f:close()",
+                "print('FILE', shell.read_file('/out.txt'))",
+                "for _, p in ipairs(peripheral.list()) do print('PERIPH', p.name, p.type) end",
+                "local ok2, perr = pcall(peripheral.call, 'nowhere', 'status')",
+                "print('NOPERIPH', ok2)",
+                "error('uncaught at the end')",
+                ""));
+        int prompts = count(screen(), "/ > ");
+        computer.sendInput("lua t.lua hello\n");
+        waitForScreen(s -> count(s, "/ > ") > prompts, 60_000, "prompt after lua exits");
+        String screen = screen();
+        // print() separates values with tabs, which the terminal renders as columns.
+        assertTrue(hasLine(screen, "VER", "Lua", "5.2", "3.5", "8", "4", "5"), screen);
+        assertTrue(hasLine(screen, "PCALL", "false", "boom"), screen);
+        assertTrue(hasLine(screen, "CO", "2", "42"), screen);
+        assertTrue(hasLine(screen, "ARG", "t.lua", "hello", "1"), screen);
+        assertTrue(hasLine(screen, "FILE", "written", "by", "lua"), screen);
+        assertTrue(hasLine(screen, "PERIPH", "left", "speaker"), screen);
+        assertTrue(hasLine(screen, "NOPERIPH", "false"), screen);
+        assertTrue(screen.contains("uncaught at the end"), screen);
+    }
+
+    /**
      * The GBA emulator runs a test ROM on the terminal display with a
      * controller, plays its sound on a speaker, and quits on Guide.
      */
@@ -357,6 +403,12 @@ public class KernelHostIntegrationTest {
     }
 
     // ------------------------------------------------------------ helpers
+
+    /** A screen line whose whitespace-separated words include all of {@code words}. */
+    private static boolean hasLine(String screen, String... words) {
+        return screen.lines().anyMatch(l -> java.util.Arrays.asList(l.trim().split("\\s+"))
+                .containsAll(java.util.Arrays.asList(words)));
+    }
 
     private String screen() {
         StringBuilder sb = new StringBuilder();

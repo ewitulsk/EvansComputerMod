@@ -15,10 +15,26 @@ export PATH="$HOME/.cargo/bin:/c/Users/$USERNAME/.cargo/bin:$PATH"
 echo "Building kernel (terminal_os.wasm)..."
 (cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
+# lua's C sources (Lua 5.2) need wasi-sdk's clang and sysroot: WASI_SDK_PATH, or
+# wasi-sdk unpacked in one of the usual places. Without it lua is skipped, loudly.
+if [ -z "$WASI_SDK_PATH" ]; then
+    for d in /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk"; do
+        if [ -x "$d/bin/clang" ] || [ -x "$d/bin/clang.exe" ]; then export WASI_SDK_PATH="$d"; break; fi
+    done
+fi
+if [ -n "$WASI_SDK_PATH" ]; then
+    export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
+else
+    echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua will NOT be built"
+    rm -f rust/target/wasm32-wasip1/release/lua.wasm
+fi
+
 echo "Building WASI programs..."
 PKGS=()
 for dir in rust/wasm-programs/*/; do
-    PKGS+=("-p" "$(basename "$dir")")
+    prog="$(basename "$dir")"
+    [ "$prog" = lua ] && [ -z "$WASI_SDK_PATH" ] && continue
+    PKGS+=("-p" "$prog")
 done
 # A failed build must stop here: staging would otherwise ship whatever stale
 # .wasm the target directory still holds (python.wasm went out without its
