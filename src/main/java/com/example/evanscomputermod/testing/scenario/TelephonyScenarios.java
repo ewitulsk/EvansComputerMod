@@ -317,21 +317,48 @@ public final class TelephonyScenarios {
                 who + "'s screen is clear", 10_000);
     }
 
-    /** A shell line on {@code who}'s Terminal (after clear); wait for {@code re} on the screen (rows also joined). */
+    /**
+     * What the Terminal printed after the typed {@code line} (its echo may wrap: the 30 columns): the rows
+     * after the row where the echo ends, or null while the echo isn't on the screen yet.
+     */
+    static String after(String screen, String line) {
+        String[] rows = screen.split("\n", -1);
+        StringBuilder joined = new StringBuilder();
+        int[] ends = new int[rows.length];
+        for (int i = 0; i < rows.length; i++) {
+            joined.append(rows[i]);
+            ends[i] = joined.length();
+        }
+        int at = joined.lastIndexOf(line);
+        if (at < 0) return null;
+        int end = at + line.length(), row = 0;
+        while (row < rows.length - 1 && ends[row] < end) row++;
+        return String.join("\n", java.util.Arrays.copyOfRange(rows, row + 1, rows.length));
+    }
+
+    /**
+     * A shell line on {@code who}'s Terminal (after clear); wait for {@code re} in what it printed after the
+     * line (rows also joined), so a pattern like the prompt can't match before the command has run.
+     */
     static void run(Scenario.Builder b, String who, java.util.function.Function<ScenarioRun, String> line, String shown, String re,
                     String fail, String what, int timeoutMs) {
         Pattern want = Pattern.compile(re, Pattern.MULTILINE), bad = fail == null ? null : Pattern.compile(fail, Pattern.MULTILINE);
         clear(b, who);
         b.mutate(r -> {
-            if (!hand(r, who).type(r, line.apply(r) + "\n")) r.fail(who + "'s phone refused the typing");
+            Handset h = hand(r, who);
+            h.typed = line.apply(r);
+            if (!h.type(r, h.typed + "\n")) r.fail(who + "'s phone refused the typing");
         }, who + "'s Terminal: " + shown);
         b.await(r -> {
-            String s = hand(r, who).screen(r), joined = s.replace("\n", "");
+            Handset h = hand(r, who);
+            String screen = h.screen(r), s = after(screen, h.typed);
+            if (s == null) return who + "'s screen doesn't show the line yet:\n" + screen;
+            String joined = s.replace("\n", "");
             if (bad != null && (bad.matcher(s).find() || bad.matcher(joined).find())) {
-                r.fail(what + ": " + who + "'s phone printed\n" + s);
+                r.fail(what + ": " + who + "'s phone printed\n" + screen);
                 return null;
             }
-            return want.matcher(s).find() || want.matcher(joined).find() ? null : who + "'s screen:\n" + s;
+            return want.matcher(s).find() || want.matcher(joined).find() ? null : who + "'s screen:\n" + screen;
         }, what, timeoutMs);
     }
 
@@ -422,7 +449,19 @@ public final class TelephonyScenarios {
         run(b, ANN, r -> "tel dial " + local(hand(r, BEA).number), "tel dial <Bea>", "tel: calling", "^tel: (?!calling)", "tel dial: calling Bea", 10_000);
         b.await(r -> hand(r, BEA).shows(r, "Phone", "Incoming call"), "Bea's phone rings again", 20_000);
         b.await(r -> hand(r, BEA).tap(r, "Phone", "Decline"), "Bea taps Decline", 5_000);
-        run(b, ANN, "tel log 1", "out .*declined", null, "Ann's tel log: the call out, declined", 15_000);
+        b.await(r -> {
+            Handset h = hand(r, BEA);
+            PhoneUi u = h.ui(r);
+            if (u != null && u.ringingWho() == null && h.shows(r, "Phone", "Incoming call") != null) return null;
+            return "Bea's phone still rings: " + h.texts(r, "Phone") + " windows " + h.comp(r).windows() + "\ntelephonyd.log:\n"
+                    + h.log(r, "var/log/telephonyd.log", 600);
+        }, "Bea's phone stops ringing (one Phone app: the running one was raised, not started again)", 5_000);
+        b.await(r -> hand(r, BEA).comp(r).windows().stream().filter(w -> w.appId().equals(DIALER)).count() == 1 ? null
+                : "Bea's windows " + hand(r, BEA).comp(r).windows(), "Bea has one Phone window", 1_000);
+        b.note("A declined call sounds busy to the caller (the network doesn't tell her it was declined); the core's CDR says declined");
+        run(b, ANN, "tel log 1", "out .*busy", null, "Ann's tel log: the call out, busy", 15_000);
+        b.send("core", "cat /var/log/cdr/imsd.cdr");
+        b.expect("core", "result=declined", "the core's call record: declined");
         b.timeLimit(120_000);
         return b.build();
     }
@@ -468,7 +507,7 @@ public final class TelephonyScenarios {
 
     static final String TEXT1 = "lunch at noon?", TEXT2 = "you there now?";
 
-    /** Ann's Messages: the text right after {@code text} in its window (the bubble's status line), or "". */
+    /** Ann's Messages: the text right after {@code text} in its window (the bubble's status line, "now · Delivered"), or "". */
     static String statusAfter(ScenarioRun r, String text) {
         List<String> t = hand(r, ANN).texts(r, "Messages");
         int i = t.lastIndexOf(text);
@@ -490,7 +529,7 @@ public final class TelephonyScenarios {
         b.mutate(r -> hand(r, ANN).type(r, TEXT1), "Ann types \"" + TEXT1 + "\"");
         b.await(r -> hand(r, ANN).tap(r, "Messages", "Send"), "Ann taps Send", 5_000);
         b.await(r -> notified(r, BEA, MESSAGES, TEXT1), "Bea gets a notification with the text", 20_000);
-        b.await(r -> statusAfter(r, TEXT1).equals("Delivered") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
+        b.await(r -> statusAfter(r, TEXT1).endsWith("Delivered") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
                 "Ann's bubble says Delivered (the delivery report)", 20_000);
         b.note("Bea opens Messages: the thread with Ann");
         openApp(b, BEA, "Messages", MESSAGES);
@@ -503,17 +542,17 @@ public final class TelephonyScenarios {
         b.await(r -> hand(r, ANN).tap(r, "Messages", "Text message"), "Ann taps the reply box in the thread", 10_000);
         b.mutate(r -> hand(r, ANN).type(r, TEXT2), "Ann types \"" + TEXT2 + "\"");
         b.await(r -> hand(r, ANN).tap(r, "Messages", "Send"), "Ann taps Send", 5_000);
-        b.await(r -> statusAfter(r, TEXT2).equals("Sent") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
+        b.await(r -> statusAfter(r, TEXT2).endsWith("Sent") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
                 "Ann's second bubble: Sent (the SMSC has it)", 15_000);
         b.mutate(r -> hand(r, ANN).mark = System.currentTimeMillis(), "-");
         b.await(r -> {
-            if (statusAfter(r, TEXT2).equals("Delivered")) r.fail("Delivered while Bea's phone has no SIM");
+            if (statusAfter(r, TEXT2).endsWith("Delivered")) r.fail("Delivered while Bea's phone has no SIM");
             return System.currentTimeMillis() - hand(r, ANN).mark > 3_000 ? null : "watching";
         }, "for 3 s it stays Sent", 5_000);
         b.mutate(r -> hand(r, BEA).simIn(r), "Bea: the SIM back in");
         b.await(r -> volte(r, BEA), "Bea's phone registers again", 40_000);
         b.await(r -> notified(r, BEA, MESSAGES, TEXT2), "the stored text reaches Bea", 30_000);
-        b.await(r -> statusAfter(r, TEXT2).equals("Delivered") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
+        b.await(r -> statusAfter(r, TEXT2).endsWith("Delivered") ? null : "Ann's Messages: " + hand(r, ANN).texts(r, "Messages"),
                 "Ann's second bubble: Delivered", 20_000);
         b.timeLimit(150_000);
         return b.build();
@@ -532,7 +571,7 @@ public final class TelephonyScenarios {
         openTerminal(b, ANN);
         run(b, ANN, "cp /apps/dev.ecm.notes/icon.png /home/sign.png", PROMPT, "^cp: ", "a picture at /home/sign.png", 10_000);
         run(b, ANN, r -> "sms mms " + local(hand(r, BEA).number) + "," + local(hand(r, CAL).number) + " --file /home/sign.png " + PIC_TEXT,
-                "sms mms <Bea>,<Cal> --file /home/sign.png " + PIC_TEXT, "sms: MMS sent to", "^sms: (?!MMS)", "sms: the MMS is sent", 30_000);
+                "sms mms <Bea>,<Cal> --file /home/sign.png " + PIC_TEXT, "sms: MMS sent to", "^sms: (?!MMS sent)", "sms: the MMS is sent", 30_000);
         b.await(r -> notified(r, BEA, MESSAGES, PIC_TEXT), "Bea gets the picture message (notification)", 30_000);
         openApp(b, BEA, "Messages", MESSAGES);
         b.await(r -> hand(r, BEA).tap(r, "Messages", PIC_TEXT), "Bea taps the conversation", 10_000);
@@ -566,14 +605,17 @@ public final class TelephonyScenarios {
         openTerminal(b, BEA);
         clear(b, BEA);
         b.mutate(r -> hand(r, BEA).type(r, "lua\n"), "Bea's Terminal: lua");
-        b.await(r -> hand(r, BEA).screen(r).contains("> ") ? null : "Bea's screen:\n" + hand(r, BEA).screen(r), "the Lua prompt", 15_000);
+        b.await(r -> {
+            String s = after(hand(r, BEA).screen(r), "/ > lua");
+            return s != null && s.lines().anyMatch(l -> l.strip().equals(">")) ? null : "Bea's screen:\n" + hand(r, BEA).screen(r);
+        }, "the Lua prompt", 15_000);
         String lua = "phone.on_sms(function(f, t) print('lua got ' .. t .. ' from ' .. f) end) phone.run()";
         b.mutate(r -> hand(r, BEA).type(r, lua + "\n"), "Bea's Lua: " + lua);
         b.waitMs(2_000, "Lua waits for texts");
         openTerminal(b, ANN);
         clear(b, ANN);
         b.mutate(r -> hand(r, ANN).type(r, "python\n"), "Ann's Terminal: python");
-        b.await(r -> hand(r, ANN).screen(r).contains(">>>") ? null : "Ann's screen:\n" + hand(r, ANN).screen(r), "the Python prompt", 15_000);
+        b.await(r -> after(hand(r, ANN).screen(r), "/ > python") instanceof String s && s.contains(">>>") ? null : "Ann's screen:\n" + hand(r, ANN).screen(r), "the Python prompt", 15_000);
         b.mutate(r -> hand(r, ANN).type(r, "import phone; print('sent', phone.sms_send('" + local(hand(r, BEA).number) + "', '" + SCRIPT_TEXT + "'))\n"),
                 "Ann's Python: import phone; print('sent', phone.sms_send('<Bea>', '" + SCRIPT_TEXT + "'))");
         b.await(r -> {

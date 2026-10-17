@@ -23,7 +23,6 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /**
  * One person with an ePhone in a scenario with several phones (telephony): the scenario
@@ -39,6 +38,8 @@ final class Handset {
     String imsi = "", number = "";
     long mark;
     String memo = "";
+    /** The last shell line typed on the Terminal ({@link TelephonyScenarios#run}). */
+    String typed = "";
 
     Handset(String name, ScenarioPlayer other) {
         this.name = name;
@@ -332,45 +333,7 @@ final class Handset {
         }
     }
 
-    // ------------------------------------------------------------ scenario steps
-
-    /** Alt+H (home) if an app is open, tap {@code name} on the home grid, wait for it full screen. */
-    void openApp(Scenario.Builder b, String label, String appId) {
-        b.mutate(r -> {
-            PhoneUi u = ui(r);
-            if (u != null && u.foreground() != null) altKey(r, PhoneGuiScenarios.HID_H);
-        }, name + ": Alt+H (home) if an app is open");
-        b.await(r -> tapLayer(r, "home", label, false), name + ": tap " + label + " on the home grid", 20_000);
-        b.await(r -> onScreen(r, appId) != null ? null : name + "'s windows " + (comp(r) == null ? "-" : comp(r).windows()),
-                name + ": " + label + " opens full screen", 30_000);
-    }
-
-    void openTerminal(Scenario.Builder b) {
-        openApp(b, "Terminal", PhoneScenarios.TERMINAL);
-        b.await(r -> screen(r).contains("/ >") ? null : name + "'s Terminal:\n" + screen(r), name + ": the Terminal's shell prompt", 20_000);
-    }
-
-    void clear(Scenario.Builder b) {
-        b.mutate(r -> type(r, "clear\n"), name + "'s Terminal: clear");
-        b.await(r -> screen(r).strip().equals("/ >") ? null : name + "'s screen:\n" + screen(r), name + "'s screen is clear", 10_000);
-    }
-
-    /** Type a shell line in the phone's Terminal (after clear) and wait for {@code re} (rows joined: 30 columns wrap); {@code fail} ends the run. */
-    void run(Scenario.Builder b, String line, String re, String fail, String what, int timeoutMs) {
-        Pattern want = Pattern.compile(re, Pattern.MULTILINE), bad = fail == null ? null : Pattern.compile(fail, Pattern.MULTILINE);
-        clear(b);
-        b.mutate(r -> {
-            if (!type(r, line + "\n")) r.fail(name + "'s phone refused its holder's typing");
-        }, name + "'s Terminal: " + line);
-        b.await(r -> {
-            String s = screen(r), joined = s.replace("\n", "");
-            if (bad != null && (bad.matcher(s).find() || bad.matcher(joined).find())) {
-                r.fail(what + ": " + name + "'s phone printed\n" + s);
-                return null;
-            }
-            return want.matcher(s).find() || want.matcher(joined).find() ? null : name + "'s screen:\n" + s;
-        }, what, timeoutMs);
-    }
+    // ------------------------------------------------------------ cleanup
 
     /** Close the phone's computer (cleanup). */
     void forget(ScenarioRun r) {
