@@ -66,6 +66,9 @@ public final class GuiServerChecks {
     /** The app window whose close button the client clicks over a simulated overlay. */
     private static volatile Compositor.WindowInfo closeTarget;
     private static boolean closeReported;
+    /** Esc checks after the launcher: menu kept open by Shift+Esc, menu closed by Esc on the GUI and reopened, console shown, menu closed on the console. */
+    private static boolean popupReported, escGuiReported, consoleSeen, escConsoleReported;
+    private static int shiftEscWait;
 
     private GuiServerChecks() {}
 
@@ -251,6 +254,40 @@ public final class GuiServerChecks {
                 launcherReported = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_p3_launcher the click on Apps opened the launcher popup");
                 server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI launcher"));
+                return;
+            }
+            // Esc: Shift+Esc goes to the computer and keeps the menu open; Esc closes the screen.
+            var player = server.getPlayerList().getPlayers().get(0);
+            boolean menuOpen = player.containerMenu instanceof com.example.evanscomputermod.block.TerminalMenu;
+            if (!popupReported) {
+                if (!menuOpen) throw new IllegalStateException("Shift+Esc closed the Terminal's menu");
+                if (++shiftEscWait < 40) return;
+                popupReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_shift_esc after Shift+Esc the Terminal's menu stayed open");
+                player.sendSystemMessage(Component.literal("ECMGUI popup_closed"));
+                return;
+            }
+            if (!escGuiReported) {
+                if (menuOpen) return;
+                escGuiReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_esc_closes Esc on the GUI closed the Terminal's menu");
+                player.sendSystemMessage(Component.literal("ECMGUI esc_gui"));
+                player.openMenu(terminal, TERMINAL);
+                player.sendSystemMessage(Component.literal("ECMGUI reopened"));
+                return;
+            }
+            if (!consoleSeen) {
+                if (terminal.getDisplay().getDisplayMode() != 0) return;
+                if (!menuOpen) throw new IllegalStateException("the Terminal's menu closed before the console showed");
+                consoleSeen = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS console_shown Ctrl+Alt+Backspace switched to the console");
+                return;
+            }
+            if (!escConsoleReported) {
+                if (menuOpen) return;
+                escConsoleReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS console_esc_closes Esc on the console closed the Terminal's menu");
+                player.sendSystemMessage(Component.literal("ECMGUI esc_console"));
             }
         } catch (Throwable t) {
             EvansComputerMod.LOGGER.error("GUI checks failed", t);

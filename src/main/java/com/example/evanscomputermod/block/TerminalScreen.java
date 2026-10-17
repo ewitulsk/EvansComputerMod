@@ -756,6 +756,24 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
                 te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text));
     }
 
+    /**
+     * The one place Esc is decided, for every program and both display modes:
+     * plain Esc closes the screen, as on every Minecraft screen; Shift+Esc
+     * sends a plain Esc to the computer (programs that use Esc, vim among
+     * them, get it this way); Esc with Ctrl or Alt goes to the computer as a
+     * chord (Ctrl+Esc opens the desktop's launcher).
+     */
+    private void handleEscape(int modifiers) {
+        boolean shift = (modifiers & 1) != 0, ctrl = (modifiers & 2) != 0, alt = (modifiers & 4) != 0;
+        if (!shift && !ctrl && !alt) {
+            this.onClose();
+            return;
+        }
+        sendRawKey(256, shift ? modifiers & ~1 : modifiers, true);
+        altTyped = false;
+        sendInput("\u001b");
+    }
+
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
         boolean ctrl = (modifiers & 2) != 0;   // GLFW_MOD_CONTROL
         boolean shift = (modifiers & 1) != 0;  // GLFW_MOD_SHIFT
@@ -764,16 +782,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             // A paste key: the GUI's paste reads the real clipboard, sent first.
             pushClipboard();
         }
-        sendRawKey(keyCode, modifiers, true);
-        altTyped = false;
-
-        // Esc is a key for the computer (programs never exit on it: Ctrl+C
-        // does that); Shift+Esc closes the screen.
         if (keyCode == 256) {
-            if (shift) this.onClose();
-            else sendInput("\u001b");
+            handleEscape(modifiers);
             return true;
         }
+        sendRawKey(keyCode, modifiers, true);
+        altTyped = false;
 
         if (isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode))) {
             return true;
@@ -1432,7 +1446,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         super.onClose();
     }
 
-    /** Esc goes to the computer; Shift+Esc closes the screen (see handleKeyPressed). */
+    /** Esc closes the screen; Shift+Esc sends Esc to the computer (see handleKeyPressed). */
     @Override
     public boolean shouldCloseOnEsc() {
         return false;

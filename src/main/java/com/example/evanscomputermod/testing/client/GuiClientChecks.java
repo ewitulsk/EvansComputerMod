@@ -29,6 +29,11 @@ import java.nio.file.Path;
  * restarts the GUI with the desktop shell: the client screenshots the desktop and samples its
  * taskbar, clicks the Apps button through the screen, waits for the server to see the
  * launcher popup, and screenshots that.
+ *
+ * <p>Then Esc, through Minecraft's own keyboard handler: Shift+Esc keeps the screen open (it
+ * goes to the computer); Esc closes the Terminal screen on the GUI.
+ * The server opens it again, Ctrl+Alt+Backspace switches to the console, Shift+Esc keeps the
+ * screen open there too (control), and Esc closes it. Each close is checked on both sides.
  */
 public final class GuiClientChecks {
     private static final int SETTLE = 10;
@@ -38,6 +43,9 @@ public final class GuiClientChecks {
     private static volatile int appsX = -1, appsY = -1;
     private static volatile int closeX = -1, closeY = -1;
     private static volatile boolean closeConfirmed;
+    /** Esc checks: the server saw the menu stay open (Shift+Esc), the menu close on the GUI, reopened it, and the menu close on the console. */
+    private static volatile boolean popupClosed, escGuiClosed, reopened, escConsoleClosed;
+    private static int escWait;
     /** The simulated overlay: consumes screen clicks at x >= overlayFromX (GUI units) at normal priority. */
     private static volatile double overlayFromX = Double.MAX_VALUE;
     private static volatile int overlayHits;
@@ -76,6 +84,14 @@ public final class GuiClientChecks {
             closeConfirmed = true;
         } else if (text.equals("ECMGUI launcher")) {
             launcherConfirmed = true;
+        } else if (text.equals("ECMGUI popup_closed")) {
+            popupClosed = true;
+        } else if (text.equals("ECMGUI esc_gui")) {
+            escGuiClosed = true;
+        } else if (text.equals("ECMGUI reopened")) {
+            reopened = true;
+        } else if (text.equals("ECMGUI esc_console")) {
+            escConsoleClosed = true;
         } else if (text.startsWith("ECMGUI crc ")) {
             String[] p = text.split(" ");
             notesRect = new int[]{Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), Integer.parseInt(p[6])};
@@ -95,6 +111,10 @@ public final class GuiClientChecks {
         try {
             if (System.currentTimeMillis() - started > TIMEOUT_MS) throw new IllegalStateException("GUI render checks exceeded " + TIMEOUT_MS / 1000 + " s");
             mc.options.pauseOnLostFocus = false;
+            if (step >= 7 && step <= 11) {
+                escStep(mc);
+                return;
+            }
             if (!(mc.screen instanceof TerminalScreen screen) || targetX < 0) {
                 settled = 0;
                 return;
@@ -253,9 +273,10 @@ public final class GuiClientChecks {
                         EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_LAUNCHER {}x{}", img.getWidth(), img.getHeight());
                     }
                     EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_p3_launcher the click opened the launcher");
-                    mc.player.connection.sendCommand("ecmvisual gui finish");
-                    step = -1;
-                    stopTicks = 40;
+                    // Shift+Esc is Esc for the computer: the screen stays open.
+                    realKey(mc, org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE, org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT);
+                    step = 7;
+                    escWait = 0;
                 }
                 default -> { }
             }
@@ -284,6 +305,81 @@ public final class GuiClientChecks {
                         e.setCanceled(true);
                     }
                 });
+    }
+
+    /**
+     * The Esc checks (steps 7 to 11): every key goes through Minecraft's keyboard handler, the
+     * way a player's key does, and the server confirms what the computer and its menu saw.
+     */
+    private static void escStep(Minecraft mc) throws Exception {
+        int esc = org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+        switch (step) {
+            case 7 -> {
+                if (!(mc.screen instanceof TerminalScreen)) throw new IllegalStateException("Shift+Esc closed the Terminal screen on the GUI");
+                if (!popupClosed || ++escWait < SETTLE) return;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_shift_esc Shift+Esc on the GUI kept the screen open");
+                realKey(mc, esc, 0);
+                step = 8;
+                escWait = 0;
+            }
+            case 8 -> {
+                if (mc.screen instanceof TerminalScreen) {
+                    if (++escWait > 40) throw new IllegalStateException("Esc didn't close the Terminal screen on the GUI");
+                    return;
+                }
+                if (!escGuiClosed) return;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_esc_closes Esc closed the Terminal screen on the GUI (client and server)");
+                step = 9;
+                escWait = 0;
+            }
+            case 9 -> {
+                // The server opened the screen again: Ctrl+Alt+Backspace switches to the console.
+                if (!reopened || !(mc.screen instanceof TerminalScreen screen)) return;
+                if (++escWait == SETTLE) {
+                    realKey(mc, org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE, org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL | org.lwjgl.glfw.GLFW.GLFW_MOD_ALT);
+                }
+                if (escWait < SETTLE || screen.getMenu().getBlockEntity().getDisplay().getDisplayMode() != 0) {
+                    if (escWait > 400) throw new IllegalStateException("Ctrl+Alt+Backspace didn't switch the Terminal to the console");
+                    return;
+                }
+                realKey(mc, esc, org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT);
+                step = 10;
+                escWait = 0;
+            }
+            case 10 -> {
+                if (!(mc.screen instanceof TerminalScreen)) throw new IllegalStateException("Shift+Esc closed the Terminal screen on the console");
+                if (++escWait < SETTLE) return;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS console_shift_esc control: Shift+Esc on the console kept the screen open");
+                realKey(mc, esc, 0);
+                step = 11;
+                escWait = 0;
+            }
+            case 11 -> {
+                if (mc.screen instanceof TerminalScreen) {
+                    if (++escWait > 40) throw new IllegalStateException("Esc didn't close the Terminal screen on the console");
+                    return;
+                }
+                if (!escConsoleClosed) return;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS console_esc_closes Esc closed the Terminal screen on the console (client and server)");
+                mc.player.connection.sendCommand("ecmvisual gui finish");
+                step = -1;
+                stopTicks = 40;
+            }
+            default -> { }
+        }
+    }
+
+    private static java.lang.reflect.Method keyPress;
+
+    /** A key press and release the way GLFW delivers them: the keyboard handler's own callback (NeoForge's screen events fire). */
+    private static void realKey(Minecraft mc, int key, int mods) throws Exception {
+        if (keyPress == null) {
+            keyPress = net.minecraft.client.KeyboardHandler.class.getDeclaredMethod("keyPress", long.class, int.class, int.class, int.class, int.class);
+            keyPress.setAccessible(true);
+        }
+        long win = mc.getWindow().getWindow();
+        keyPress.invoke(mc.keyboardHandler, win, key, 0, org.lwjgl.glfw.GLFW.GLFW_PRESS, mods);
+        keyPress.invoke(mc.keyboardHandler, win, key, 0, org.lwjgl.glfw.GLFW.GLFW_RELEASE, mods);
     }
 
     private static java.lang.reflect.Method onMove, onPress;

@@ -46,7 +46,8 @@ KEYS
         Find the next match.
 
     Esc
-        Close the open question or the find field.
+        Close the open question or the find field. At the Terminal
+        block press Shift+Esc (Esc closes the screen).
 
     Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A
         Copy, cut, paste, select all. Shift with the arrows selects;

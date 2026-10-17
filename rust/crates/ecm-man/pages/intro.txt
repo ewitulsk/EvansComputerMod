@@ -4,8 +4,8 @@ NAME
 DESCRIPTION
     Right-click a Terminal block to use its screen. You type commands at
     the prompt (/ >) and press Enter; programs print their results below.
-    Shift+Esc closes the screen; the computer keeps running. Esc itself
-    is a key for the computer, and Ctrl+C stops a running program.
+    Esc closes the screen; the computer keeps running. Shift+Esc sends
+    Esc to the computer instead, and Ctrl+C stops a running program.
 
 FIRST COMMANDS
       help              every command and topic, by subject
