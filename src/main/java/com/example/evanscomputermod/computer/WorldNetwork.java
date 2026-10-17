@@ -669,7 +669,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         overworld = level.getServer().overworld();
         mgr.setTopology(this);
         // The real internet: village 1's uplink reaches the host gateway (logical).
-        mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
+        mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), com.example.evanscomputermod.api.internet.InternetUplinks.GATEWAY_MAC, true);
         mgr.flush();
     }
     /**

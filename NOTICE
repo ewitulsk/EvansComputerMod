@@ -18,3 +18,8 @@ The gba program (rust/wasm-programs/gba) includes:
   (rust/wasm-programs/gba/bios/LICENSE-cult-of-gba-bios);
 - test ROMs from gba-tests by Julian Smolka, MIT License, used only by tests
   (rust/wasm-programs/gba/tests/roms/LICENSE-gba-tests).
+
+The 1.21.1 mod jar ships one of those gba-tests ROMs, arm.gba, for the GUI
+scenarios (src/main/resources-mc1.21.1/evanscomputermod/scenarios/gui/arm.gba).
+Its MIT license text is in src/main/resources/META-INF/licenses/gba-tests-LICENSE.txt
+(and in the mod jar under META-INF/licenses/).

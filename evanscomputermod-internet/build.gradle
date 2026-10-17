@@ -1,0 +1,94 @@
+// Internet sidecar mod. Pure NeoForge subproject (no Stonecutter), built like
+// the FFmpeg sidecar: MC 26.1 by default, -PmcVersion=1.21.1 for the 1.21.1
+// variant, each variant in its own build dir.
+//
+// Ships the InternetUplinkProvider (the host TCP/UDP socket proxy and the
+// optional Linux TAP bridge) that the main mod finds with ServiceLoader.
+// Server-side only: without it the main mod works and the Internet Gateway is
+// offline. Keeping it out of the main mod means the main jar opens no host
+// sockets and starts no processes. Pure Java, no native code.
+
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+def mcVersion = (project.findProperty('mcVersion') ?: '26.1').toString()
+def variants = [
+    '1.21.1': [
+        neo          : '21.1.228',
+        neoRange     : '[21.1,)',
+        minecraftRange: '[1.21.1,1.22)',
+        loaderRange  : '[4,)',
+        java         : 21,
+        mainModDep   : ':1.21.1',
+    ],
+    '26.1'  : [
+        neo          : '26.1.0.1-beta',
+        neoRange     : '[26.1,)',
+        minecraftRange: '[26.1,26.2)',
+        loaderRange  : '[5,)',
+        java         : 25,
+        mainModDep   : ':26.1',
+    ],
+]
+def cfg = variants[mcVersion]
+if (cfg == null) {
+    throw new GradleException("Unsupported -PmcVersion=${mcVersion}. Expected one of: ${variants.keySet()}")
+}
+
+layout.buildDirectory = layout.projectDirectory.dir("build-mc${mcVersion}")
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(cfg.java)
+
+version = rootProject.findProperty('mod_version') ?: '1.0.0'
+group = 'com.example.evanscomputermod.internet'
+
+base {
+    archivesName = "evanscomputermod-internet-mc${mcVersion}"
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+neoForge {
+    version = cfg.neo
+
+    mods {
+        'evanscomputermod_internet' {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    unitTest {
+        enable()
+        testedMod = mods.evanscomputermod_internet
+    }
+}
+
+dependencies {
+    // The SPI (com.example.evanscomputermod.api.internet.*) comes from the main mod,
+    // which the user installs next to this one.
+    compileOnly project(path: cfg.mainModDep)
+    testImplementation project(path: cfg.mainModDep)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+processResources {
+    inputs.property 'mcVersion', mcVersion
+    def tokens = [
+        neo_version_range      : cfg.neoRange,
+        minecraft_version_range: cfg.minecraftRange,
+        loader_version_range   : cfg.loaderRange,
+    ]
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(tokens)
+    }
+}

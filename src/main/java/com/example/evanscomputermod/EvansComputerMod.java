@@ -9,7 +9,6 @@ import com.example.evanscomputermod.item.ModItems;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
-import com.example.evanscomputermod.computer.TapBridge;
 import com.example.evanscomputermod.api.wasm.WasmRuntime;
 import com.example.evanscomputermod.api.wasm.WasmRuntimeRegistry;
 import com.example.evanscomputermod.wasm.WasmManager;
@@ -183,24 +182,12 @@ public class EvansComputerMod {
         CableNetworkManager.init(event.getServer());
         LOGGER.info("Cable network manager started");
 
-        // Try to open TAP bridge for real internet access
-        String tapDevice = System.getProperty("evanscomputermod.tap", "tap0");
-        if (!"none".equals(tapDevice)) {
-            try {
-                TapBridge tap = new TapBridge(tapDevice, NetworkHub.getInstance());
-                NetworkHub.getInstance().setTapBridge(tap);
-                LOGGER.info("TAP bridge connected: {}", tapDevice);
-            } catch (Exception e) {
-                LOGGER.warn("TAP bridge unavailable ({}): {} — internet access disabled, LAN networking still works",
-                    tapDevice, e.getMessage());
-            }
-        }
+        // The Internet Gateway's link to the real network comes from the optional
+        // evanscomputermod-internet sidecar (it decides what to open); without it
+        // the gateway is offline.
+        NetworkHub.getInstance().openUplink();
 
         // Generate Internet Gateway and cable column at (0, 0, 0) if not already present
-        if(System.getProperty("os.name","").toLowerCase(java.util.Locale.ROOT).contains("windows")
-                && Boolean.parseBoolean(System.getProperty("evanscomputermod.internetProxy","true"))) {
-            NetworkHub.getInstance().enableInternetProxy();LOGGER.info("Windows socket internet gateway enabled at 10.0.0.1");
-        }
         generateInternetGateway(event.getServer());
         //? if <=1.21.1 {
         com.example.evanscomputermod.computer.WorldNetwork.start(event.getServer().overworld());

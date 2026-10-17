@@ -131,6 +131,8 @@ NOTES
     reach. DHCP relay, IPv6, OSPF and route reflection are not
     available. The Internet Gateway serves no DHCP: a port cabled to
     it needs a static address in 10.0.0.0/24 with gateway 10.0.0.1.
+    The gateway is online only when the server has the internet add-on
+    (evanscomputermod-internet); see networking.
 
 SEE ALSO
     switch, ip, dhcpd, traceroute, tcpdump, networking
