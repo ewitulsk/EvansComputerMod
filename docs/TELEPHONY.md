@@ -167,11 +167,18 @@ Visual voicemail is HTTP on 8003 (`/vm`). The Phone app's Voicemail tab lists, p
 
 ### Number blocks and porting (ianad)
 
-ianad, the DNS root's TLD desk, is also the numbering administrator, and it keeps the `e164.arpa` zone:
-- A carrier applies for a block. ianad publishes the block's owner as NAPTR records and gives the carrier a key, which it stores in cored.db.
-- **Porting.** The losing carrier makes a port-out code for the subscriber (`cored port-code <who>`), an HMAC of the number under its block key. The gaining carrier asks ianad to repoint the number with that code. ianad checks the code and writes a per-number NAPTR that overrides the block.
+ianad, the DNS root's TLD desk, is also the numbering administrator. It keeps the zone `e164.arpa` on IANA's `named`, delegated from the root (`e164.arpa. NS iana.ring.`), so any resolver reaches it. [DNS.md](DNS.md) has the records and the API.
 
-The commands are in `man ianad`, `man domain` and `man cored`. [DNS.md](DNS.md#enum) has the zone details.
+1. A carrier publishes its SIP border: `_sip._udp.<domain>` SRV, or at least the domain's A record (`domain set cell-red.ecm @ A <ip>`).
+2. It applies for a block: `domain enum apply +1214555 cell-red.ecm`. ianad checks that the block is free and the domain answers, publishes a NAPTR at the block's name, and prints the carrier's key once. The carrier then runs `cored block add 214-555` and `cored enum-key <key>`. Its later blocks use the same key.
+3. **Porting a number from carrier A to carrier B:**
+   - A makes a port-out code for the subscriber: `cored port-code <who>`. It prints a code like `3fa2c1-b843a26d`, a nonce and an HMAC of the number under A's key. Each code works once.
+   - B gives the number to its new SIM (`cored number <sim> +12145550142 ported`), then asks ianad to move it: `domain enum port +12145550142 cell-blue.ecm <code> <B's key>`.
+   - ianad checks the code with A's key and writes a per-number NAPTR that overrides the block.
+   - A releases its old subscriber's number (`cored number-release <who>`). Calls from A's own phones then find B through ENUM like anyone else's.
+   - Porting back to the block's holder removes the override.
+
+Check with `domain enum list` and `dig -t NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa`.
 
 ## The phone: telephonyd
 
