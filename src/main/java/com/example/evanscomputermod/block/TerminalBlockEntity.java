@@ -173,10 +173,27 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     // ==================== Peripherals & module bays ====================
 
+    /** Mounts while there is no server (the computer's ComputerHost keeps them otherwise). */
+    private final com.example.evanscomputermod.computer.StorageMounts offlineMounts =
+            new com.example.evanscomputermod.computer.StorageMounts();
+
+    /** Folders mounted into this computer (floppies in Disk Drives): its ComputerHost's, which outlive the block. */
+    @Override
+    public com.example.evanscomputermod.computer.StorageMounts getStorageMounts() {
+        MinecraftServer server = getServer();
+        return server == null || computerId == null ? offlineMounts
+                : com.example.evanscomputermod.computer.ComputerHost.get(server, computerId).getStorageMounts();
+    }
+
     private final PeripheralHub peripheralHub = new PeripheralHub(new PeripheralHub.Owner() {
         @Override
         public Level level() {
             return level;
+        }
+
+        @Override
+        public com.example.evanscomputermod.computer.StorageMounts mounts() {
+            return getStorageMounts();
         }
 
         @Override
@@ -795,6 +812,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             @Override
             public int getRedstoneInput(int absoluteSide) {
                 return TerminalBlockEntity.this.getRedstoneInput(absoluteSide);
+            }
+
+            @Override
+            public int getRedstoneOutput(int absoluteSide) {
+                return TerminalBlockEntity.this.getRedstoneOutput(absoluteSide);
             }
 
             @Override

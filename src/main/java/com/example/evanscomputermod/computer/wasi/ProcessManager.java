@@ -47,6 +47,8 @@ public class ProcessManager {
     private final Map<Integer, ProcessEntry> processes = new ConcurrentHashMap<>();
     private final AtomicInteger nextPid = new AtomicInteger(1);
     private final Path storagePath;
+    /** Mounted folders (disk/), seen by every program; null: none. */
+    private volatile com.example.evanscomputermod.computer.StorageMounts storageMounts;
     private final NetIpcBridge netIpcBridge;
     private final ChildHostBridge childBridge;
 
@@ -79,6 +81,11 @@ public class ProcessManager {
 
     public void setActivityListener(Runnable r) {
         this.activityListener = r != null ? r : () -> {};
+    }
+
+    /** The computer's mounted folders, for programs started from now on. */
+    public void setStorageMounts(com.example.evanscomputermod.computer.StorageMounts mounts) {
+        this.storageMounts = mounts;
     }
 
     public ProcessManager(Path storagePath, NetIpcBridge netIpcBridge, ChildHostBridge childBridge) {
@@ -577,6 +584,7 @@ public class ProcessManager {
         }
 
         WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
+        state.mounts = storageMounts;
         state.keyboard = childInputPipes.get(pid);
         state.pid = pid;
         state.sandbox = sandbox;

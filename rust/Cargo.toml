@@ -24,6 +24,7 @@ members = [
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
     "crates/ecm-vte",
+    "crates/ecm-console",
     "crates/ecm-lineedit",
     "crates/ecm-man",
     "crates/ecm-apps",
@@ -159,6 +160,7 @@ ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
+ecm-console = { path = "crates/ecm-console" }
 ecm-lineedit = { path = "crates/ecm-lineedit" }
 ecm-man = { path = "crates/ecm-man" }
 ecm-apps = { path = "crates/ecm-apps" }

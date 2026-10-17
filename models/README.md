@@ -80,6 +80,8 @@ pixel, embedded in each project), exported with `py -3 scripts/export-radio-mode
 | `mmwave_modem.bbmodel` | item | Purple module card: same base, a small patch-array antenna tile instead of the whip |
 | `sim_card.bbmodel` | item | SIM card with clipped corner, carrier stripe and gold contact pad |
 | `card_reader.bbmodel` | facing_card | Card Reader/Writer: graphite casing on a dark plinth, louvred sides, a back label and screws, a card icon on top; the front bezel has the card slot, a small green LCD and an amber LED. Cubes named `card_*` (a SIM sticking out of the slot, a green LED over the amber one) only appear in `card_reader_card`, used when `card=true` |
+| `disk_drive.bbmodel` | facing_disk | Disk Drive: grey casing with a vented side, the floppy slot on the front, a green LED. The cube named `disk_floppy` (a floppy sticking out of the slot) only appears in `disk_drive_disk`, used when `disk=true` |
+| `floppy_disk.bbmodel` | item | Floppy Disk sprite: blue body, metal shutter, cream label |
 
 
 ## ePhone

@@ -60,6 +60,8 @@ public class EvansComputerMod {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.UploadServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("cards"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.CardsServerChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("disks"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.DiskServerChecks::tick);
         else
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
         //?}
@@ -97,6 +99,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.voice.VoiceContent.register(modEventBus, modContainer);
         // Bluetooth and AirPods (docs/BLUETOOTH.md).
         com.example.evanscomputermod.bluetooth.BluetoothContent.register(modEventBus);
+        // Floppy disks and the Disk Drive (docs/CC_COMPAT.md, phase 4).
+        com.example.evanscomputermod.disk.DiskContent.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)
@@ -143,6 +147,16 @@ public class EvansComputerMod {
                     com.example.evanscomputermod.controller.ControllerPeripheral.TYPE,
                     "Wireless Xbox Controller",
                     com.example.evanscomputermod.controller.ControllerPeripheral.class);
+            //? if <=1.21.1 {
+            // Any mod's chest, tank or battery next to a computer (NeoForge capabilities).
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("inventory",
+                    "Any inventory (chest, barrel, machine slots): list, details, move items",
+                    com.example.evanscomputermod.computer.peripheral.generic.InventoryMethods.class);
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("fluid_storage",
+                    "Any tank: its fluids, move fluid", com.example.evanscomputermod.computer.peripheral.generic.FluidMethods.class);
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("energy_storage",
+                    "Any FE battery: its energy", com.example.evanscomputermod.computer.peripheral.generic.EnergyMethods.class);
+            //?}
         });
     }
 
@@ -158,6 +172,7 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.PhoneServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.UploadServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.CardsServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.DiskServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
         com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());

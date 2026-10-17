@@ -436,6 +436,15 @@ impl Editor {
         self.dialog = Dialog::Open(list);
     }
 
+    /// Add the peripheral signatures a saved program carries (its
+    /// `peripherals`) to the palette, for peripherals not attached now.
+    pub fn learn_peripherals(&mut self, vpl: &str) {
+        let types = Json::parse(vpl).ok().and_then(|r| r.get("peripherals").cloned()).and_then(|p| crate::blocks::catalog_from_json(&p).ok());
+        if let Some(types) = types {
+            self.reg.add_peripherals(&types);
+        }
+    }
+
     /// Open a `.vpl` program or a `.ui.json` layout.
     pub fn open(&mut self, path: &str) -> Result<(), String> {
         self.dialog = Dialog::None;
@@ -452,6 +461,7 @@ impl Editor {
             self.status = format!("Opened {path}.");
             return Ok(());
         }
+        self.learn_peripherals(&text);
         let (g, skipped) = Graph::load(&text, &self.reg, 1).map_err(|e| format!("{path}: {e}"))?;
         self.new_program();
         self.zoom = zoom_index(g.zoom);

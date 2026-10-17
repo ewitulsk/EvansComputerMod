@@ -102,6 +102,27 @@ fn gui(open: Option<String>) {
         }
     }
     ecm_visual::view::install(&mut app, ed.clone());
+    // A peripheral attached or taken away while the editor is open: read the
+    // catalog again, so its blocks appear in the palette (docs/CC_COMPAT.md).
+    let live = ed.clone();
+    app.every(1000, move |_| {
+        let mut changed = false;
+        while let Ok(Some(ev)) = ecm_host_abi::peripheral::wait_event(None, 0) {
+            if let Some(ecm_host_abi::peripheral::Value::Str(name)) = ev.first() {
+                changed |= name == "peripheral" || name == "peripheral_detach";
+            }
+        }
+        if !changed {
+            return false;
+        }
+        let Ok(types) = ecm_host_abi::peripheral::catalog() else { return false };
+        let mut ed = live.borrow_mut();
+        if ed.reg.add_peripherals(&types.into_iter().map(convert).collect::<Vec<_>>()) {
+            ed.status = "New peripheral blocks are in the palette.".into();
+            return true;
+        }
+        false
+    });
     // "Open with" from Files.
     let opener = ed.clone();
     app.on_message(move |_, m| {

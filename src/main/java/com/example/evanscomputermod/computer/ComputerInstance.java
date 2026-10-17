@@ -48,6 +48,8 @@ public class ComputerInstance implements AutoCloseable {
     private volatile IComputerHost host;
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
+    /** Mounted folders (a floppy as disk/), looked at before the mounts above. */
+    private final StorageMounts storageMounts;
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
     /** Installed and running apps, permissions, saved state (docs/gui/APPS.md). */
     private com.example.evanscomputermod.computer.apps.AppManager appManager;
@@ -227,6 +229,12 @@ public class ComputerInstance implements AutoCloseable {
     private static final int MOUSE_EVENT_BYTES = 10;
     private static final int MOUSE_EVENT_RING_CAPACITY = 32;
     private final java.util.ArrayDeque<byte[]> mouseEventRing = new java.util.ArrayDeque<>();
+    // Raw keys for the console program that asked for them (key_capture_start,
+    // abi/child-abi.toml [imports.console]): 4 bytes each (u16 HID, mods, kind), and
+    // the characters typed (kind 4), in the order they came.
+    private final java.util.ArrayDeque<byte[]> keyEventRing = new java.util.ArrayDeque<>();
+    private static final int KEY_EVENT_RING_CAPACITY = 512;
+    private volatile int keyCaptureOwnerPid = 0;
     private volatile boolean mouseCaptureEnabled = false;
     /** The program that turned mouse capture on; capture ends when it exits. */
     private volatile int mouseCaptureOwnerPid = 0;
@@ -355,6 +363,9 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
         }
 
+        StorageMounts hostMounts = host.getStorageMounts();
+        this.storageMounts = hostMounts != null ? hostMounts : new StorageMounts();
+
         // Set up virtual mount table:
         // 1. User storage (read-write) — checked first, allows shadowing system programs
         mounts.add(new VirtualMount("", computerStoragePath, false));
@@ -370,6 +381,7 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
                 computerStoragePath, netIpcBridge, childBridge);
         // Child output/exit and new socket requests wake the kernel worker.
+        this.processManager.setStorageMounts(storageMounts);
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
@@ -1617,7 +1629,12 @@ public class ComputerInstance implements AutoCloseable {
             String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
             int termW = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
             int termH = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
-            var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
+            int curX = (memory.readByte(fbBase + 6) & 0xFF) | ((memory.readByte(fbBase + 7) & 0xFF) << 8);
+            int curY = (memory.readByte(fbBase + 8) & 0xFF) | ((memory.readByte(fbBase + 9) & 0xFF) << 8);
+            // ECM_CURSOR: where the console's cursor is (0-based "x,y"), so a program
+            // drawing with absolute positions (Lua/Python term) carries on from there.
+            var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH),
+                    "ECM_CURSOR", curX + "," + curY);
             // A program started for a request of an app (a line it typed into its shell
             // session) joins the app's process group: same identity, same permissions.
             int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
@@ -1776,6 +1793,20 @@ public class ComputerInstance implements AutoCloseable {
     private static final int MAX_PATH_LENGTH = 256;
 
     /** Resolved mount result: the real filesystem path and whether the mount is read-only. */
+    /** Mounted folders first (disk/ is not a folder of the computer's own), then the computer's storage and server-bin. */
+    private List<VirtualMount> allMounts() {
+        List<VirtualMount> extra = storageMounts.list();
+        if (extra.isEmpty()) return mounts;
+        List<VirtualMount> all = new ArrayList<>(extra);
+        all.addAll(mounts);
+        return all;
+    }
+
+    /** This computer's mounted folders (Disk Drives mount floppies here). */
+    public StorageMounts storageMounts() {
+        return storageMounts;
+    }
+
     private record MountedPath(Path realPath, boolean readOnly) {}
 
     /**
@@ -1788,7 +1819,7 @@ public class ComputerInstance implements AutoCloseable {
         // Strip leading slash (Rust side resolves CWD, may produce absolute-looking paths)
         if (filename.startsWith("/")) filename = filename.substring(1);
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename)) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null && Files.exists(resolved)) {
@@ -1797,7 +1828,7 @@ public class ComputerInstance implements AutoCloseable {
             }
         }
         // No mount had an existing file — return the first mount's resolution for "not found"
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename)) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null) {
@@ -1816,7 +1847,7 @@ public class ComputerInstance implements AutoCloseable {
         if (filename == null || filename.isEmpty()) return null;
         if (filename.startsWith("/")) filename = filename.substring(1);
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             if (mount.matches(filename) && !mount.isReadOnly()) {
                 Path resolved = mount.resolve(filename);
                 if (resolved != null) {
@@ -1994,7 +2025,7 @@ public class ComputerInstance implements AutoCloseable {
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         boolean foundDir = false;
 
-        for (VirtualMount mount : mounts) {
+        for (VirtualMount mount : allMounts()) {
             String resolvedDirname = dirname.isEmpty() ? "" : dirname;
             if (mount.matches(resolvedDirname) || resolvedDirname.isEmpty()) {
                 Path dirPath;
@@ -2021,7 +2052,7 @@ public class ComputerInstance implements AutoCloseable {
 
         // When listing root, add virtual mount point directories
         if (dirname.isEmpty()) {
-            for (VirtualMount mount : mounts) {
+            for (VirtualMount mount : allMounts()) {
                 if (!mount.getPrefix().isEmpty()) {
                     seen.add("d:" + mount.getPrefix());
                 }
@@ -2082,6 +2113,8 @@ public class ComputerInstance implements AutoCloseable {
             Direction absoluteDir = provider.relativeToAbsolute(relativeSide);
             int absoluteSide = absoluteDir.ordinal();
 
+            // What get_output reads until the server thread has applied it.
+            redstoneOutputShadow[relativeSide] = power;
             // Schedule the redstone update on the main server thread
             if (host.getServer() != null) {
                 host.getServer().execute(() -> {
@@ -2161,6 +2194,22 @@ public class ComputerInstance implements AutoCloseable {
     public int bridgeRedstoneGetInput(int side) {
         return hostRedstoneGetInput(side);
     }
+
+    /** The power this computer puts out on a relative side (0-5), 0-15; 0 without redstone. */
+    public int bridgeRedstoneGetOutput(int side) {
+        IRedstoneProvider provider = host.getRedstoneProvider();
+        if (provider == null || side < 0 || side > 5) return 0;
+        int set = redstoneOutputShadow[side];
+        if (set >= 0) return set;
+        return provider.getRedstoneOutput(provider.relativeToAbsolute(side).ordinal());
+    }
+
+    /**
+     * The power last set on each relative side by this computer's programs
+     * (-1: not set since boot): a program reads back its own output at once,
+     * though the block applies it on the server thread a moment later.
+     */
+    private final int[] redstoneOutputShadow = {-1, -1, -1, -1, -1, -1};
 
     public int bridgeRedstoneGetAllInput(int[] out) {
         if (out == null || out.length < 6) return -1;
@@ -2633,6 +2682,9 @@ public class ComputerInstance implements AutoCloseable {
      * (the console keeps getting its key strings through {@link #handleKeyInput}).
      */
     public void handleKeyEvent(int hid, int mods, boolean down, boolean repeat) {
+        if (keyCaptureOwnerPid != 0 && !uiManager.guiVisible() && hid > 0) {
+            queueKey(new byte[]{(byte) hid, (byte) (hid >> 8), (byte) mods, (byte) (!down ? 3 : repeat ? 2 : 1)});
+        }
         uiManager.key(hid, mods, down, repeat);
     }
 
@@ -2892,6 +2944,10 @@ public class ComputerInstance implements AutoCloseable {
         videoRegistry.closeOwnedBy(pid);
         uploadPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
+        if (keyCaptureOwnerPid == pid) {
+            keyCaptureOwnerPid = 0;
+            synchronized (keyEventRing) { keyEventRing.clear(); }
+        }
         uiManager.onProcessExit(pid);
     }
 
@@ -2928,6 +2984,7 @@ public class ComputerInstance implements AutoCloseable {
             // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
             return;
         }
+        if (keyCaptureOwnerPid != 0) queueTypedChars(input);
         if (isWasmExecuting()) {
             String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
                     .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
@@ -2937,6 +2994,35 @@ public class ComputerInstance implements AutoCloseable {
             sendInput(input);
         } catch (Throwable e) {
             EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
+        }
+    }
+
+    private void queueKey(byte[] e) {
+        synchronized (keyEventRing) {
+            if (keyEventRing.size() >= KEY_EVENT_RING_CAPACITY) keyEventRing.pollFirst();
+            keyEventRing.addLast(e);
+        }
+    }
+
+    /**
+     * The characters in a console key string, for a program capturing keys:
+     * printable bytes only (escape sequences and control bytes are keys, which
+     * come raw), as kind-4 entries in the same ring, so keys and characters
+     * keep the order they were typed in.
+     */
+    private void queueTypedChars(String input) {
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == 0x1B) {
+                // ESC [ params final: skip the whole sequence.
+                if (i + 1 < input.length() && input.charAt(i + 1) == '[') {
+                    i += 2;
+                    while (i < input.length() && (input.charAt(i) < 0x40 || input.charAt(i) > 0x7E)) i++;
+                }
+                continue;
+            }
+            if (c < 32 || c == 127 || c > 255) continue;
+            queueKey(new byte[]{(byte) c, 0, 0, 4});
         }
     }
 
@@ -3098,7 +3184,8 @@ public class ComputerInstance implements AutoCloseable {
         IComputerHost h = host;
         var hub = h != null ? h.getPeripheralHub() : null;
         if (com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.NAME.equals(name)) {
-            return com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.encoded();
+            return com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.encoded(
+                    hub != null ? hub.attachedPeripherals() : java.util.List.of());
         }
         return hub != null ? hub.methods(name)
                 : com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
@@ -3112,6 +3199,50 @@ public class ComputerInstance implements AutoCloseable {
             return com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
         }
         return hub.call(name, method, args, h.getServer());
+    }
+
+    /**
+     * Raw keys for a console program (key_capture_start): the program asking
+     * gets the Terminal's key presses and releases while the console (not the
+     * GUI) is shown, besides the text on its stdin. 0 on hosts without a
+     * screen to type at.
+     */
+    public int bridgeKeyCaptureStart() {
+        if (childAbortRequested) return 0;
+        IComputerHost h = attachedHost();
+        if (h == null || h.getFramebufferDisplay() == null) return 0;
+        synchronized (keyEventRing) { keyEventRing.clear(); }
+        keyCaptureOwnerPid = callerPid();
+        return 1;
+    }
+
+    public int bridgeKeyPoll(byte[] out) {
+        if (out == null || out.length < 4 || keyCaptureOwnerPid != callerPid()) return 0;
+        byte[] e;
+        synchronized (keyEventRing) { e = keyEventRing.pollFirst(); }
+        if (e == null) return 0;
+        System.arraycopy(e, 0, out, 0, 4);
+        return 1;
+    }
+
+    /** The day time of the computer's world in ticks, or null when it isn't in one. */
+    public Long bridgeWorldDayTime() {
+        IComputerHost h = attachedHost();
+        var wa = h == null ? null : h.getWorldAccess();
+        var level = wa == null ? null : wa.getLevel();
+        if (level == null && h != null && h.getServer() != null) level = h.getServer().overworld();
+        if (level == null) return null;
+        //? if <=1.21.1 {
+        return level.getDayTime();
+        //?} else
+        /*return level.getOverworldClockTime();*/
+    }
+
+    /** This computer's number in its world ({@link ComputerNumbers}), or -1. */
+    public int bridgeComputerNumber() {
+        IComputerHost h = attachedHost();
+        if (h == null) return -1;
+        return ComputerNumbers.of(h.getServer(), h.getComputerId());
     }
 
     public int bridgeMousePoll(byte[] bytes) {

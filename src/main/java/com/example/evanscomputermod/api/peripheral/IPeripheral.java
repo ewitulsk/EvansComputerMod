@@ -46,6 +46,16 @@ public interface IPeripheral {
     @Nullable
     Object callMethod(IComputerAccess computer, String method, Object[] arguments) throws PeripheralException;
 
+    /**
+     * What the methods take and return (names, descriptions, parameters),
+     * for the Visual Programmer's blocks; null if this peripheral can't say
+     * (it then gets a generic block per method: a list of arguments, any result).
+     */
+    @Nullable
+    default java.util.List<PeripheralMethods.Info> describeMethods() {
+        return null;
+    }
+
     /** Whether {@code method} must run on the server thread (the default). */
     default boolean runsOnMainThread(String method) {
         return true;
