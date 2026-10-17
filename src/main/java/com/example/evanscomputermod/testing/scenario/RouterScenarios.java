@@ -16,7 +16,7 @@ import net.minecraft.core.BlockPos;
  * their command lines, and other files written from Python. A lab's link is cut by
  * breaking a block of its cable and repaired by placing one back.
  *
- * <p>Ports: every computer's screen faces north, so eth0 = DOWN, eth1 = UP, eth2 = SOUTH.
+ * <p>Ports: every computer's screen faces north, so eth0 = DOWN, eth1 = UP, eth2 = SOUTH (its back).
  * Computers stand 4 blocks apart on x; "down-down" runs along y=0 under two neighbours,
  * "up-down" runs from one computer's top over to the next one's bottom.
  */
@@ -847,6 +847,77 @@ public final class RouterScenarios {
   }
 
   /**
+   * Ports follow the computer's facing: eth0 bottom, eth1 top, eth2 back, eth3 left, eth4
+   * right, whichever way the screen faces. The player places an east-facing PC (a facing
+   * whose ports moved when numbering was by world direction: its back was eth4), cables its
+   * back to a server's bottom and pings over eth2, then turns the PC to face each other way
+   * and reads every face with the Interface Probe.
+   */
+  private static Scenario portsFollowFacing() {
+    var b =
+        Scenario.builder(
+                "router_ports_follow_facing",
+                "Ports are relative to the screen: bottom eth0, top eth1, back eth2, left eth3,"
+                    + " right eth4. An east-facing PC's back (west face) is cabled to a server and"
+                    + " pings on eth2; turned to face south, west and north, the Interface Probe"
+                    + " reads the same names on the same relative faces. Control: the screen face"
+                    + " has no port.")
+            .timeLimit(55_000)
+            .asPlayer();
+    b.host("server", new BlockPos(0, 1, 0), "10.95.0.1/24");
+    b.host("pc", new BlockPos(4, 1, 0), "10.95.0.2/24", EAST);
+    // server DOWN (eth0) -> under the floor -> up into the PC's back (its west face).
+    b.link("cable", "server", DOWN, "pc", WEST,
+        Scenario.Path.from(new BlockPos(0, 0, 0)).go(EAST, 3).go(UP, 1));
+    b.note("The PC faces east, so its back is the west face, where the cable arrives: that is eth2.");
+    b.mutate(r -> probeFaces(r, "pc", EAST), "Probe the east-facing PC's faces: bottom eth0, top eth1, back eth2, left eth3, right eth4");
+    b.send("server", "ifconfig eth0 10.95.0.1/24");
+    b.expect("server", "eth0: inet 10\\.95\\.0\\.1/24", "server has 10.95.0.1 on its bottom face");
+    b.send("pc", "ifconfig eth2 10.95.0.2/24");
+    b.expect("pc", "eth2: inet 10\\.95\\.0\\.2/24", "PC has 10.95.0.2 on its back face");
+    b.waitMs(500, "link up on both ends");
+    ping(b, "pc", "10.95.0.1", 2, 2, "the PC reaches the server through its back port (eth2)");
+    for (var facing : List.of(SOUTH, WEST, NORTH)) {
+      String way = facing.getName();
+      b.mutate(r -> r.player().breakForDrop(r.where("pc")), "Break the PC (it drops as an item)");
+      b.await(r -> r.player().pickUp(r.where("pc"), PlayerKit.ModBlocksRef.terminalItem()), "pick the PC up", 5_000);
+      b.mutate(r -> {
+        BlockPos at = r.where("pc");
+        r.player().placeFromInventory(PlayerKit.ModBlocksRef.terminalItem(), at, facing,
+            s -> s.getValue(com.example.evanscomputermod.block.TerminalBlock.FACING) == facing);
+        r.player().openScreen(at, facing);
+      }, "Place the PC back facing " + way + " and open its screen");
+      b.await(r -> r.terminal("pc") != null && r.terminal("pc").findInterfaceIndexByExitPos(r.where("pc").below()) == 0 ? null : "booting",
+          "the PC's ports are up", 10_000);
+      b.mutate(r -> probeFaces(r, "pc", facing), "Probe the " + way + "-facing PC: the same names on the same relative faces");
+    }
+    return b.build();
+  }
+
+  /** Sneak-right-click every face of {@code node} with the Interface Probe (unsneaking opens the screen) and check the names relative to {@code facing}. */
+  private static void probeFaces(ScenarioRun r, String node, net.minecraft.core.Direction facing) {
+    var probe = com.example.evanscomputermod.item.ModItems.INTERFACE_PROBE.get();
+    BlockPos at = r.where(node);
+    var expected = ordered(
+        Map.entry(DOWN, "eth0"), Map.entry(UP, "eth1"), Map.entry(facing.getOpposite(), "eth2"),
+        Map.entry(facing.getCounterClockWise(), "eth3"), Map.entry(facing.getClockWise(), "eth4"));
+    String[] names = {"bottom", "top", "back", "left", "right"};
+    int i = 0;
+    for (var e : expected.entrySet()) {
+      String heard = String.join(" ", r.player().use(probe, at, e.getKey(), true));
+      String side = names[i++] + " (" + e.getKey().getName() + ")";
+      if (!heard.contains(e.getValue() + " ")) {
+        r.fail(node + " facing " + facing.getName() + ": the " + side + " face should be " + e.getValue() + ", probe said: " + heard);
+        return;
+      }
+      r.say("§7  " + side + ": " + e.getValue());
+    }
+    String screen = String.join(" ", r.player().use(probe, at, facing, true));
+    if (!screen.contains("no interface")) r.fail("control: the screen face should have no port, probe said: " + screen);
+    else r.say("§7  screen (" + facing.getName() + "): no port");
+  }
+
+  /**
    * The router configuration a player types on a tap router: eth0 (DOWN, on the patch
    * panel) takes a free address in the link's /28, eth1 (UP) is the player's LAN, and the
    * router peers with both ends of the fiber. {@code extra} adds lines in global config
@@ -1379,6 +1450,7 @@ public final class RouterScenarios {
     add(headless());
     add(village());
     add(playerFiber());
+    add(portsFollowFacing());
     add(fiberTapLab());
   }
   //?}

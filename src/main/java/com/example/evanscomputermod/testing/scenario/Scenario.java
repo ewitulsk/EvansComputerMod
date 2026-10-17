@@ -20,9 +20,10 @@ import java.util.regex.Pattern;
  * CI checks.
  *
  * <p>Terminals are placed with their screen facing {@link Node#facing}. A
- * terminal's NICs are its non-screen faces in {@link Direction} order
- * (DOWN, UP, NORTH, SOUTH, WEST, EAST), so for a north-facing terminal
- * eth0 = down, eth1 = up, eth2 = south, eth3 = west, eth4 = east;
+ * terminal's NICs are its non-screen faces relative to the screen
+ * (bottom, top, back, left, right; see TerminalBlock.relativeFaces), so
+ * eth0 = down, eth1 = up, eth2 = back, eth3 = left, eth4 = right whatever
+ * the facing (for a north-facing terminal: south, west, east);
  * {@link #eth} computes it. Each cable run is its own segment, so
  * {@link Builder#build} rejects layouts where runs touch or a run touches
  * a terminal face it wasn't meant to.
@@ -162,7 +163,7 @@ public final class Scenario {
     public static int eth(Direction facing, Direction face) {
         if (face == facing) throw new IllegalArgumentException("the screen face has no NIC");
         int i = 0;
-        for (Direction d : Direction.values()) {
+        for (Direction d : com.example.evanscomputermod.block.TerminalBlock.relativeFaces(facing)) {
             if (d == face) return i;
             if (d != facing) i++;
         }
@@ -283,7 +284,12 @@ public final class Scenario {
         }
 
         public Builder host(String name, BlockPos pos, String ip) {
-            nodes.put(name, new Node(name, pos, Direction.NORTH, Role.HOST, ip));
+            return host(name, pos, ip, Direction.NORTH);
+        }
+
+        /** A host whose screen faces {@code facing} (the default is north). */
+        public Builder host(String name, BlockPos pos, String ip, Direction facing) {
+            nodes.put(name, new Node(name, pos, facing, Role.HOST, ip));
             return this;
         }
 

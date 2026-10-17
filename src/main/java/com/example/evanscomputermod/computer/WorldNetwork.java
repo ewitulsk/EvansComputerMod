@@ -42,7 +42,7 @@ import java.util.concurrent.*;
  */
 public final class WorldNetwork extends SavedData implements CableNetworkManager.Topology {
     public static final List<String> STYLES = List.of("plains", "desert", "savanna", "snowy", "taiga");
-    /** ISP router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing. */
+    /** ISP router NICs, relative to its screen: bottom eth0, top eth1, back eth2, left eth3 (right: its Interface Block). */
     public static final int ACCESS_PORT = 0, SERVER_PORT = 1, FIBER_PREV_PORT = 2, FIBER_NEXT_PORT = 3, UPLINK_PORT = 4;
     /** Data center servers use their UP face (eth1) on the server LAN. */
     public static final int SERVER_NIC = 1;

@@ -92,6 +92,20 @@ public class TerminalBlock extends BaseEntityBlock
     //?}
 
     public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
+
+    /**
+     * The six faces relative to a terminal facing {@code facing}, in NIC order: bottom, top,
+     * front, back, left, right (left/right as the computer sees them, matching the
+     * peripheral side names). Built-in NICs take these faces in order, skipping the front
+     * (the screen) and faces covered by an Interface Block, so eth0 is always the bottom,
+     * eth1 the top, eth2 the back, eth3 the left and eth4 the right, however the computer
+     * is turned. For a north-facing terminal this is plain DOWN, UP, NORTH, SOUTH, WEST,
+     * EAST order, so worlds built before relative numbering keep their north-facing ports.
+     */
+    public static Direction[] relativeFaces(Direction facing) {
+        return new Direction[] {Direction.DOWN, Direction.UP, facing, facing.getOpposite(),
+                facing.getCounterClockWise(), facing.getClockWise()};
+    }
     public static final BooleanProperty LEFT_BAY = BooleanProperty.create("left_bay");
     public static final BooleanProperty RIGHT_BAY = BooleanProperty.create("right_bay");
     /** One property per bay slot, indexed like {@link ModuleBays#SLOT_NAMES}. */
