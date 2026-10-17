@@ -279,7 +279,7 @@ public final class ScenarioRun {
             String scr = screen(n.name());
             // A computer of the world that was already running has scrolled its banner away.
             all &= scr.contains("Welcome to Terminal OS")
-                    || sc.inWorld && be.getComputer() != null && java.util.regex.Pattern.compile("^/\\S* >$",
+                    || sc.inWorld && be.getComputer() != null && java.util.regex.Pattern.compile("^/\\S* > *$",
                             java.util.regex.Pattern.MULTILINE).matcher(scr).find();
         }
         return all;

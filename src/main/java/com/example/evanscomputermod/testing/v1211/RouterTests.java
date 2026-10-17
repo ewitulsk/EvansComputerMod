@@ -123,7 +123,8 @@ public final class RouterTests {
                         probeAt[0] = System.currentTimeMillis() + 5000;
                     }
                     String screen = screenOf(host);
-                    if (phase[0] == 1 && screen.contains("1 packets sent, 1 received")) {
+                    // Type the next command only back at the prompt (a line typed while ping exits is lost).
+                    if (phase[0] == 1 && screen.contains("1 packets sent, 1 received") && screen.stripTrailing().endsWith("/ >")) {
                         host.instance().sendInput("curl http://100.72.0.10/index.html\n");
                         probeAt[0] = System.currentTimeMillis() + 5000;
                         phase[0] = 2;
