@@ -72,14 +72,11 @@ public class WasiFunctions {
         public int pid;
         /** Permission checks for apps; null = unconfined (docs/gui/APPS.md). */
         public ProcessSandbox sandbox;
-<<<<<<< HEAD
         /** Folders mounted into the computer (a floppy as disk/); null: none. */
         public com.example.evanscomputermod.computer.StorageMounts mounts;
-=======
         /** The keyboard (what the shell sends this program), for /dev/tty
          *  when stdin is a pipe or a file. */
         public WasiPipe keyboard;
->>>>>>> feature/cc-compat-p3
 
         public WasiState(FdTable fdTable, String[] argv, Path storagePath,
                          java.util.Map<String, String> envVars) {

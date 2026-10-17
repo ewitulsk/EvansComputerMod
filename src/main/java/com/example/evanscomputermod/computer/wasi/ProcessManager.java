@@ -584,11 +584,8 @@ public class ProcessManager {
         }
 
         WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
-<<<<<<< HEAD
         state.mounts = storageMounts;
-=======
         state.keyboard = childInputPipes.get(pid);
->>>>>>> feature/cc-compat-p3
         state.pid = pid;
         state.sandbox = sandbox;
         WasmInstance instance = null;
