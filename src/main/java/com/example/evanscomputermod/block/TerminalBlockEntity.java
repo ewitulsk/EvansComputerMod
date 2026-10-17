@@ -319,9 +319,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     /** A pass sent something: the block is saved on the next tick (setChanged needs the server thread). */
     private volatile boolean displayChanged;
     private long snapshotTicks;
-    /** Test viewers (the in-process client harnesses): extra recipients whose packets go to a sink, not a connection. */
-    private final java.util.Map<UUID, java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload>>
-            testViewers = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A test viewer (the in-process client harnesses): an extra recipient of one display whose packets go to a sink. */
+    private record TestViewer(int displayId,
+                              java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload> sink) {}
+
+    private final java.util.Map<UUID, TestViewer> testViewers = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public com.example.evanscomputermod.computer.pipeline.ViewerSnapshot viewerSnapshot() {
@@ -361,14 +363,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * recipient of every pass and its packets go to {@code sink} (the
      * GameTest client harnesses, which have no network connection).
      */
-    public void addTestViewer(UUID id, java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload> sink) {
-        testViewers.put(id, sink);
+    public void addTestViewer(UUID id, int displayId,
+                              java.util.function.Consumer<net.minecraft.network.protocol.common.custom.CustomPacketPayload> sink) {
+        testViewers.put(id, new TestViewer(displayId, sink));
+        getSyncHub(displayId).requestKeyframe(id);
         syncToClients();
     }
 
     public void removeTestViewer(UUID id) {
         testViewers.remove(id);
-        terminalSync.retainViewers(java.util.List.copyOf(viewerSnapshot.recipients(DISPLAY_OWN)));
+        syncToClients();
     }
 
     /** One pass of both displays (display pump). */
@@ -772,9 +776,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * encodes on its own event loop.
      */
     private void sendTo(int displayId, UUID playerId, net.minecraft.network.protocol.common.custom.CustomPacketPayload packet) {
-        var sink = testViewers.get(playerId);
-        if (sink != null) {
-            sink.accept(packet);
+        TestViewer tv = testViewers.get(playerId);
+        if (tv != null) {
+            tv.sink().accept(packet);
             return;
         }
         ServerPlayer player = viewerSnapshot.player(displayId, playerId);
@@ -785,7 +789,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     /** The snapshot's recipients of a display plus the test viewers (of the Terminal's own display). */
     private List<UUID> recipients(int displayId) {
         List<UUID> ids = new ArrayList<>(viewerSnapshot.recipients(displayId));
-        if (displayId == DISPLAY_OWN) ids.addAll(testViewers.keySet());
+        for (var e : testViewers.entrySet()) if (e.getValue().displayId() == displayId) ids.add(e.getKey());
         return ids;
     }
 

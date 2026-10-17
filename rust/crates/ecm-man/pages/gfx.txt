@@ -1,0 +1,77 @@
+NAME
+    gfx - how programs draw on a display, and timed frames for video
+
+SYNOPSIS
+    gfx_init2(target, w, h, format, flags)
+    gfx_blit_rect(target, x, y, w, h, pixels, len, format)
+    gfx_present(target, flags)
+    gfx_present_at(target, flags, pts_us)
+    gfx_queue_flush(target)
+    gfx_set_hint(target, hint)
+    gfx_queue_state(target)
+
+DESCRIPTION
+    This page is for people who write programs (in Rust, against the
+    host ABI: ecm_host_abi::gfx_child). Players who just want to watch
+    a video use videoplayer, video play or player.
+
+    A program draws on a display: target 0 is the Terminal's own
+    screen, target 1 the Screen wall attached to the computer.
+    gfx_init2 takes the display over and sets its size, its pixel
+    format (0 indexed8 with a palette, 1 rgba8888, 2 rgb565) and flags
+    (1 = double-buffered). Other programs can't use it until this one
+    exits or sets mode 0 (gfx_set_mode). The display refreshes at
+    gfx_set_refresh Hz, at most what the panel and the server allow.
+
+    gfx_blit_rect writes pixels. On a single-buffered display they show
+    at once. On a double-buffered one they go into the back buffer, and
+    gfx_present shows it (flags 1 = wait for the next vertical blank).
+
+TIMED FRAMES
+    A double-buffered display also has a presentation queue. Instead of
+    showing the back buffer now, gfx_present_at queues it to be shown
+    at pts_us: a time in microseconds on the program's monotonic clock,
+    the clock a program reads with the WASI call clock_time_get
+    (MONOTONIC), ecm_host_abi::gfx_child::monotonic_us in Rust. A video
+    player decodes a little ahead and queues each frame for its own
+    time; the server shows it then, and the players' games get the
+    frames early and show them on time too, so the picture stays smooth
+    when the server or the network hitch.
+
+    A time that has passed, with nothing queued, shows the frame at
+    once. A plain gfx_present with frames queued is shown after them.
+    The queue holds at most 12 frames and 500 ms ahead (server config
+    display.queueFrames and display.queueMs). When it is full,
+    gfx_present_at fails with -11, or with flags 1 sleeps until there
+    is room (that is how a player paces itself). A single-buffered
+    display can't queue: -22.
+
+    gfx_queue_flush drops every queued frame not shown yet (seek, pause,
+    stop) and returns how many. gfx_queue_state returns frames queued
+    in the high 32 bits and how many ms the last one is ahead of now in
+    the low 32 bits (-1 for an unknown display).
+
+    video_decode_to_back decodes the next frame of a video straight
+    into the back buffer of a double-buffered display (made with
+    gfx_init2 at the decoder's size and format) without showing it;
+    gfx_present_at then shows it at its time.
+
+LOSSY FRAMES
+    gfx_set_hint says how the display's frames may travel to players:
+    0 auto (the default: exact, lossy while most of the picture keeps
+    changing), 1 exact (never lossy: text, pixel art), 2 motion (video:
+    lossy allowed). Text on the console is always exact.
+
+ERRORS
+    -1 invalid argument, -2 another program owns the display, -3 this
+    program doesn't own it, -4 no such display, -5 interrupted (the
+    program is being stopped), -11 queue full, -22 single-buffered.
+
+EXAMPLES
+      init2(Target::Terminal, 320, 200, FORMAT_RGB565, FLAG_DOUBLE_BUFFER)
+      let t0 = monotonic_us() + 100_000;
+      // for each frame: draw, then
+      present_at(Target::Terminal, PRESENT_AT_WAIT, t0 + pts_ms * 1000)
+
+SEE ALSO
+    player, video, videoplayer, ui, gfxtest

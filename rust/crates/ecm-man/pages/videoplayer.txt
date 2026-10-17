@@ -2,7 +2,7 @@ NAME
     videoplayer - the Video Player app for the desktop and the ePhone
 
 SYNOPSIS
-    videoplayer [file]
+    videoplayer [--untimed] [file]
 
 DESCRIPTION
     Opens the Video Player app in a window. It needs the GUI: start the
@@ -16,8 +16,23 @@ DESCRIPTION
     current directory). Files also opens videos with it.
 
     The window shows the picture with a seek bar and buttons under it;
-    the sound goes to the computer's speaker. Leaving the app pauses it,
-    and it remembers the file and position for next time.
+    the sound goes to the computer's speaker. Click the seek bar to jump
+    there; the buttons are Library, -10s, Play/Pause, +10s and Loop.
+    Leaving the app pauses it, and it remembers the file and position
+    for next time.
+
+    While playing, the app decodes about 300 ms ahead and hands each
+    frame to the compositor for the moment it is due, so the picture
+    stays smooth when the server lags or the network hitches; the
+    picture may travel slightly lossy, like a video stream. A seek or a
+    pause drops the frames queued ahead (and the sound queued in the
+    speaker), and a pause shows the exact frame where it stopped.
+
+OPTIONS
+    --untimed
+        The old way, without queued frames: each frame is sent when the
+        app's clock reaches it, exactly, with no lossy hint. For
+        comparing (it stutters when the server lags).
 
 KEYS
     Space or K
@@ -38,6 +53,7 @@ KEYS
 EXAMPLES
       videoplayer
       videoplayer /home/videos/trailer.mp4
+      gui launch videoplayer --untimed /home/videos/trailer.mp4
 
 SEE ALSO
-    video, player, gui
+    video, player, gui, gfx

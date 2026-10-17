@@ -38,8 +38,8 @@ import java.util.Map;
  * wins. Client main thread.
  */
 public final class ClientPrediction {
-    /** Wheel step in lu per notch (ecm-ui scrolls this much). */
-    static int WHEEL_STEP_LU = 40;
+    /** Wheel step in lu per notch (ecm-ui theme scroll_step, 16). */
+    static int WHEEL_STEP_LU = 16;
     /** A prediction the server hasn't confirmed is dropped after this long (ms). */
     static final long EXPIRE_MS = 1000;
 

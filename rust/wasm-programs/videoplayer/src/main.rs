@@ -5,7 +5,11 @@
 //! bar and buttons under it; its sound goes to the computer's speaker. The
 //! screens are in `lib.rs`.
 //!
-//!   videoplayer [file]       without a file: the library (videos in /home, /home/videos)
+//!   videoplayer [--untimed] [file]   without a file: the library (videos in /home, /home/videos)
+//!
+//! `--untimed`: behave as before timed frames (a control for tests): every
+//! frame is committed "now" when the wall clock reaches it, no `CommitAt`, no
+//! `QueueFlush`, no motion hint.
 //!
 //! Files opens videos with it ("open with", `.mp4 .m4v .mkv .webm .mov .avi`).
 //!
@@ -15,6 +19,14 @@
 //! Leaving it (home, another app, the phone to the hotbar) pauses it; it saves
 //! the file and position (`SaveState`) and opens there again, paused, after a
 //! cold start (`Restore`).
+//!
+//! Timed frames (UI protocol v2): the canvas is marked motion
+//! (`SurfaceSetContent`), frames are decoded about 300 ms ahead of the clock
+//! and each is committed with `CommitAt` for the monotonic time the clock
+//! reaches it, so the picture stays smooth through server and network
+//! hitches; seeking and pausing drop the queue (`QueueFlush`). Late frames
+//! are still dropped. A version 1 compositor (no `QueueLimits`) gets plain
+//! `Commit`s when frames are due.
 
 use ecm_host_abi::video::{self, DecodeStep, PixelFormat};
 use ecm_ui::diff::TreeState;
@@ -23,8 +35,8 @@ use ecm_ui_proto as proto;
 use ecm_ui_proto::Message;
 use std::time::{Duration, Instant};
 use videoplayer::{
-    decode_size, find_videos, fit, frame_timing, play_layout, Action, AudioPump, AudioSink, AudioSource, Clock, FrameTiming,
-    Playback, Screen, Ui, APP_ID, AUDIO_CHANNELS, AUDIO_RATE, CANVAS, LIBRARY_DIRS,
+    decode_size, find_videos, fit, frame_timing_ahead, lookahead_ms, play_layout, present_time_us, Action, AudioPump, AudioSink,
+    AudioSource, Clock, FrameTiming, Playback, Screen, Ui, APP_ID, AUDIO_CHANNELS, AUDIO_RATE, CANVAS, LIBRARY_DIRS,
 };
 
 const SURFACE: u32 = 1;
@@ -107,6 +119,8 @@ struct Player {
     audio: Option<(HostAudio, AudioPump)>,
     speaker: Option<Speaker>,
     sound: String,
+    /// Frames queued with CommitAt must go (seek, pause): send QueueFlush.
+    flush_queue: bool,
 }
 
 impl Player {
@@ -122,6 +136,7 @@ impl Player {
         self.eof = false;
         self.show_next = true;
         self.last_shown = to;
+        self.flush_queue = true;
         self.clock.seek(now, to);
         if let Some((_, pump)) = self.audio.as_mut() {
             pump.reset(to);
@@ -133,8 +148,20 @@ impl Player {
 
     fn pause(&mut self, now: i64) {
         self.clock.pause(now);
+        self.flush_queue = true;
         if let Some(s) = self.speaker.as_mut() {
             let _ = s.dev.flush_queue();
+        }
+    }
+
+    /// Pause where the clock is. With timed frames the queue ahead was
+    /// dropped, so decode again from here: the paused picture is the frame at
+    /// the position and playing on misses nothing.
+    fn pause_at_frame(&mut self, now: i64, timed: bool) {
+        self.pause(now);
+        if timed {
+            let pos = self.pos(now);
+            self.seek(now, pos);
         }
     }
 
@@ -207,6 +234,7 @@ fn open_player(path: &str, area: (i32, i32), start: i64, playing: bool, now: i64
         audio,
         speaker,
         sound: sound.to_string(),
+        flush_queue: false,
     };
     if start > 0 {
         p.seek(now, start);
@@ -252,6 +280,11 @@ fn main() {
     let mut restore: Option<Vec<u8>> = None;
     let mut welcomed = false;
     let mut wants_restore = false;
+    // How far CommitAt may queue (protocol v2; None: a version 1 compositor).
+    let mut limits: Option<(u16, u32)> = None;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let untimed = args.iter().any(|a| a == "--untimed");
+    let file_arg = args.iter().find(|a| !a.starts_with("--")).cloned();
     let t0 = Instant::now();
     while (!welcomed || (wants_restore && restore.is_none())) && t0.elapsed() < Duration::from_secs(5) {
         for m in c.recv(5000).unwrap_or_default() {
@@ -260,6 +293,7 @@ fn main() {
                     welcomed = true;
                     wants_restore = w.restore_follows;
                 }
+                Message::QueueLimits(q) if !untimed => limits = Some((q.max_queue_frames, q.max_queue_ms)),
                 Message::Restore(r) => restore = Some(r.data),
                 other => c.pending.push_back(other),
             }
@@ -269,11 +303,12 @@ fn main() {
         eprintln!("videoplayer: no answer from the compositor");
         std::process::exit(1);
     }
-    let start = Instant::now();
-    let now_ms = || start.elapsed().as_millis() as i64;
+    // The clock's time base: ms since t0 on the monotonic clock CommitAt times are on.
+    let t0_us = ecm_ui::conn::monotonic_us();
+    let now_ms = || (ecm_ui::conn::monotonic_us().saturating_sub(t0_us) / 1000) as i64;
 
     // What to open first: an argument, else what was open before a cold start (paused).
-    let mut open_req: Option<(String, i64, bool)> = std::env::args().nth(1).map(|p| (abs(&p), 0, true));
+    let mut open_req: Option<(String, i64, bool)> = file_arg.map(|p| (abs(&p), 0, true));
     if open_req.is_none() {
         let restored = restore.and_then(|b| String::from_utf8(b).ok()).and_then(|s| Json::parse(&s).ok());
         if let Some(j) = &restored {
@@ -371,6 +406,10 @@ fn main() {
                     h: p.size.1,
                     format: proto::PixelFormat::Rgb565,
                 }));
+                // Video: its frames may travel lossy.
+                if !untimed {
+                    c.send(Message::SurfaceSetContent(proto::SurfaceSetContent { surface: SURFACE, resource: CANVAS, hint: 2 }));
+                }
                 canvas = Some(p.size);
                 p.show_next = true;
                 dirty = true;
@@ -398,10 +437,13 @@ fn main() {
             dirty = false;
         }
 
-        // Wait for input until the next frame is due (20 ms at most while playing, for the sound).
+        // Wait for input until the next frame is due to be sent (20 ms at most while playing, for the sound).
         let wait = match &player {
             Some(p) if p.show_next => 0,
-            Some(p) if p.clock.playing() => p.pending.map(|pts| (pts - p.clock.pos(now)).clamp(0, 20)).unwrap_or(0) as i32,
+            Some(p) if p.clock.playing() => {
+                let ahead = lookahead_ms(limits, p.frame_ms);
+                p.pending.map(|pts| (pts - ahead - p.clock.pos(now)).clamp(0, 20)).unwrap_or(0) as i32
+            }
             _ => 500,
         };
         let msgs = match c.recv(wait) {
@@ -446,7 +488,7 @@ fn main() {
                     // Leaving the screen pauses, as on a phone; the place is saved for a cold start.
                     let state = match player.as_mut() {
                         Some(p) => {
-                            p.pause(now);
+                            p.pause_at_frame(now, limits.is_some());
                             Json::Obj(vec![("path".into(), Json::Str(p.path.clone())), ("pos".into(), Json::Int(p.pos(now)))])
                         }
                         None => Json::Obj(vec![]),
@@ -458,6 +500,12 @@ fn main() {
                 }
                 Message::CloseRequested(_) => {
                     quit = true;
+                    Action::None
+                }
+                Message::QueueLimits(q) => {
+                    if !untimed {
+                        limits = Some((q.max_queue_frames, q.max_queue_ms));
+                    }
                     Action::None
                 }
                 Message::Error(e) => {
@@ -487,7 +535,7 @@ fn main() {
                 Action::TogglePlay => {
                     if let Some(p) = player.as_mut() {
                         if p.clock.playing() {
-                            p.pause(now);
+                            p.pause_at_frame(now, limits.is_some());
                         } else {
                             if ended {
                                 p.seek(now, 0);
@@ -516,10 +564,18 @@ fn main() {
             dirty = true;
         }
 
-        // Play: the sound ahead of the clock, then the frame that is due.
+        // Play: the sound ahead of the clock, then the frames that are due (timed: up to the lookahead).
         let Some(p) = player.as_mut() else { continue };
+        if p.flush_queue {
+            p.flush_queue = false;
+            if limits.is_some() {
+                c.send(Message::QueueFlush(proto::QueueFlush { surface: SURFACE }));
+            }
+        }
         let now = now_ms();
         let pos = p.clock.pos(now);
+        let ahead = lookahead_ms(limits, p.frame_ms);
+        let mut sent = 0;
         if p.clock.playing() {
             if let (Some((src, pump)), Some(spk)) = (p.audio.as_mut(), p.speaker.as_mut()) {
                 pump.pump(pos, src, spk);
@@ -542,7 +598,7 @@ fn main() {
             let timing = if p.show_next {
                 FrameTiming::Show
             } else if p.clock.playing() {
-                frame_timing(pts, pos, p.frame_ms)
+                frame_timing_ahead(pts, pos, p.frame_ms, ahead)
             } else {
                 FrameTiming::Wait(0)
             };
@@ -557,11 +613,23 @@ fn main() {
                         quit = true;
                         break;
                     }
-                    c.send(Message::Commit(proto::Commit { surface: SURFACE }));
+                    // Timed: shown when the clock reaches it (put_canvas_at). The first
+                    // frame after an open or a seek, and every frame from a v1 compositor, now.
+                    let at = if p.show_next || ahead == 0 { None } else { present_time_us(&p.clock, pts, t0_us) };
+                    match at {
+                        Some(pts_us) => c.send(Message::CommitAt(proto::CommitAt { surface: SURFACE, pts_us })),
+                        None => c.send(Message::Commit(proto::Commit { surface: SURFACE })),
+                    }
+                    let timed = at.is_some();
                     p.last_shown = pts;
                     p.pending = None;
                     p.show_next = false;
-                    break;
+                    drops = 0;
+                    sent += 1;
+                    // Untimed frames go one per turn; timed ones fill the lookahead (a few per turn).
+                    if !timed || sent >= 4 {
+                        break;
+                    }
                 }
                 FrameTiming::Wait(_) => break,
             }

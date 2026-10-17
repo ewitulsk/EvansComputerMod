@@ -55,6 +55,17 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
     private volatile int pumpPeak;
     private volatile boolean pumpPlayed;
     private java.util.concurrent.ScheduledFuture<?> pumpTask;
+    /** Test listeners (the in-process client harnesses): they get every block a nearby player would. */
+    private final java.util.Map<java.util.UUID, java.util.function.Consumer<SpeakerAudioPacket>> testListeners =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    public void addTestListener(java.util.UUID id, java.util.function.Consumer<SpeakerAudioPacket> sink) {
+        testListeners.put(id, sink);
+    }
+
+    public void removeTestListener(java.util.UUID id) {
+        testListeners.remove(id);
+    }
 
     public SpeakerBlockEntity(BlockPos pos, BlockState state) {
         super(SpeakerContent.SPEAKER_BE.get(), pos, state);
@@ -138,13 +149,14 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
         for (int off = 0; off < pcm.length; off += CHUNK) {
             int n = Math.min(CHUNK, pcm.length - off);
             for (int i = off; i < off + n; i++) peak = Math.max(peak, Math.abs(pcm[i]));
-            if (to.isEmpty()) continue;
+            if (to.isEmpty() && testListeners.isEmpty()) continue;
             byte[] block = encoder.encode(pcm, off, n);
             SpeakerAudioPacket packet = new SpeakerAudioPacket(worldPosition, seq++, rate, n, block,
                     pts + off * 1_000_000L / rate, computer);
             for (ServerPlayer p : to) {
                 if (!p.hasDisconnected()) PacketDistributor.sendToPlayer(p, packet);
             }
+            for (var l : testListeners.values()) l.accept(packet);
         }
         pumpPeak = Math.max(pumpPeak, peak);
         pumpPlayed = true;
