@@ -29,5 +29,11 @@ public final class VisualTests {
     public static void visual_app(GameTestHelper h) {
         TestDriver.scenario(h, NS, VisualScenarios.ALL.get("visual_app"), true);
     }
+
+    /** The palette follows what is attached: a Create Basin adds the tank blocks; the saved program runs against it. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".live_catalog")
+    public static void visual_live_catalog(GameTestHelper h) {
+        TestDriver.scenario(h, NS, VisualScenarios.ALL.get("visual_live_catalog"), true);
+    }
 }
 //?}

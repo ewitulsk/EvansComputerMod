@@ -3184,7 +3184,8 @@ public class ComputerInstance implements AutoCloseable {
         IComputerHost h = host;
         var hub = h != null ? h.getPeripheralHub() : null;
         if (com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.NAME.equals(name)) {
-            return com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.encoded();
+            return com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.encoded(
+                    hub != null ? hub.attachedPeripherals() : java.util.List.of());
         }
         return hub != null ? hub.methods(name)
                 : com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");

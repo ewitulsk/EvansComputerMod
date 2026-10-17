@@ -2,6 +2,11 @@ package com.example.evanscomputermod.testing.scenario;
 
 //? if <=1.21.1 {
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,6 +28,17 @@ import java.util.Map;
  *       app doesn't run headless; a wrong count fails at once.</li>
  *   <li>{@code visual_app}: starts the GUI, opens the editor on the counter
  *       program and runs the packaged counter app as a window.</li>
+ *   <li>{@code visual_live_catalog} (docs/CC_COMPAT.md): the palette follows
+ *       what is attached. The player types {@code tanks.vpl} in, a program
+ *       whose block reads an inventory's tanks; it carries that block's
+ *       signature, so {@code visual --python} still generates the call with
+ *       nothing attached (control). With the editor open, its palette's
+ *       Inventory section holds the 6 inventory blocks (control: not the tank
+ *       ones); the player places a Create Basin (items and fluids) east of
+ *       the computer and, within a couple of seconds and without reopening
+ *       the editor, the palette says new blocks arrived and Inventory holds 9.
+ *       {@code visual --run tanks.vpl} then runs the block against the Basin
+ *       and prints its (empty) tanks. Needs Create (loaded in the test runs).</li>
  * </ul>
  * <pre>
  *   Terminal at (0,1,0) facing north, built and booted by a player.
@@ -31,9 +47,21 @@ import java.util.Map;
 public final class VisualScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
     private static final BlockPos PC = new BlockPos(0, 1, 0);
+    private static final BlockPos BASIN = new BlockPos(1, 1, 0);
+    /** Start -> an inventory's tanks -> as text -> print, with the tank block's signature saved in the file. */
+    private static final String TANKS_VPL = "{\"version\":1,\"name\":\"tanks\",\"canvas\":{\"offsetX\":0.0,\"offsetY\":0.0,\"zoom\":1.0},"
+            + "\"blocks\":[{\"id\":1,\"type\":\"start\",\"x\":0.0,\"y\":0.0,\"inputs\":{}},"
+            + "{\"id\":2,\"type\":\"inventory_tanks\",\"x\":0.0,\"y\":80.0,\"inputs\":{}},"
+            + "{\"id\":3,\"type\":\"print\",\"x\":0.0,\"y\":180.0,\"inputs\":{}},"
+            + "{\"id\":4,\"type\":\"to_str\",\"x\":200.0,\"y\":120.0,\"inputs\":{}}],"
+            + "\"connections\":[{\"fromBlock\":1,\"fromPort\":\"flow\",\"toBlock\":2,\"toPort\":\"flow\"},"
+            + "{\"fromBlock\":2,\"fromPort\":\"flow\",\"toBlock\":3,\"toPort\":\"flow\"},"
+            + "{\"fromBlock\":2,\"fromPort\":\"result\",\"toBlock\":4,\"toPort\":\"value\"},"
+            + "{\"fromBlock\":4,\"fromPort\":\"result\",\"toBlock\":3,\"toPort\":\"text\"}],"
+            + "\"peripherals\":[[\"inventory\",\"\",[[\"tanks\",\"The fluid in each tank\",[],\"string\"]]]]}";
 
     static {
-        for (Scenario s : List.of(console(), app())) ALL.put(s.name, s);
+        for (Scenario s : List.of(console(), app(), liveCatalog())) ALL.put(s.name, s);
     }
 
     private VisualScenarios() {
@@ -74,6 +102,56 @@ public final class VisualScenarios {
                 .expect("pc", "is a GUI app", "visual refuses to run the counter app in the console")
                 .timeLimit(60_000)
                 .build();
+    }
+
+    private static Scenario liveCatalog() {
+        var b = Scenario.builder("visual_live_catalog",
+                        "The Visual Programmer's palette follows what is attached: a Create Basin placed by the computer adds tank blocks")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .realTime()
+                .note("Type the program in (tanks.vpl: Start -> an inventory's tanks -> print), from Python");
+        PlayerKit.typeFiles(b, Map.of("pc", Map.of("/visual/tanks.vpl", TANKS_VPL)));
+        return b.await(r -> net.neoforged.fml.ModList.get().isLoaded("create") ? null : "this scenario needs Create",
+                        "Create is loaded (the Basin comes from it)", 1_000)
+                .note("Control: with nothing attached the saved signature still makes the call")
+                .send("pc", "visual --python visual/tanks.vpl")
+                .expect("pc", "peripheral\\.find\\(\"inventory\"\\)\\)\\.tanks\\(\\)", "the tank block is in the program, from its saved signature",
+                        "skipped unknown|visual: ")
+                .waitMs(1000, "the command exits")
+                .send("pc", "gui")
+                .expect("pc", "^gui: started", "the compositor and shell start", "(?i)unknown command|no GUI device")
+                .mutate(GuiScenarios::chord, "press Ctrl+Alt+Backspace")
+                .await(r -> GuiScenarios.ui(r) != null && !GuiScenarios.ui(r).guiVisible() ? null : "GUI still shown",
+                        "the console is shown", 5_000)
+                .send("pc", "gui launch visual")
+                .expect("pc", "^gui: launched visual", "the Visual Programmer starts")
+                .until("pc", "gui status", "\"Visual Programmer\" .*\\d+x\\d+", "its window is open")
+                .mutate(GuiScenarios::chord, "press Ctrl+Alt+Backspace")
+                .await(r -> GuiScenarios.ui(r) != null && GuiScenarios.ui(r).guiVisible() ? null : "the console is still shown",
+                        "the GUI is shown", 5_000)
+                .await(r -> GuiScenarios.shows(r, "visual", "+ Inventory (6)"), "the palette's Inventory section has its 6 inventory blocks", 15_000)
+                .await(r -> GuiScenarios.shows(r, "visual", "+ Inventory (9)") == null ? "it has the tank blocks already" : null,
+                        "control: no tank blocks while no tank is attached", 1_000)
+                .note("Place a Create Basin east of the computer, with the editor open")
+                .mutate(VisualScenarios::placeBasin, "place a Create Basin east of the computer")
+                .await(r -> GuiScenarios.shows(r, "visual", "New peripheral blocks"), "the editor says new blocks arrived", 10_000)
+                .await(r -> GuiScenarios.shows(r, "visual", "+ Inventory (9)"), "Inventory now has 9 blocks: tanks, push_fluid and pull_fluid too", 5_000)
+                .note("Run the program: its tank block reads the Basin")
+                .mutate(GuiScenarios::chord, "press Ctrl+Alt+Backspace")
+                .await(r -> GuiScenarios.ui(r) != null && !GuiScenarios.ui(r).guiVisible() ? null : "GUI still shown",
+                        "the console is shown", 5_000)
+                .send("pc", "visual --run visual/tanks.vpl")
+                .expect("pc", "^\\[\\]$", "the Basin's tanks: none filled", "Traceback|Error")
+                .timeLimit(90_000)
+                .build();
+    }
+
+    /** The player places a Create Basin against the computer's east side. */
+    private static void placeBasin(ScenarioRun r) {
+        Block basin = BuiltInRegistries.BLOCK.get(ResourceLocation.parse("create:basin"));
+        if (basin == Blocks.AIR) throw new IllegalStateException("no create:basin (is Create loaded?)");
+        r.player().placeAgainst(basin, r.abs(BASIN), Direction.SOUTH, Direction.WEST, s -> s.is(basin));
     }
 
     private static Scenario app() {

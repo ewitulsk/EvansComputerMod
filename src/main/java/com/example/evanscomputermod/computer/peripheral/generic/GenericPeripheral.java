@@ -89,6 +89,14 @@ public final class GenericPeripheral implements IPeripheral {
         throw new PeripheralException("no method " + method);
     }
 
+    /** The methods of every capability the block has. */
+    @Override
+    public List<PeripheralMethods.Info> describeMethods() {
+        List<PeripheralMethods.Info> out = new ArrayList<>();
+        for (Part p : parts) out.addAll(p.table().infos());
+        return out;
+    }
+
     @Override
     public boolean isSame(IPeripheral other) {
         return other instanceof GenericPeripheral g && g.level == level && g.pos.equals(pos) && g.side == side

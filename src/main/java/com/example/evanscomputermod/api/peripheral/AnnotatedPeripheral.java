@@ -32,6 +32,11 @@ public abstract class AnnotatedPeripheral implements IPeripheral {
     }
 
     @Override
+    public java.util.List<PeripheralMethods.Info> describeMethods() {
+        return java.util.List.copyOf(methods.infos());
+    }
+
+    @Override
     public boolean runsOnMainThread(String method) {
         return methods.isMainThread(method);
     }

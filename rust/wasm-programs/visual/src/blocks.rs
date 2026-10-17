@@ -239,6 +239,30 @@ pub fn catalog_from_json(j: &Json) -> Result<Vec<PeripheralType>, String> {
 #[derive(Clone, Debug)]
 pub struct Registry {
     pub categories: Vec<Category>,
+    /// The peripheral types the blocks came from (merged: a type seen again
+    /// with more methods gains their blocks), as saved programs record them.
+    pub peripherals: Vec<PeripheralType>,
+}
+
+/// The catalog's JSON form of `types` (what [`catalog_from_json`] reads).
+pub fn catalog_to_json(types: &[PeripheralType]) -> Json {
+    let s = |v: &str| Json::Str(v.to_string());
+    Json::Arr(
+        types
+            .iter()
+            .map(|t| {
+                let methods = t
+                    .methods
+                    .iter()
+                    .map(|m| {
+                        let params = m.params.iter().map(|(n, ty, d)| Json::Arr(vec![s(n), s(ty), s(d)])).collect();
+                        Json::Arr(vec![s(&m.name), s(&m.description), Json::Arr(params), s(&m.returns)])
+                    })
+                    .collect();
+                Json::Arr(vec![s(&t.name), s(&t.description), Json::Arr(methods)])
+            })
+            .collect(),
+    )
 }
 
 fn parse_color(hex: &str) -> u32 {
@@ -343,13 +367,64 @@ impl Registry {
             let collapsed = matches!(c.get("collapsed"), Some(Json::Bool(true)));
             categories.push(Category { name: name.to_string(), color, blocks, peripheral: None, collapsed });
         }
-        Ok(Registry { categories })
+        Ok(Registry { categories, peripherals: Vec::new() })
     }
 
     /// Add one category per peripheral type, one block per method
-    /// (`VisualBlockRegistry.generateBlocksFromPeripherals`).
-    pub fn add_peripherals(&mut self, types: &[PeripheralType]) {
+    /// (`VisualBlockRegistry.generateBlocksFromPeripherals`). A type that is
+    /// already known keeps its blocks and gains the methods it didn't have, so
+    /// a live catalog (a peripheral attached while the editor is open) and the
+    /// signatures a saved program carries both add to what is there.
+    /// Returns whether anything was added.
+    pub fn add_peripherals(&mut self, types: &[PeripheralType]) -> bool {
+        let mut changed = false;
+        let mut merged = Vec::new();
         for t in types {
+            match self.peripherals.iter_mut().find(|k| k.name == t.name) {
+                Some(known) => {
+                    let new: Vec<PeripheralMethod> =
+                        t.methods.iter().filter(|m| !known.methods.iter().any(|k| k.name == m.name)).cloned().collect();
+                    if new.is_empty() {
+                        continue;
+                    }
+                    known.methods.extend(new);
+                    if known.description.is_empty() {
+                        known.description = t.description.clone();
+                    }
+                    merged.push(known.clone());
+                }
+                None => {
+                    self.peripherals.push(t.clone());
+                    merged.push(t.clone());
+                }
+            }
+            changed = true;
+        }
+        for t in &merged {
+            let at = self.categories.iter().position(|c| c.peripheral.as_deref() == Some(t.name.as_str()));
+            if let Some(i) = at {
+                self.categories.remove(i);
+            }
+            self.add_category(t, at);
+        }
+        changed
+    }
+
+    /// The peripheral types the blocks of `types` (block type names) come from.
+    pub fn peripherals_used<'a>(&self, block_types: impl Iterator<Item = &'a str>) -> Vec<PeripheralType> {
+        let mut names: Vec<&str> = Vec::new();
+        for b in block_types {
+            if let Some(p) = self.category_of(b).and_then(|c| c.peripheral.as_deref()) {
+                if !names.contains(&p) {
+                    names.push(p);
+                }
+            }
+        }
+        self.peripherals.iter().filter(|t| names.contains(&t.name.as_str())).cloned().collect()
+    }
+
+    fn add_category(&mut self, t: &PeripheralType, at: Option<usize>) {
+        {
             let mut blocks = Vec::new();
             for m in &t.methods {
                 let mut inputs = vec![PortDef::new("flow", "flow", None), PortDef::new("name", "string", Some(""))];
@@ -382,13 +457,17 @@ impl Registry {
                 blocks.push(BlockDef { name: format!("{}_{}", t.name, m.name), label, inputs, outputs, code, generator: None, description, example });
             }
             if !blocks.is_empty() {
-                self.categories.push(Category {
+                let c = Category {
                     name: capitalize_label(&t.name),
                     color: peripheral_color(&t.name),
                     blocks,
                     peripheral: Some(t.name.clone()),
                     collapsed: true,
-                });
+                };
+                match at {
+                    Some(i) if i <= self.categories.len() => self.categories.insert(i, c),
+                    _ => self.categories.push(c),
+                }
             }
         }
     }

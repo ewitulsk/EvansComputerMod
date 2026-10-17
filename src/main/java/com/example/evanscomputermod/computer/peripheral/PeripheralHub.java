@@ -249,9 +249,16 @@ public final class PeripheralHub {
         return PeripheralValues.ok(out);
     }
 
+    /** The peripherals attached now (any thread). */
+    public java.util.Collection<IPeripheral> attachedPeripherals() {
+        List<IPeripheral> out = new ArrayList<>();
+        for (Attachment a : attached.values()) out.add(a.peripheral);
+        return out;
+    }
+
     /** Encoded result: {@code [type, [method names...]]}, or an error if nothing is attached as {@code name}. */
     public byte[] methods(String name) {
-        if (PeripheralCatalog.NAME.equals(name)) return PeripheralCatalog.encoded();
+        if (PeripheralCatalog.NAME.equals(name)) return PeripheralCatalog.encoded(attachedPeripherals());
         Attachment a = attached.get(name);
         if (a == null) return PeripheralValues.error("no peripheral named '" + name + "'");
         return PeripheralValues.ok(List.of(a.peripheral.getType(), new ArrayList<>(a.peripheral.getMethodNames())));

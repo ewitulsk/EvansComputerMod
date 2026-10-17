@@ -107,9 +107,22 @@ A block next to a computer that has no peripheral of its own, but has NeoForge's
   - **CC floppies:** reading CC: Tweaked's own floppies (`<world>/computercraft/disk/<id>`) when CC is installed. That needs CC in the test run, so it comes with the bridge.
   - **Size limit:** there is no per-disk size limit yet; computers have no storage quota at all.
 
+## Phase 6: a Visual Programmer catalog that follows what is attached (done)
+
+- **Describe hook:** `IPeripheral.describeMethods()` says what a peripheral's methods take and return.
+  - `AnnotatedPeripheral` gives its annotated methods.
+  - A generic peripheral gives the methods of every capability it has.
+  - A peripheral that can't say (null) gets a generic block per method: one `args` input of type `any` (typed as code, for example `1, "x"`), and an `any` result.
+- **`@catalog`** (`PeripheralCatalog.describe(attached)`) now holds three things:
+  - the registered types;
+  - the types of the peripherals attached to the computer asking, merged into the registered ones (a block with items and fluids lists its tank methods under `inventory` too);
+  - every type the server has seen attached since it started, so a program's blocks stay in the palette after its peripheral is moved away.
+- **Live palette:** the Visual Programmer checks for `peripheral` and `peripheral_detach` events every second while it is open. It then reads the catalog again and merges in new types and methods. The status line says "New peripheral blocks are in the palette."
+- **Saved programs:** a `.vpl` keeps the signatures of the peripheral blocks it uses (its `peripherals` key, in the catalog's form). Opening it adds them to the palette, so it opens, generates and packages the same program where those peripherals aren't attached.
+- **Scenario:** `visual_live_catalog` (`ecm_visual`), with a Create Basin.
+
 ## Later phases
 
-1. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present).
-2. A Visual Programmer peripheral catalog that learns peripheral types at runtime.
+1. An optional CC peripheral bridge (`compat/computercraft`, compile-only, only loaded when CC is present), with reading CC's own floppies. It waits on downloading CC: Tweaked's jars for the build and the test runs. The bridge fills `describeMethods` by reflecting on `@LuaFunction` methods.
 
-Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2), `generic_chests` and `generic_tanks` (phase 3), `floppy_disks` (phase 4). Render check: `-ClientChecks -ClientSuite disks`.
+Tests: TESTING.md, "Console programs". Scenarios (all in `ecm_console`): `cc_lua` and `console_python` (phase 1), `cc_world` and `console_world` (phase 2), `generic_chests` and `generic_tanks` (phase 3), `floppy_disks` (phase 4); `visual_live_catalog` (phase 6, `ecm_visual`). Render check: `-ClientChecks -ClientSuite disks`.

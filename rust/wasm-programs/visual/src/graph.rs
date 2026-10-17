@@ -268,6 +268,12 @@ impl Graph {
         if let Some(l) = &self.layout {
             root.push(("layout".into(), Json::Str(l.clone())));
         }
+        // The peripheral methods the program uses, so it opens (and runs)
+        // where those peripherals aren't attached.
+        let used = reg.peripherals_used(self.blocks.iter().map(|b| b.ty.as_str()));
+        if !used.is_empty() {
+            root.push(("peripherals".into(), crate::blocks::catalog_to_json(&used)));
+        }
         if let Some(a) = &self.app {
             root.push((
                 "app".into(),
