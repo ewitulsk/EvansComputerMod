@@ -73,6 +73,10 @@ pub struct ImsConfig {
     pub public_peering: bool,
     pub no_answer_ms: u64,
     pub max_expires: u32,
+    /// Carrier settings the phones get with their registration (`P-ECM-Services`):
+    /// the MMSC's URL and visual voicemail's.
+    pub mmsc_url: String,
+    pub vvm_url: String,
 }
 
 impl ImsConfig {
@@ -93,6 +97,8 @@ impl ImsConfig {
             public_peering: false,
             no_answer_ms: 30_000,
             max_expires: 3600,
+            mmsc_url: format!("http://{}:8002/mms", Addr::new(ims_ip, 0).host()),
+            vvm_url: format!("http://{}:8003/vm", Addr::new(ims_ip, 0).host()),
         }
     }
 }
@@ -561,6 +567,7 @@ impl Ims {
             h.push("Contact", format!("<{}>;expires={}", contact, expires));
             h.push("P-Associated-URI", format!("<{}>, <tel:{}>", number_uri(&msisdn, &self.cfg.domain), msisdn));
             h.push("Service-Route", format!("<sip:scscf.{};lr>", self.cfg.domain));
+            h.push("P-ECM-Services", format!("mmsc={}; vvm={}", self.cfg.mmsc_url, self.cfg.vvm_url));
         }
         h.push("Expires", expires.to_string());
         self.respond_with(&req, from, r, now);

@@ -81,6 +81,7 @@ pub struct Numbering {
     pub carrier: String,
     pub pcscf: Option<[u8; 4]>,
     pub pool: Option<([u8; 4], u8)>,
+    pub mmsc: Option<[u8; 4]>,
 }
 
 pub fn parse_num(body: &str) -> Numbering {
@@ -92,6 +93,7 @@ pub fn parse_num(body: &str) -> Numbering {
         carrier: kv("carrier"),
         pcscf: Addr::parse_ip(&kv("pcscf")),
         pool: pool.split_once('/').and_then(|(a, l)| Some((Addr::parse_ip(a)?, l.parse().ok()?))),
+        mmsc: Addr::parse_ip(&kv("mmsc")),
     }
 }
 
@@ -135,6 +137,10 @@ pub fn config(c: &std::collections::BTreeMap<String, String>, n: &Numbering) -> 
     cfg.relay_ports = (lo, hi);
     cfg.no_answer_ms = g("no_answer").parse::<u64>().map_err(|_| "no_answer is seconds")?.clamp(5, 120) * 1000;
     cfg.max_expires = g("max_expires").parse::<u32>().map_err(|_| "max_expires is seconds")?.clamp(60, 86400);
+    // carrier settings for the phones: where the MMSC and visual voicemail answer
+    let mmsc_ip = cfg.mmsc.map(|a| a.ip).or(n.mmsc).unwrap_or(cfg.ims_ip);
+    cfg.mmsc_url = format!("http://{}:8002/mms", Addr::new(mmsc_ip, 0).host());
+    cfg.vvm_url = format!("http://{}:8003/vm", Addr::new(cfg.mrf.ip, 0).host());
     cfg.peers = parse_peers(&g("peers"))?;
     cfg.public_peering = g("public_peering") == "true";
     Ok(cfg)

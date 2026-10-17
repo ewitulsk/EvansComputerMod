@@ -9,6 +9,7 @@
 //! | [`mms`] | OMA MMS encapsulation PDUs, multipart bodies, WAP push |
 //! | [`vcard`] | vCard 3.0 contacts |
 //! | [`txn`], [`dialog`] | SIP transactions over UDP, dialogs and request builders |
+//! | [`ctl`] | `telephonyd`'s control socket protocol (apps, commands, the `phone` module) |
 //! | [`ua`] | `telephonyd`: the phone's IMS client (registration, calls with media, SMS) |
 //! | [`smsc`] | `smscd`: SMSC / IP-SM-GW, store and forward, reports, short codes, WAP push |
 //! | [`mmsc`] | `mmscd`: MMS store, notifications by WAP push, group texts, MM4, the Browser fallback |
@@ -16,6 +17,7 @@
 //! | [`mrf`] | `mrfd`: voicemail, announcements, the 611 line, conference mixing |
 //! | [`ims`] | `imsd`: P/S/I-CSCF, registrar with IMS AKA, TAS, border and media relay |
 
+pub mod ctl;
 pub mod dialog;
 pub mod ims;
 pub mod mms;
