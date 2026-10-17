@@ -112,19 +112,28 @@ talk). Server operators can refuse players' voices with `microphone.playerVoices
 
 ### Proximity voice chat mods
 
-ECM never opens the microphone a second time next to a voice chat mod:
+ECM never opens the microphone a second time next to a voice chat mod, and
+never applies microphone settings of its own on top of the mod's: the mod's
+settings are the ones that apply.
 
 - **Simple Voice Chat**: ECM is a Simple Voice Chat plugin and takes the audio
-  Simple Voice Chat already captures (`ClientSoundEvent`). Simple Voice Chat
-  decides when the microphone is live (its own push-to-talk or voice
-  activation), so to talk on a Walkie-Talkie hold its PTT key *and* talk in
-  Simple Voice Chat (binding the Walkie-Talkie's PTT to Simple Voice Chat's
-  push-to-talk key, Caps Lock by default, makes that one key). Players near you still hear you through Simple Voice Chat as
-  usual; ECM doesn't change or block its audio.
+  Simple Voice Chat already captures and processes (`ClientSoundEvent`): its
+  microphone, its amplification and filters, and its push-to-talk or voice
+  activation decide when and how you are heard. Players near you still hear you
+  through Simple Voice Chat as usual; ECM doesn't change or block its audio.
 - **Plasmo Voice**: ECM is a Plasmo Voice client add-on and takes each frame
-  Plasmo Voice captures (`AudioCaptureEvent`); ECM's own push-to-talk / voice
-  activation decides what is sent to ECM. Plasmo Voice's own audio is left as
-  it is.
+  after Plasmo Voice has processed it (`AudioCaptureProcessedEvent`), only
+  while Plasmo Voice's own activation is on (you are talking in it). Plasmo
+  Voice's own audio is left as it is.
+- With either installed, Music & Sounds shows only Microphone Input (whether
+  ECM may hear you at all), "Input Device: <mod>'s settings" and the indicator;
+  ECM's Input Volume, Mic Mode and Activation Level are hidden and not used,
+  and ECM's Talk key is not used.
+- A Walkie-Talkie with no PTT key of its own uses the voice chat mod's
+  push-to-talk (Simple Voice Chat's `key.push_to_talk` once you bind it in
+  Controls, it ships unbound; Plasmo Voice's PTT hotkey), so one key talks
+  both nearby and on the radio. A key bound on the Walkie-Talkie still wins;
+  Delete on its PTT button goes back to the voice chat mod's.
 - Without either, ECM uses OpenAL capture (the OpenAL Minecraft already ships,
   so no extra native code), 48 kHz mono, opened only while needed.
 
