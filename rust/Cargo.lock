@@ -1301,6 +1301,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-lineedit"
+version = "0.1.0"
+dependencies = [
+ "ecm-vte",
+]
+
+[[package]]
+name = "ecm-man"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-net"
 version = "0.1.0"
 
@@ -1764,6 +1775,9 @@ version = "0.1.0"
 [[package]]
 name = "help"
 version = "0.1.0"
+dependencies = [
+ "ecm-man",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -2045,6 +2059,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "less"
+version = "0.1.0"
+dependencies = [
+ "ecm-man",
+]
+
+[[package]]
 name = "lexical-parse-float"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2140,6 +2161,7 @@ dependencies = [
  "ecm-console",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-radio",
  "ecm-ui",
  "ecm-ui-proto",
@@ -2239,6 +2261,13 @@ dependencies = [
  "itertools 0.11.0",
  "malachite-base",
  "malachite-nz",
+]
+
+[[package]]
+name = "man"
+version = "0.1.0"
+dependencies = [
+ "ecm-man",
 ]
 
 [[package]]
@@ -2895,6 +2924,7 @@ dependencies = [
  "ecm-console",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-radio",
  "ecm-ui",
  "ecm-ui-proto",
@@ -4048,6 +4078,7 @@ dependencies = [
  "ecm-bridge",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-lineedit",
  "ecm-net",
  "ecm-radio",
  "ecm-router",

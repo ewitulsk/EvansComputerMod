@@ -1,0 +1,72 @@
+NAME
+    ip - show and change addresses, routes and links
+
+SYNOPSIS
+    ip addr [show]
+    ip addr add <ip>/<prefix> dev <iface>
+    ip addr del <ip>/<prefix> dev <iface>
+    ip route [show]
+    ip route add <dest>/<prefix>|default [via <gw>] [dev <iface>]
+    ip route del <dest>/<prefix>|default
+    ip link [show]
+    ip link set <iface> up|down
+    ip maddr
+
+DESCRIPTION
+    ip talks to the kernel's network configuration. Changes are saved in
+    /network.cfg by the kernel, so they survive a reboot (DHCP and BGP
+    routes are learned again instead).
+
+COMMANDS
+    addr, address
+        List each interface with its index, state, MAC address and IPv4
+        address.
+
+    addr add <ip>/<prefix> dev <iface>
+        Give an interface an address.
+
+    addr del <ip>/<prefix> dev <iface>
+        Remove the interface's address (the address given is not
+        checked).
+
+    route, route show
+        The routing table. Each line shows where a destination goes
+        (via a gateway, or scope link for an attached subnet), the
+        interface, and where the route came from: proto connected,
+        static, dhcp or bgp.
+
+    route add <dest>/<prefix>|default via <gw> dev <iface>
+        Add a route. default means 0.0.0.0/0. Always give dev:
+        without it the interface with index 1 is used. Without via the
+        destination is treated as directly attached.
+
+    route del <dest>/<prefix>|default
+        Delete a route.
+
+    link, link show
+        Interfaces with state and MAC address.
+
+    link set <iface> up|down
+        Turn an interface on or off.
+
+    maddr, maddress
+        The multicast groups each interface receives (joined by
+        programs such as disco serve, plus 224.0.0.1), with the
+        matching 01:00:5e link address.
+
+FILES
+    /network.cfg
+        Saved addresses and static routes.
+
+EXAMPLES
+      ip addr
+      ip addr add 10.0.0.2/24 dev eth1
+      ip route
+      ip route add default via 10.0.0.1 dev eth1
+      ip route add 10.20.0.0/16 via 10.0.0.3 dev eth1
+      ip route del default
+      ip link set eth0 down
+      ip maddr
+
+SEE ALSO
+    ifconfig, ping, traceroute, router, networking

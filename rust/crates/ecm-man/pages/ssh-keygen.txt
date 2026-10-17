@@ -1,0 +1,25 @@
+NAME
+    ssh-keygen - make a new SSH host key for this computer
+
+SYNOPSIS
+    ssh-keygen
+
+DESCRIPTION
+    Generates a new Ed25519 host key, writes it to
+    /etc/ssh/ssh_host_ed25519_key (private) and
+    /etc/ssh/ssh_host_ed25519_key.pub (public), replacing any key there,
+    and prints its fingerprint. sshd uses this key to prove who it is;
+    restart sshd to use a new one. It takes no options.
+
+    sshd makes a host key by itself the first time, so you only need
+    ssh-keygen to replace it.
+
+FILES
+    /etc/ssh/ssh_host_ed25519_key
+    /etc/ssh/ssh_host_ed25519_key.pub
+
+EXAMPLES
+      ssh-keygen
+
+SEE ALSO
+    sshd, ssh

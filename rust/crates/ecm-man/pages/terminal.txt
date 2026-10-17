@@ -1,0 +1,58 @@
+NAME
+    terminal - the computer's text screen and what programs can do with it
+
+DESCRIPTION
+    Every computer has a text terminal: the Terminal block's screen (its
+    size comes from the display panel, 80x25 or 160x50 for example), a
+    Terminal window on the desktop or ePhone, or an SSH login. The shell
+    and every program write to it. It is a VT100/xterm-style terminal:
+    programs move the cursor, colour text and draw full-screen views
+    with ANSI escape sequences, the same ones real terminals use.
+
+    For the keys (line editing, history, Tab completion, copy and paste,
+    scrolling back) see man keys.
+
+WHAT PROGRAMS CAN USE
+      ESC[nA ESC[nB ESC[nC ESC[nD   cursor up, down, right, left
+      ESC[r;cH                      cursor to row r, column c
+      ESC[2J  ESC[K                 clear the screen / the line
+      ESC[n@  ESC[nP  ESC[nX        insert / delete / erase characters
+      ESC[nL  ESC[nM                insert / delete lines
+      ESC[t;br                      scroll only rows t to b
+      ESC[...m                      colours and styles (below)
+      ESC[?25l  ESC[?25h            hide / show the cursor
+      ESC[?1049h  ESC[?1049l        full-screen mode on / off
+      ESC[?2004h                    pastes arrive between ESC[200~
+                                    and ESC[201~
+      ESC[?7727h  ESC[?7727l        the program reads Ctrl+C itself
+      ESC[6n                        ask for the cursor: ESC[row;colR
+      ESC[18t                       ask for the size: ESC[8;rows;colst
+
+    Colours: 30-37 and 90-97 set the text colour, 40-47 and 100-107 the
+    background, 1 bold, 4 underline, 5 blink, 7 inverse, 0 resets. The
+    256-colour and true-colour forms (38;5;n and 38;2;r;g;b) work too
+    and show as the nearest of the 16 colours.
+
+    Text is UTF-8. Each character takes one cell; characters the screen
+    has no glyph for are drawn as their nearest ASCII look-alike (box
+    lines as - | +, curly quotes as straight ones) or as ?.
+
+    The size is in the COLUMNS and LINES environment variables when a
+    program starts, and ESC[18t asks for it at any time.
+
+BELL AND RESIZING
+    The bell character (Ctrl+G, BEL, \a) makes the Terminal block chime.
+    When a new display panel changes the screen's width, the text is
+    re-wrapped: lines that wrapped at the old edge are joined and wrapped
+    at the new one, the scrollback included, and the line being typed is
+    drawn again where it belongs.
+
+FULL-SCREEN PROGRAMS
+    A program that switches to full-screen mode (ESC[?1049h), like edit,
+    man and less, gets a screen of its own; the shell's text comes back
+    when it switches off or exits. While it runs, Ctrl+C and the mouse
+    wheel (as Up and Down) go to it. If a program exits without
+    switching back, the terminal switches back for it.
+
+SEE ALSO
+    keys, shell, terminal-app, edit, less

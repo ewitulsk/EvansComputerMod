@@ -1,0 +1,32 @@
+NAME
+    ssh - log in to another computer's shell over the network
+
+SYNOPSIS
+    ssh [user[:password]@]host[:port]
+
+DESCRIPTION
+    Connects to the sshd on another computer, logs in with a password
+    and opens a shell there. What you type goes to the remote shell
+    and its output appears here, until the remote side ends the
+    session or you press Ctrl+T.
+
+    The user defaults to root, the password to empty and the port to
+    22. host is an address or a name. The password is given on the
+    command line; there is no password prompt and no host key check.
+
+    On the remote computer you can use everything, including the
+    router and switch command-line interfaces.
+
+EXAMPLES
+      ssh 192.168.1.20
+      ssh alice:secret@100.65.0.10
+      ssh root@isp.v3.ring
+      ssh admin:pw@10.0.0.2:2222
+
+NOTES
+    Errors: failed to resolve (unknown name), connection failed
+    (nothing listening, or no route), authentication failed (wrong
+    user or password; see passwd on the remote computer).
+
+SEE ALSO
+    sshd, ssh-keygen, passwd, networking

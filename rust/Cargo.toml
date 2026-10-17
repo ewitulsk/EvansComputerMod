@@ -25,6 +25,8 @@ members = [
     "crates/ecm-ui",
     "crates/ecm-vte",
     "crates/ecm-console",
+    "crates/ecm-lineedit",
+    "crates/ecm-man",
     "crates/ecm-apps",
     "crates/ecm-apps-ui",
     "crates/ecm-web",
@@ -40,6 +42,8 @@ members = [
     "wasm-programs/echo",
     "wasm-programs/ls",
     "wasm-programs/help",
+    "wasm-programs/man",
+    "wasm-programs/less",
     "wasm-programs/clear",
     "wasm-programs/pwd",
     "wasm-programs/mkdir",
@@ -157,6 +161,8 @@ ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
 ecm-console = { path = "crates/ecm-console" }
+ecm-lineedit = { path = "crates/ecm-lineedit" }
+ecm-man = { path = "crates/ecm-man" }
 ecm-apps = { path = "crates/ecm-apps" }
 ecm-web = { path = "crates/ecm-web" }
 ecm-js = { path = "crates/ecm-js" }

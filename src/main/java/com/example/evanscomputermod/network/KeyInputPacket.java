@@ -83,6 +83,7 @@ public record KeyInputPacket(UUID computerId, byte displayId, byte action, short
         if (host == null) return false;
         ComputerInstance computer = ComputerTargets.instance(host);
         if (computer == null) return false;
+        computer.noteUiPlayer(player.getUUID());
         if (packet.action() == TEXT) {
             computer.handleTextEvent(packet.text());
         } else if (packet.action() >= DOWN && packet.action() <= REPEAT) {

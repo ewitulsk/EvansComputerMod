@@ -1,0 +1,60 @@
+NAME
+    python - run Python programs, or type Python interactively
+
+SYNOPSIS
+    python
+    python FILE.py
+
+DESCRIPTION
+    Python 3.11 (RustPython) for the computer, with modules for the
+    terminal, files, redstone, networking, peripherals, radios and GUI
+    apps.
+
+    Without a file python starts the interactive prompt (the REPL): type
+    a line at >>> and it runs at once; an expression's value is printed.
+    A line that ends in :, in \ or inside an open bracket continues on
+    the next line at a ... prompt. exit(), quit() or Ctrl+D on an empty
+    line leaves.
+
+    With FILE.py it runs that file and exits. The script's own path is
+    in __file__. Errors are printed as "TypeName: message".
+
+    print() and input() work on the terminal (input() shows what you
+    type). Ctrl+C or Ctrl+T stops a running program.
+
+    import finds the bundled modules below, then .py files on the
+    computer: import tools loads tools.py, import a.b loads a/b.py (or
+    a/b/__init__.py for a package), counted from the root of the
+    computer's storage.
+
+MODULES
+      shell        terminal output and input, files, redstone,
+                   sleep, upload (terminal is the same module)
+      net          interfaces, routes, DNS, ping, TCP, HTTP
+      peripheral   attached blocks and bay modules
+      sensors      lidars on a Wired Sensor Module
+      controller   Wireless Xbox Controllers
+      audio        a Speaker's sound (tones, notes, PCM)
+      radio        SDR flowgraphs: demodulators, modems, sinks
+      ui           GUI apps: windows, widgets, layout
+
+    Each module's main functions are in scripting. Lua has the same
+    modules with the same functions (see lua).
+
+FILES
+    Paths given to shell functions count from the root of the
+    computer's storage: /home/a.txt and home/a.txt are the same file.
+
+EXAMPLES
+      python
+      python /home/hello.py
+
+      >>> import shell
+      >>> shell.println("Hello")
+      >>> shell.set_redstone(shell.BACK, 15)
+
+NOTES
+    Arguments after FILE.py are ignored.
+
+SEE ALSO
+    scripting, lua, peripheral, editor, visual

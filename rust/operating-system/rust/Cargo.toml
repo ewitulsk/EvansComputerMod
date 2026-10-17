@@ -22,6 +22,8 @@ ecm-wifi = { path = "../../crates/ecm-wifi" }
 ecm-host-abi = { workspace = true }
 # The VT100 parser, shared with the GUI Terminal app.
 ecm-vte = { workspace = true }
+# The line editor, shared with the Python and Lua REPLs.
+ecm-lineedit = { workspace = true }
 
 [features]
 default = []

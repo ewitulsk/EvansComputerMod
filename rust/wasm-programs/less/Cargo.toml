@@ -1,0 +1,11 @@
+[package]
+name = "less"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "less"
+path = "src/main.rs"
+
+[dependencies]
+ecm-man = { path = "../../crates/ecm-man", default-features = false }

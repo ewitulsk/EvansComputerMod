@@ -418,12 +418,17 @@ public final class Compositor {
             case UiProto.HotkeyClaim h -> claimHotkey(c, h);
             case UiProto.PointerLock p -> pointerLock(c, p);
             case UiProto.Launch l -> {
+                if (CONSOLE_APP.equals(l.appId())) {
+                    host.showConsole();
+                    return;
+                }
                 int pid = host.launch(c.pid, l.appId(), l.args());
                 host.log("launch " + l.appId() + " from pid " + c.pid + " -> pid " + pid);
             }
             case UiProto.ClipboardSet cs -> {
                 clipboardMime = cs.mime();
                 clipboard = cs.data();
+                host.clipboardChanged(cs.mime(), cs.data());
             }
             case UiProto.ClipboardRequest cr -> {
                 // §12: only right after a paste key or a click in the app's own focused window.
@@ -1743,6 +1748,18 @@ public final class Compositor {
                     w.surface.conn.isShell()));
         }
         return out;
+    }
+
+    /** The launcher entry that goes back to the console instead of starting an app. */
+    public static final String CONSOLE_APP = "console";
+
+    /**
+     * The player's real clipboard, sent by their client right before a paste
+     * key: the paste that follows reads it.
+     */
+    public synchronized void setClipboardText(String text) {
+        clipboardMime = "text/plain;charset=utf-8";
+        clipboard = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** What the clipboard holds (tests, diagnostics), as text. */

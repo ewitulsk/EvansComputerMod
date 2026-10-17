@@ -1,0 +1,66 @@
+NAME
+    celld - the phone's cellular daemon (attaches the modem, runs wwan0)
+
+SYNOPSIS
+    celld [--phone] [--modem NAME] [--sim NAME] [--quiet]
+
+DESCRIPTION
+    The phone side of a cellular network, like wpa_supplicant for
+    Wi-Fi. celld drives the modem (an LTE or mmWave Modem module, a
+    framed radio), looks for a cell of the SIM card's carrier, proves
+    the SIM to the carrier's core, and once attached creates the
+    network interface wwan0 with the address the core gives, a default
+    route through the core and the core's DNS server. It hands over to
+    a better cell as the phone moves, keeping the address, and notices
+    the SIM being taken out, swapped or put in (every 2 seconds).
+
+    An ePhone runs celld --phone by itself while a modem and a written
+    SIM are fitted. On a Terminal start it yourself with celld &, or
+    add a line "celld &" to /services.cfg to start it at boot. Only one
+    celld runs at a time. Control and inspect it with cell.
+
+OPTIONS
+    --phone
+        Report signal bars and the carrier to the phone's status bar.
+
+    --modem NAME
+        The modem's attachment name. Default: modem in
+        /etc/celld.toml, else the first framed_radio peripheral.
+
+    --sim NAME
+        The SIM peripheral. Default: sim in the config, else
+        <modem>_sim (a Terminal modem's own SIM slot), else the first
+        sim peripheral (an ePhone's SIM tray).
+
+    -q, --quiet
+        Print less.
+
+FILES
+    /etc/celld.toml
+        Settings, key = value lines, # comments. Strings in quotes.
+        A typo is an error naming its line.
+
+          modem = "module_1"   # the modem (framed_radio)
+          sim = "sim"          # the SIM peripheral
+          carrier = "cell-red" # lock: only this carrier's SIMs
+          channels = [1, 3]    # channels to search (default all)
+          roaming = false      # data roaming
+          autoconnect = true   # false: wait for cell up
+
+    /var/log/celld.log
+        Every log line (rotated at 64 KB).
+
+    127.0.0.1:7710 (UDP)
+        The control socket cell and Settings talk to.
+
+EXAMPLES
+      celld &
+      celld --modem module_1 --sim module_1_sim &
+
+NOTES
+    Errors: "no modem: fit an LTE Modem or mmWave Modem (a
+    framed_radio) in a module bay", "can't open the control socket
+    127.0.0.1:7710 (is celld already running?)".
+
+SEE ALSO
+    cell, cellular, framed, cardtool

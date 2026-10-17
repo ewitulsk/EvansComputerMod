@@ -415,6 +415,13 @@ public final class ScenarioRun {
             throw new IllegalStateException(node + " refused the player's key");
     }
 
+    /** The player's real clipboard, as their client sends it before a paste key. */
+    public void pushClipboard(String node, String text) {
+        player().sitAt(where(node));
+        if (!player().pushClipboard(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text))
+            throw new IllegalStateException(node + " refused the player's clipboard");
+    }
+
     /** A left click at a framebuffer pixel of {@code node}'s screen. */
     public void click(String node, int x, int y) {
         player().sitAt(where(node));
@@ -493,6 +500,24 @@ public final class ScenarioRun {
     /** Where {@code node}'s terminal is now (absolute). */
     public BlockPos where(String node) {
         return moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
+    }
+
+    private final java.util.Map<String, String> notes = new java.util.HashMap<>();
+
+    /** {@code node}'s computer (to check its state), or null. */
+    public com.example.evanscomputermod.computer.ComputerInstance computer(String node) {
+        TerminalBlockEntity t = be(node);
+        return t == null ? null : t.getComputer();
+    }
+
+    /** Remember a value between steps (for a later step's check). */
+    public void note(String key, String value) {
+        notes.put(key, value);
+    }
+
+    /** A value {@link #note noted} earlier ("" if none). */
+    public String noted(String key) {
+        return notes.getOrDefault(key, "");
     }
 
     public String screen(String node) {

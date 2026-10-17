@@ -1,0 +1,35 @@
+NAME
+    registrard - the domain registrar (nic.ring): accounts, web, whois
+
+SYNOPSIS
+    registrard [-c FILE]
+
+DESCRIPTION
+    The registrar sells (for free) names under a TLD. It keeps the
+    customer accounts, serves web pages with forms at / and the
+    plain-text API at POST /api that the domain command uses, and
+    answers whois on TCP port 43. Each change is passed on to the TLD's
+    registry (registryd) over EPP-lite, logged in with this registrar's
+    id and secret.
+
+    It runs until you stop it with Ctrl+T; start it with registrard &.
+    In the Tech Villages it runs on the registrar computer at
+    100.(64+N).0.56, reached as nic.ring and whois.nic.ring.
+
+FILES
+    /etc/registrard.conf
+        One setting per line, # comments:
+
+      registry <address> <port>   the registry (required)
+      id <registrar id>           (required)
+      secret <secret>             (required)
+      port 80                     web and API port
+      tld ecm                     the TLD it sells
+      db /etc/registrar.db        the accounts
+
+EXAMPLES
+      registrard &
+      registrard -c /etc/my-registrar.conf &
+
+SEE ALSO
+    domain, whois, registryd, named, networking

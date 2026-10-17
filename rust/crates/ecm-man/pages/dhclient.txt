@@ -1,0 +1,53 @@
+NAME
+    dhclient - get an address automatically (DHCP client)
+
+SYNOPSIS
+    dhclient [-t secs] <iface>
+    dhclient -r <iface>
+    dhclient -x <iface>
+    dhclient -s <iface>
+
+DESCRIPTION
+    Starts the kernel's DHCP client on an interface and waits for a
+    lease, printing each state change. When it is bound it prints the
+    address, when it will renew, the router and the DNS server. The
+    kernel applies the leased address, the default route and the DNS
+    server (it also rewrites /etc/resolv.conf unless you edited it).
+
+    The client keeps running in the kernel after dhclient exits: it
+    renews and rebinds the lease by itself. If no lease arrives in time,
+    dhclient exits with an error but the client keeps trying in the
+    background. If the interface is already bound, dhclient only shows
+    the lease. ifconfig <iface> dhcp starts the same client without
+    waiting.
+
+OPTIONS
+    -t secs
+        How long to wait for a lease (default 15).
+
+    -r
+        Release the lease (tell the server) and stop the client.
+
+    -x
+        Stop the client without releasing.
+
+    -s
+        Show the state, the lease and when it expires, renews and
+        rebinds, the router, the DNS server and the DHCP server.
+
+FILES
+    /network.cfg
+        The line iface <iface> dhcp starts the client at boot.
+
+    /etc/resolv.conf
+        Written by the kernel with the DNS server and domain from the
+        lease.
+
+EXAMPLES
+      dhclient eth0
+      dhclient -t 30 eth1
+      dhclient -s eth0
+      dhclient -r eth0
+
+SEE ALSO
+    ifconfig, dhcpd, router, resolvectl, networking
