@@ -76,7 +76,11 @@ public class SimPeripheralTest {
         assertEquals("sim", p.getType());
         assertEquals("cellular", ProcessSandbox.peripheralPermission("sim"), "apps need the cellular permission");
         assertEquals(true, p.callMethod(null, "present", new Object[0]));
-        assertEquals(Map.of("carrier", "cell-red", "imsi", "310150000000001"), p.callMethod(null, "identity", new Object[0]));
+        // a card written before numbers (docs/TELEPHONY.md): its number is empty
+        assertEquals(Map.of("carrier", "cell-red", "imsi", "310150000000001", "number", ""), p.callMethod(null, "identity", new Object[0]));
+        SimPeripheral numbered = new SimPeripheral(SimPeripheral.ofCard(() -> new SimCard("cell-red", 310150000000001L, KEY, "+12145550142")));
+        assertEquals(Map.of("carrier", "cell-red", "imsi", "310150000000001", "number", "+12145550142"),
+                numbered.callMethod(null, "identity", new Object[0]));
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) p.callMethod(null, "respond", new Object[]{"000102030405060708090a0b0c0d0e0f"});
         assertEquals("4c455ba887affefa1448bea727baa584", r.get("res"));

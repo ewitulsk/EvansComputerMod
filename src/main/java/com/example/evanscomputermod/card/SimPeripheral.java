@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  * <pre>
  * import peripheral
  * s = peripheral.find("sim")
- * print(s.identity())                                   # {'carrier': 'cell-red', 'imsi': '310150000000001'}
+ * print(s.identity())                                   # {'carrier': 'cell-red', 'imsi': '310150000000001', 'number': '+12145550142'}
  * print(s.respond("000102030405060708090a0b0c0d0e0f"))  # {'res': '...', 'ks': '...'}
  * </pre>
  *
