@@ -101,6 +101,17 @@ public final class MicAudio {
         return new Stream();
     }
 
+    private volatile Runnable readListener;
+
+    /** Told at every read of {@code /dev/mic}, on the reader's thread (an ePhone's MIC pill). */
+    public void setReadListener(Runnable l) {
+        readListener = l;
+    }
+
+    public Runnable readListener() {
+        return readListener;
+    }
+
     // ------------------------------------------------------------ settings
 
     public synchronized int rate() { return rate; }

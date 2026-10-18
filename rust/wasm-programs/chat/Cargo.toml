@@ -12,3 +12,6 @@ ecm-host-abi = { workspace = true }
 ecm-chat = { workspace = true }
 
 ecm-disco = { workspace = true }
+# Accounts: sign in at the realm the backend trusts, pins and saved logins.
+ecm-auth = { workspace = true, features = ["host"] }
+ecm-discord = { workspace = true }

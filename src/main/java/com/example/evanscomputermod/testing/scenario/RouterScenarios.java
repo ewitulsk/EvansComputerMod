@@ -593,8 +593,9 @@ public final class RouterScenarios {
   /**
    * The chat command against a Discord backend: discordd on "server", with alice cabled to its
    * eth0 (bottom) and bob to its eth1 (top, a second LAN); alice and bob read the server from
-   * /etc/chat.conf and talk in the backend's home server #general. Control first: a port with no
-   * backend gets the "refused" fix-it hint.
+   * /etc/chat.conf, each make an account at the backend's own realm (chat --user NAME --new: the
+   * realm's fingerprint is shown and confirmed, the password typed twice) and talk in the backend's
+   * home server #general. Control first: a port with no backend gets the "refused" fix-it hint.
    */
   private static Scenario chat() {
     var b =
@@ -623,9 +624,10 @@ public final class RouterScenarios {
     b.send("alice", "chat 10.95.0.1:7778");
     b.expect("alice", "refused", "control: no Discord backend on TCP port 7778 (fix-it hint; 7778 is its voice port, UDP)");
     b.expect("alice", "/ >", "shell");
-    b.send("alice", "chat");
-    b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server and nick from /etc/chat.conf)");
-    b.send("bob", "chat");
+    b.note("Accounts are required: each makes one at the backend's own realm with chat --user NAME --new (server from /etc/chat.conf)");
+    DiscordScenarios.chatSignUp(b, "alice", "chat --user alice --new", "alice");
+    b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server from /etc/chat.conf, name from her account)");
+    DiscordScenarios.chatSignUp(b, "bob", "chat --user bob --new", "bob");
     b.expect("bob", "\\*\\*\\* Joined .* as bob", "bob joined");
     b.send("alice", "hello bob");
     b.expect("bob", "<alice> hello bob", "bob sees alice's message with a timestamp");
@@ -1297,15 +1299,23 @@ public final class RouterScenarios {
       s.await(ispShows(far, "show ip route", "^10\\.200\\." + a + "\\.0/24 via .* Bgp", null),
           "village " + far + ", across the ring, routes to the tap's LAN", 20_000);
       s.note("From the tap's LAN PC: the villages' web sites and the ring's chat");
-      s.send("pc", "curl http://100." + (64 + b) + ".0.10/");
+      s.send("pc", "curl http://100." + (64 + b) + ".0.10/ | grep h1"); // the page is longer than the screen
       s.expect("pc", "<h1>Tech Village " + b + "</h1>", "village " + b + "'s site");
       s.expect("pc", "/ >", "shell");
-      s.send("pc", "curl http://100.65.0.10/");
+      s.send("pc", "curl http://100.65.0.10/ | grep h1");
       s.expect("pc", "<h1>Tech Village 1</h1>", "village 1's site, across the ring");
       s.expect("pc", "/ >", "shell");
-      s.sendFn("pc", r -> "chat " + WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage()) + " --nick tapper",
-          "chat 100.(64+K).0.20 --nick tapper   (K: the chat village, /ecm techvillage info)");
-      s.expect("pc", "\\*\\*\\* Joined", "joined the ring's chat");
+      // Accounts are required: tapper makes one on the ring's Auth server (first contact: this
+      // PC isn't a village computer, so chat shows the realm's fingerprint and asks).
+      s.sendFn("pc", r -> "chat --user tapper --new " + WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage()),
+          "chat --user tapper --new 100.(64+K).0.20   (K: the chat village, /ecm techvillage info)");
+      s.expect("pc", "Trust it and sign in\\? \\[y/N\\]", "chat names the ring's Auth server and its fingerprint, and asks", "^chat: (?!connecting)");
+      s.send("pc", "y");
+      s.expect("pc", "Password for tapper at ", "chat asks for a password", "^chat: (?!connecting)");
+      DiscordScenarios.typeSecret(s, "pc", DiscordScenarios.PASSWORD);
+      s.expect("pc", "Password again:", "and again");
+      DiscordScenarios.typeSecret(s, "pc", DiscordScenarios.PASSWORD);
+      s.expect("pc", "\\*\\*\\* Joined", "signed up and joined the ring's chat");
       s.send("pc", "hello from the tap");
       s.await(
           r -> {
@@ -1313,9 +1323,9 @@ public final class RouterScenarios {
             var d = WorldNetwork.get(level);
             var host = ComputerHost.get(level.getServer(), d.identity(level, d.chatVillage(), WorldNetwork.CHAT));
             String log = host.instance() == null ? "" : ScenarioRun.screen(host.headlessDisplay());
-            return log.contains("tapper joined from 10.200." + a + ".10") ? null : "discordd log:\n" + log;
+            return log.contains("tapper signed in from 10.200." + a + ".10") ? null : "discordd log:\n" + log;
           },
-          "the chat server saw tapper join from 10.200." + a + ".10 (no NAT: the tap's own prefix is routed)",
+          "the chat server saw tapper sign in from 10.200." + a + ".10 (no NAT: the tap's own prefix is routed)",
           15_000);
       s.send("pc", "/quit");
       s.expect("pc", "\\*\\*\\* bye", "left the chat");

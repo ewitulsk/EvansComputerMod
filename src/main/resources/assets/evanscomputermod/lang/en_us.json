@@ -61,6 +61,7 @@
   "message.evanscomputermod.airpods.stored": "AirPods back in the case",
   "key.categories.evanscomputermod.voice": "Evans Computer Mod: Voice",
   "key.evanscomputermod.talk": "Talk (microphone push-to-talk)",
+  "key.evanscomputermod.airpods.tap": "Tap AirPods (twice: play / pause)",
   "evanscomputermod.voice.mic_off_hint": "Microphone input is off: turn it on in Mods > Evans Computer Mod > Config",
   "evanscomputermod.configuration.microphoneInput": "Microphone input",
   "evanscomputermod.configuration.microphoneInput.tooltip": "Let the mod hear you through your microphone (Microphone blocks, ePhone microphones, handheld radio push-to-talk). Off: your microphone is never opened.",

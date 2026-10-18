@@ -175,6 +175,18 @@ public final class Headsets {
         h.link.sendMic(pcm, MIC_RATE);
     }
 
+    /**
+     * The player double-tapped their AirPods (the client's "Tap AirPods" key, pressed twice):
+     * the earbuds send a button frame to their phone over Bluetooth. False when they wear
+     * none, or they aren't connected.
+     */
+    public static boolean tap(ServerPlayer player, int gesture) {
+        for (Headset h : HEADSETS.values()) {
+            if (h.worn && h.wearer == player) return h.link.tap(gesture);
+        }
+        return false;
+    }
+
     // ------------------------------------------------------------------ queries
 
     /** Who wears the AirPods with this address (the phone's microphone is theirs while routed), or null. */

@@ -37,6 +37,7 @@
 //! lines), else the first speaker / microphone.
 
 pub mod adpcm;
+pub mod mixer;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -93,7 +94,41 @@ fn parse_status(text: &str) -> Vec<(String, i64)> {
         .collect()
 }
 
-/// An open speaker.
+/// Who a speaker stream is for (`/dev/audioctl role`): while a stream carries sound,
+/// every stream with a lower role is ducked (`Media < Voice < Phone`). A Discord call is
+/// `Voice`; cellular calls and ringtones are `Phone`; music and everything else `Media`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Role {
+    #[default]
+    Media,
+    Voice,
+    Phone,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Media => "media",
+            Role::Voice => "voice",
+            Role::Phone => "phone",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Role> {
+        match s {
+            "media" => Some(Role::Media),
+            "voice" => Some(Role::Voice),
+            "phone" => Some(Role::Phone),
+            _ => None,
+        }
+    }
+}
+
+/// The name PLATFORM_API.md uses for an open speaker stream.
+pub type Speaker = Device;
+
+/// An open speaker: one stream on its mixer (each open is its own stream, with its own
+/// format, clock and role).
 pub struct Device {
     pcm: File,
     ctl: File,
@@ -131,6 +166,16 @@ impl Device {
 
     pub fn set_volume(&mut self, volume: u8) -> io::Result<()> {
         self.control(&format!("volume {}", volume))
+    }
+
+    /// This stream's role (ducking order `Media < Voice < Phone`).
+    pub fn set_role(&mut self, role: Role) -> io::Result<()> {
+        self.control(&format!("role {}", role.as_str()))
+    }
+
+    /// A louder, higher-role stream lowers this one right now.
+    pub fn ducked(&mut self) -> bool {
+        self.stat("ducked").ok().flatten() == Some(1)
     }
 
     /// How much audio may queue before writes wait (ms).
@@ -175,6 +220,12 @@ impl Device {
     /// One counter from [`status`](Self::status), e.g. `"buffered_ms"`.
     pub fn stat(&mut self, key: &str) -> io::Result<Option<i64>> {
         Ok(self.status()?.into_iter().find(|(k, _)| k == key).map(|(_, v)| v))
+    }
+
+    /// When a sample written now would play, on the display clock (microseconds, the clock of
+    /// `ecm_ui` `now_us` and `CommitAt`): the end of what is queued, or now when idle.
+    pub fn next_pts_us(&mut self) -> Option<i64> {
+        self.stat("pts_us").ok().flatten()
     }
 }
 

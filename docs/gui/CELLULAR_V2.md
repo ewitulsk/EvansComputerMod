@@ -996,7 +996,7 @@ with its pinned key), Chat's page (Verified publisher), Install (the chat villag
 `.pkg-origin` says verified publisher), Open, an empty connect form that says where the address is, the ring's chat
 server and a nickname, Connect, Allow, a message that the chat server logs. The tech client suite then has the real
 player take a second display phone and photographs its App Store (`store_phone_app_store`: Chat, Verified publisher,
-Install) and Repositories page (`store_phone_repos`).
+Install) and Repositories page (`store_phone_repos`). Since accounts (docs/AUTH.md) the App Store's count is any "N apps from 1 repository" (Music too), and Discord opens on the account screen of the Data Center's Auth server (the store phone has its key pinned): the player taps "No account yet? Create one", types `shopper` and the password twice, Enter, and the backend logs "shopper signed in from" before #general.
 
 Measured (seed 73198425, `tech-client-20261012-120524`, chat village 4, repository `http://100.68.0.21:8080/`): the
 list was there when the App Store opened; Install of the 674 KB package over LTE from village 2 to village 4 took

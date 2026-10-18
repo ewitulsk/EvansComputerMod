@@ -1,8 +1,9 @@
 NAME
-    settings - the Settings app: Wi-Fi, cellular, display, theme, apps
+    settings - the Settings app: Wi-Fi, cellular, sound, mixer, apps
 
 SYNOPSIS
-    settings [wifi|cellular|display|appearance|apps|about]
+    settings [wifi|cellular|display|appearance|apps|sound|mixer|
+              bluetooth|about]
 
 DESCRIPTION
     Opens the Settings window on a section (Wi-Fi if none is given).
@@ -27,7 +28,16 @@ SECTIONS
     Sound
         The speakers and microphones attached: pick the default ones
         (written to /etc/sound.conf), their volume and gain, and a live
-        input level meter.
+        input level meter. Volume Mixer opens the Mixer section.
+
+    Mixer
+        The Volume Mixer (see mixer): a master strip per speaker
+        (volume, Mute, level meter), a strip per app that has played
+        sound (volume 0-150 %, Mute, Reset, a live meter, a ducked
+        badge while a call lowers it, and with several speakers the
+        speaker it plays on: Default or a side), and each microphone's
+        gain and level. It follows the sound twice a second while it is
+        shown. A change Settings is not allowed to make says so.
 
     Bluetooth
         On an ePhone: paired and nearby devices (AirPods) with Pair,
@@ -53,8 +63,8 @@ SECTIONS
     About
         The UI protocol version, shell, theme and panel.
 
-    Section names on the command line may also be wi-fi, cell, theme or
-    permissions.
+    Section names on the command line may also be wi-fi, cell, theme,
+    permissions, volume or bt.
 
 FILES
     /etc/ui.toml
@@ -70,4 +80,4 @@ EXAMPLES
       gui launch settings apps
 
 SEE ALSO
-    gui, desktop, wifi, cell, pkg, phone-guide
+    gui, desktop, wifi, cell, pkg, mixer, phone-guide

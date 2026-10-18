@@ -9,7 +9,13 @@
 //!   "Refresh N" every fourth tick and on the first tick of a refresh wake
 //!   (a gap in wall time its own clock didn't see).
 //! * `...tone`: plays a 440 Hz square wave on `/dev/audio` (8 kHz, 8-bit,
-//!   half-second writes) for as long as it runs.
+//!   half-second writes) for as long as it runs (the `audio` mode starts by itself).
+//! * `...voice`: a call: says `BackgroundMode{call, on}`, then plays a louder 660 Hz tone as a
+//!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off; holds a
+//!   wake lock (`ui.wakelock`, renewed every 2 s) so the call runs on in the hotbar or a pocket.
+//! * `...wake`: like a chat app, keeps a TCP connection to its server, port 7999 on the
+//!   `.1` address of its Wi-Fi subnet, as a wake socket (SO_ECM_WAKE), and posts a
+//!   notification "Wake: <line>" for every line the server sends.
 //!
 //! Every mode writes its count to `$ECM_APP_DATA/count` on each tick, so a
 //! test can watch it without the GUI.
@@ -50,6 +56,8 @@ fn main() {
     let title = match mode.as_str() {
         "refresh" => "Refresh",
         "tone" => "Tone",
+        "voice" => "Voice",
+        "wake" => "Wake",
         _ => "Counter",
     };
     let win = core.create_window(title, Content::Static(label("")));
@@ -57,15 +65,28 @@ fn main() {
         core.claim_hotkey(1, "Bump");
     }
     let mut audio = None;
-    if mode == "tone" {
+    if mode == "tone" || mode == "voice" {
+        let role = if mode == "voice" { "role voice\n" } else { "" };
         if let Ok(mut ctl) = std::fs::OpenOptions::new().write(true).open("/dev/audioctl") {
-            let _ = ctl.write_all(b"rate 8000\nbits 8\nchannels 1\nlatency 500\n");
+            let _ = ctl.write_all(format!("rate 8000\nbits 8\nchannels 1\nlatency 500\n{role}").as_bytes());
         }
         audio = std::fs::OpenOptions::new().write(true).open("/dev/audio").ok();
         println!("phonetest: audio {}", if audio.is_some() { "open" } else { "unavailable" });
+        if mode == "voice" {
+            core.background_mode("call", true);
+        }
     }
-    // Half a second of a 440 Hz square wave, 8-bit unsigned at 8 kHz.
-    let tone: Vec<u8> = (0..4000).map(|i| if (i * 440 / 4000) % 2 == 0 { 0xa0 } else { 0x60 }).collect();
+    let mut wake_sock = -1;
+    let mut conns: Vec<(i32, Vec<u8>)> = Vec::new();
+    // The connection opens after the window is drawn (the network prompt comes up over it).
+    let mut wake_pending = mode == "wake";
+    // Half a second of a square wave, 8-bit unsigned at 8 kHz: 440 Hz for tone, 660 Hz and louder for voice.
+    let (hz, hi, lo) = if mode == "voice" { (660, 0xe0u8, 0x20u8) } else { (440, 0xa0, 0x60) };
+    let tone: Vec<u8> = (0..4000).map(|i| if (i * hz / 4000) % 2 == 0 { hi } else { lo }).collect();
+    let quiet = vec![0x80u8; 4000];
+    let mut burst = 0u64;
+    // Wall time: the app's own clock stops while it is paused between background slices.
+    let mut last_lock: Option<std::time::SystemTime> = None;
     let mut last = Instant::now();
     let mut last_wall = std::time::SystemTime::now();
     loop {
@@ -74,7 +95,12 @@ fn main() {
         if core.render().is_err() {
             break;
         }
-        let timeout = if audio.is_some() { 0 } else { 100 };
+        // Drawn (rendered after its first configure): now the connection, whose network prompt comes up over the window.
+        if wake_pending && core.windows.iter().any(|w| w.configured) {
+            wake_pending = false;
+            open_wake(&mut wake_sock);
+        }
+        let timeout = if audio.is_some() { 0 } else if wake_sock >= 0 { 50 } else { 100 };
         let events = match core.step(timeout) {
             Ok(e) => e,
             Err(_) => break,
@@ -93,10 +119,65 @@ fn main() {
                 _ => {}
             }
         }
+        if mode == "voice" && last_lock.is_none_or(|t| t.elapsed().map_or(true, |d| d >= Duration::from_secs(2))) {
+            // Refused until the call mode is on (the first try may come first): renewed anyway.
+            let r = ecm_ui::wakelock(10_000);
+            if last_lock.is_none() {
+                println!("phonetest: wakelock {}", r.err().unwrap_or_else(|| "ok".into()));
+            }
+            last_lock = Some(std::time::SystemTime::now());
+        }
         if let Some(a) = audio.as_mut() {
-            // Blocks until the speaker has room: paced by its clock.
-            if a.write_all(&tone).is_err() {
+            // Blocks until the speaker has room: paced by its clock. A voice talks in 1 s bursts.
+            burst += 1;
+            let talk = mode != "voice" || (burst / 2) % 2 == 0;
+            if a.write_all(if talk { &tone } else { &quiet }).is_err() {
                 audio = None;
+            }
+        }
+        if wake_sock >= 0 {
+            use ecm_host_abi::socket::{self, PollFd, POLLIN};
+            if conns.is_empty() {
+                conns.push((wake_sock, Vec::new()));
+            }
+            let mut buf = [0u8; 512];
+            let mut lines = Vec::new();
+            conns.retain_mut(|(c, pending)| {
+                let mut f = [PollFd { fd: *c, events: POLLIN, revents: 0 }];
+                socket::poll(&mut f, 0);
+                if f[0].revents == 0 {
+                    return true;
+                }
+                let n = socket::recv(*c, &mut buf, socket::MSG_DONTWAIT);
+                if n == -2 {
+                    return true;
+                }
+                if n <= 0 {
+                    socket::close(*c);
+                    return false;
+                }
+                pending.extend_from_slice(&buf[..n as usize]);
+                while let Some(i) = pending.iter().position(|&b| b == b'\n') {
+                    let l: Vec<u8> = pending.drain(..=i).collect();
+                    lines.push(String::from_utf8_lossy(&l).trim().to_string());
+                }
+                true
+            });
+            if conns.is_empty() {
+                wake_sock = -1; // the server hung up
+            }
+            for text in lines {
+                println!("phonetest: wake line '{text}'");
+                core.send(Message::Notify(proto::Notify {
+                    tag: "wake".into(),
+                    title: format!("Wake: {text}"),
+                    body: "arrived on a wake socket".into(),
+                    icon: String::new(),
+                    actions: Vec::new(),
+                }));
+                let _ = core.flush();
+                // Done with what woke us: the refresh window may end now.
+                core.send(Message::BackgroundDone(proto::BackgroundDone));
             }
         }
         if last.elapsed() >= Duration::from_millis(250) {
@@ -117,6 +198,40 @@ fn main() {
                 }));
             }
         }
+    }
+}
+
+/// The wake probe's server: port 7999 at the `.1` address of the wlan0 subnet.
+fn server_ip() -> Option<[u8; 4]> {
+    for i in 0..ecm_host_abi::net_config::iface_count() {
+        let info = ecm_host_abi::net_config::iface_info(i)?;
+        if !info.contains("\"name\":\"wlan0\"") {
+            continue;
+        }
+        let ip = info.split("\"ip\":\"").nth(1)?.split('"').next()?;
+        let mut o: Vec<u8> = ip.split('.').filter_map(|p| p.parse().ok()).collect();
+        if o.len() != 4 || o == [0, 0, 0, 0] {
+            return None;
+        }
+        o[3] = 1;
+        return Some([o[0], o[1], o[2], o[3]]);
+    }
+    None
+}
+
+/// The wake probe's connection to its server, marked SO_ECM_WAKE.
+fn open_wake(wake_sock: &mut i32) {
+    use ecm_host_abi::socket;
+    let Some(ip) = server_ip() else {
+        println!("phonetest: no wlan0 address");
+        return;
+    };
+    let fd = socket::socket(socket::AF_INET, socket::SOCK_STREAM, 0);
+    if fd >= 0 && socket::connect(fd, &socket::SockAddrIn::from_ip_port(ip, 7999)) == 0 {
+        println!("phonetest: connected to {}.{}.{}.{}:7999 ({})", ip[0], ip[1], ip[2], ip[3], if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
+        *wake_sock = fd;
+    } else {
+        println!("phonetest: can't connect to the server");
     }
 }
 

@@ -43,11 +43,11 @@ public record AppManifest(
 
     public static final int MAX_ID = 128;
     public static final List<String> SIZES = List.of("compact", "medium", "wide");
-    public static final List<String> BACKGROUND_MODES = List.of("audio", "radio", "transfer", "navigation");
+    public static final List<String> BACKGROUND_MODES = List.of("audio", "call", "radio", "transfer", "navigation");
     /** Plain permission names (besides {@code peripherals:<type>} and {@code background:<mode>}). */
     public static final List<String> PERMISSIONS = List.of(
             "network", "radio", "cellular", "controller", "microphone", "location", "notifications",
-            "files:documents", "files:all", "packages");
+            "files:documents", "files:all", "packages", "mixer");
     private static final Set<String> KNOWN_KEYS = Set.of(
             "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background",
             "open_with", "hotkeys", "icon");
@@ -226,7 +226,7 @@ public record AppManifest(
                 modes = strList("background", bg.get("modes"));
                 for (String m : modes) {
                     if (!BACKGROUND_MODES.contains(m)) {
-                        throw new ManifestException("background", "unknown mode '" + m + "' (audio, radio, transfer, navigation)");
+                        throw new ManifestException("background", "unknown mode '" + m + "' (audio, call, radio, transfer, navigation)");
                     }
                 }
             }

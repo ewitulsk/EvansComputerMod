@@ -32,11 +32,16 @@ import java.util.Arrays;
  *   <li>{@code CTRL}: microphone wanted (1/0), battery %, worn (1/0). Both ends send it as the link's
  *       keep-alive.</li>
  *   <li>{@code DISCONNECT}: nothing.</li>
+ *   <li>{@code BUTTON} (headset to phone): the gesture ({@link #GESTURE_DOUBLE_TAP}): the phone plays or
+ *       pauses its media session.</li>
  * </ul>
  */
 public record BtFrame(Type type, long from, long to, byte[] body) {
 
-    public enum Type { ADV, PAIR_REQ, PAIR_RSP, CONNECT_REQ, CONNECT_RSP, AUDIO, MIC, CTRL, DISCONNECT }
+    public enum Type { ADV, PAIR_REQ, PAIR_RSP, CONNECT_REQ, CONNECT_RSP, AUDIO, MIC, CTRL, DISCONNECT, BUTTON }
+
+    /** A double-tap on an earbud (play / pause). */
+    public static final int GESTURE_DOUBLE_TAP = 1;
 
     public static final int HEADER = 16;
     public static final int FLAG_PAIRABLE = 1, FLAG_CONNECTABLE = 2;
@@ -179,6 +184,15 @@ public record BtFrame(Type type, long from, long to, byte[] body) {
     public Ctrl ctrl() {
         if (type != Type.CTRL || body.length < 3) return null;
         return new Ctrl(body[0] == 1, body[1] & 255, body[2] == 1);
+    }
+
+    public static BtFrame button(long from, long to, int gesture) {
+        return new BtFrame(Type.BUTTON, from, to, new byte[] {(byte) gesture});
+    }
+
+    /** The gesture of a BUTTON frame, or -1. */
+    public int gesture() {
+        return type == Type.BUTTON && body.length >= 1 ? body[0] & 255 : -1;
     }
 
     // ------------------------------------------------------------------ addresses

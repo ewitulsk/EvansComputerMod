@@ -45,6 +45,10 @@ pub const SOL_SOCKET: i32 = 1;
 pub const SO_REUSEADDR: i32 = 2;
 pub const SO_RCVTIMEO: i32 = 20;
 pub const SO_SNDTIMEO: i32 = 21;
+/// ECM's own option (level [SOL_SOCKET], an int 0/1): data arriving on the socket wakes the
+/// app that owns it while it is suspended, so a message notifies at once (docs/gui/APPS.md
+/// "Wake sockets"; it needs `background:refresh`).
+pub const SO_ECM_WAKE: i32 = 0x4543;
 pub const IPPROTO_IP: i32 = 0;
 pub const IP_TTL: i32 = 2;
 /// IPv4 multicast options (Linux numbering); see [`join_group`] and friends.
@@ -351,6 +355,11 @@ pub fn recvfrom(fd: i32, buf: &mut [u8], flags: i32, addr: &mut SockAddrIn) -> i
             &mut addr_len as *mut i32 as i32,
         )
     }
+}
+
+/// Mark a socket as a wake socket ([SO_ECM_WAKE]): 0 on success.
+pub fn set_wake(fd: i32, on: bool) -> i32 {
+    setsockopt(fd, SOL_SOCKET, SO_ECM_WAKE, &(on as i32).to_le_bytes())
 }
 
 /// Set a socket option.

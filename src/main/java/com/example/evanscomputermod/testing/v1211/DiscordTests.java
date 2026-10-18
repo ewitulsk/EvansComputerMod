@@ -45,5 +45,17 @@ public final class DiscordTests {
     public static void discord_voice(GameTestHelper h) {
         TestDriver.scenario(h, NS, DiscordScenarios.ALL.get("discord_voice"), true, DiscordTests::keepTicking);
     }
+
+    /** Accounts: the Auth server reinstalled with a new key; Discord and chat refuse it until the old pin is removed by hand. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".auth_pinned_key")
+    public static void auth_pinned_key(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.AuthScenarios.ALL.get("auth_pinned_key"), true, DiscordTests::keepTicking);
+    }
+
+    /** Accounts: one Auth server for two backends (one sign-up), another realm asks again, Music keeps its own login. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".auth_shared_realm")
+    public static void auth_shared_realm(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.AuthScenarios.ALL.get("auth_shared_realm"), true, DiscordTests::keepTicking);
+    }
 }
 //?}

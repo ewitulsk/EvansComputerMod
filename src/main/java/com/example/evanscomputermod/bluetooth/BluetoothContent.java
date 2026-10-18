@@ -40,13 +40,16 @@ public final class BluetoothContent {
                         BluetoothPeripheral.class)));
         modBus.addListener(BluetoothContent::onPayloads);
         NeoForge.EVENT_BUS.addListener(Headsets::onServerTick);
-        if (FMLEnvironment.dist.isClient()) com.example.evanscomputermod.bluetooth.client.BluetoothClient.register();
+        if (FMLEnvironment.dist.isClient()) com.example.evanscomputermod.bluetooth.client.BluetoothClient.register(modBus);
     }
 
     private static void onPayloads(RegisterPayloadHandlersEvent e) {
         var r = e.registrar("1");
         r.playToClient(BluetoothPackets.EarAudio.TYPE, BluetoothPackets.EarAudio.STREAM_CODEC,
                 (p, ctx) -> ctx.enqueueWork(() -> com.example.evanscomputermod.speaker.client.EarbudsAudioClient.onAudio(p)));
+        r.playToServer(BluetoothPackets.Tap.TYPE, BluetoothPackets.Tap.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.server.level.ServerPlayer sp) Headsets.tap(sp, p.gesture());
+        }));
     }
 }
 //?}

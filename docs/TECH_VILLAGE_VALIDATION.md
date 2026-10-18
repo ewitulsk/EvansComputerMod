@@ -158,8 +158,9 @@ What the new checks prove:
   the fiber (without a panel) is not connected.
 * **Data Center and chat.** Every village's web server serves the new page at `/`; two
   data center servers five ASes apart, and in the client suite two house PCs in
-  different villages, chat through the chat server over BGP with the server and nick
-  from `/etc/chat.conf`; `/who`, `/quit` and the "refused" fix-it hint work.
+  different villages, each make an account (`chat --user vN-house1 --new`; the village realm
+  is pinned on every village computer) and chat through the chat server over BGP with the
+  server from `/etc/chat.conf`; `/who`, `/quit` and the "refused" fix-it hint work.
 * **One instance per computer.** A block entity that loads while its headless
   infrastructure computer is booting or running adopts that instance instead of
   starting a second one, and a closing stray instance can no longer unregister the live

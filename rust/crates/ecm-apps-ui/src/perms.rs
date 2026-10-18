@@ -22,6 +22,7 @@ pub fn describe(permission: &str) -> PermText {
         "cellular" => t("Use the cellular modem", "Talk to the modem directly (calls on its own data plan)."),
         "controller" => t("Use wireless controllers", "Read the paired wireless controllers."),
         "microphone" => t("Use the microphone", "Hear and record sound through the microphones (/dev/mic)."),
+        "mixer" => t("Change the Volume Mixer", "Change the Volume Mixer: other apps' volumes and speakers."),
         "location" => t("Know where you are", "Read the phone's position and heading."),
         "notifications" => t("Show notifications", "Post notifications on the desktop or phone."),
         "files:documents" => t("Read and change your documents", "Every file in /home."),

@@ -12,3 +12,5 @@ path = "src/main.rs"
 ecm-host-abi = { workspace = true }
 ecm-discord = { workspace = true }
 ecm-disco = { workspace = true }
+# Accounts: the backend key, token checks, and the local realm (--auth local).
+ecm-auth = { workspace = true, features = ["host"] }

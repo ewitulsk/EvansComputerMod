@@ -64,6 +64,11 @@ public final class PhoneBluetooth {
         return link;
     }
 
+    /** Where the connected headset's buttons go (a double-tap plays or pauses the phone's media). */
+    public void setButtonSink(PhoneLink.ButtonSink sink) {
+        link.setButtonSink(sink);
+    }
+
     /** One server tick, with the phone's antenna at {@code pose}; {@code micWanted}: a program reads /dev/mic. */
     public void tick(Pose pose, boolean micWanted) {
         var medium = RadioMediumHooks.medium();

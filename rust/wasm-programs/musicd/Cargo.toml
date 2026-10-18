@@ -1,0 +1,19 @@
+[package]
+name = "musicd"
+version = "0.1.0"
+edition = "2021"
+description = "musicd: the music backend (library, search, playlists, streaming, cover art) for the Music app."
+
+[lib]
+name = "musicd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "musicd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-auth = { path = "../../crates/ecm-auth", features = ["host"] }
+ecm-disco = { workspace = true }
+ecm-music = { workspace = true }

@@ -51,6 +51,9 @@ public class UiGoldenTest {
             "settings_bluetooth",
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
+            // Background apps: the sheet's mixer expanded (per-app strips, microphone), the first-time
+            // background prompt, and the desktop's tray with the Volume Mixer popup (record_app_sessions).
+            "phone_mixer", "phone_background", "desktop_tray",
             // P4: the App Store at compact / medium / wide (record_store_sessions in ecm-apps-ui), picker, chooser.
             "store_compact", "store_medium", "store_wide", "picker_save", "chooser",
             // The Visual Programmer (record_visual_sessions in visual): program canvas and palette, a block's info popup.

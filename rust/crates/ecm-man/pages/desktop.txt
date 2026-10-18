@@ -12,8 +12,27 @@ DESCRIPTION
 
     The taskbar holds the Apps button (the launcher), one button per
     open window (click to focus it, click the focused one to minimize
-    it), Wi-Fi bars (a click opens Settings on Wi-Fi), cellular bars
-    when a modem is fitted, and the clock (HH:MM).
+    it), the tray, Wi-Fi bars (a click opens Settings on Wi-Fi),
+    cellular bars when a modem is fitted, and the clock (HH:MM).
+
+    The tray shows an icon for each app that is working in the
+    background (in a call, playing audio, a radio, a download,
+    navigation; a dot marks it) and for each app whose window you hid
+    there. Closing the window of such an app (the close button, Close
+    in the title bar's menu, or Alt+F4) hides it to the tray instead of
+    quitting it, so the call or the music goes on. Other apps close as
+    usual. Click a tray icon to show its window again; right-click it
+    for Open and Quit (Quit closes its windows, and the app ends).
+
+    The speaker icon in the tray (when the computer has a speaker)
+    opens the Volume Mixer: Now Playing for each app that plays
+    something (title, artist, progress, and Previous, Play or Pause,
+    Next), a master slider and Mute for each speaker, a strip per app
+    (a slider from 0 to 150 %, Mute, a level meter, a "ducked" badge
+    while a call lowers it, and with several speakers a button that
+    picks which speaker it plays on), and the microphone's gain with its
+    level. It is read twice a second while open; click the speaker
+    again or outside it to close it.
 
     The launcher's Console item goes back to the console (the GUI keeps
     running; gui show or Ctrl+Alt+Backspace returns). The launcher lists
@@ -34,7 +53,13 @@ DESCRIPTION
     seconds; clicking one (or one of its actions) passes it to the app.
     When an app asks for a permission, a dialog asks "Allow <app> to use
     <permission>?", says what the permission covers, and offers
-    "Remember my choice", Deny and Allow.
+    "Remember my choice", Deny and Allow. The first time an app wants to
+    keep working in the background it asks "Keep <app> running in the
+    background for calls?" (or audio, radio, downloads, navigation)
+    with Don't allow and Allow; that answer is always remembered.
+
+    At its first start the desktop opens again the apps that were
+    running when the computer last shut down (not after a restart).
 
 OPTIONS
     --launch PROGRAM[:ARG:ARG...]
@@ -44,8 +69,8 @@ OPTIONS
 
     --restart
         Given by the GUI when it restarts the shell after a crash: the
-        open windows get their title bars back and the --launch programs
-        are not started a second time.
+        open windows get their title bars back and neither the --launch
+        programs nor the last session's apps are started a second time.
 
 KEYS
     Alt+Tab
@@ -53,7 +78,8 @@ KEYS
         on; the choice is focused a moment after the last press.
 
     Alt+F4
-        Close the focused window.
+        Close the focused window (hide it to the tray if its app is
+        working in the background).
 
     Ctrl+Esc
         Open the launcher.
@@ -66,6 +92,9 @@ FILES
         arguments, for example:
 
       shell_args = ["--launch", "terminal", "--launch", "files:/home"]
+
+    /dev/mixer
+        The Volume Mixer the tray's popup reads and changes.
 
 SEE ALSO
     gui, settings, terminal-app, files, editor, store, phone

@@ -325,6 +325,13 @@ public final class Compositor {
         c.resources.clear();
         conns.remove(c.id);
         hotkeyClaims.remove(c.id);
+        MediaEntry ended = media.remove(c.id);
+        if (ended != null) {
+            UiProto.MediaInfo none = new UiProto.MediaInfo(ended.info().title(), ended.info().artist(), ended.info().album(), 0, 0,
+                    new byte[0], UiProto.MediaState.NONE, 0, 0, List.of());
+            if (shell != null && c != shell) shell.queue(new UiProto.MediaSessionChanged(ended.pid(), ended.appId(), none));
+            host.mediaSessionChanged(ended.pid(), ended.appId(), none);
+        }
         c.markClosed(reason);
         if (reason != null) host.log("closed UI connection of pid " + c.pid + ": " + reason.code.wireName + ": " + reason.getMessage());
         if (c == shell) {
@@ -347,10 +354,10 @@ public final class Compositor {
             Opcode.REQUEST_FRAME, Opcode.TREE_OPS, Opcode.RESOURCE_CREATE, Opcode.RESOURCE_DESTROY, Opcode.HOTKEY_CLAIM,
             Opcode.POINTER_LOCK, Opcode.LAUNCH, Opcode.CLIPBOARD_SET, Opcode.CLIPBOARD_REQUEST, Opcode.NOTIFY,
             Opcode.PICK_FILE, Opcode.OPEN, Opcode.SAVE_STATE, Opcode.BACKGROUND_DONE,
-            Opcode.COMMIT_AT, Opcode.QUEUE_FLUSH, Opcode.SURFACE_SET_CONTENT);
+            Opcode.COMMIT_AT, Opcode.QUEUE_FLUSH, Opcode.SURFACE_SET_CONTENT, Opcode.BACKGROUND_MODE, Opcode.MEDIA_SESSION);
     private static final Set<Integer> SHELL_TO_COMP = Set.of(Opcode.PLACE, Opcode.STACK, Opcode.FOCUS_WINDOW,
             Opcode.SET_VISIBLE, Opcode.SET_OPACITY, Opcode.BIND_CHORD, Opcode.CLOSE_WINDOW, Opcode.SET_THEME,
-            Opcode.ANSWER_PERMISSION, Opcode.NOTIFICATION_INVOKE);
+            Opcode.ANSWER_PERMISSION, Opcode.NOTIFICATION_INVOKE, Opcode.MEDIA_CONTROL);
 
     private void handle(UiConnection c, UiProto.Message m) throws UiError {
         int op = m.opcode();
@@ -477,6 +484,12 @@ public final class Compositor {
                 if (!host.saveState(c.pid, s.data())) host.log("SaveState from pid " + c.pid + " dropped: not an app");
             }
             case UiProto.BackgroundDone b -> host.backgroundDone(c.pid);
+            case UiProto.BackgroundMode b -> {
+                if (!BACKGROUND_MODES.contains(b.mode())) throw UiError.malformed("unknown background mode '" + b.mode() + "'");
+                host.backgroundMode(c.pid, b.mode(), b.on());
+            }
+            case UiProto.MediaSession ms -> mediaSession(c, ms.info());
+            case UiProto.MediaControl mc -> mediaAction(mc.pid(), mc.action(), mc.positionMs());
             case UiProto.Place p -> place(p);
             case UiProto.Stack s -> restack(s.windows());
             case UiProto.FocusWindow f -> {
@@ -531,7 +544,89 @@ public final class Compositor {
         }
     }
 
+    // =================================================================== background modes and media (§11, §12)
+
+    /** The modes BackgroundMode may name (app.toml's, AppManifest.BACKGROUND_MODES). */
+    static final Set<String> BACKGROUND_MODES = Set.of("audio", "call", "radio", "transfer", "navigation");
+    /** What MediaAction / MediaControl may ask for. */
+    static final Set<String> MEDIA_ACTIONS = Set.of("play", "pause", "next", "previous", "seek");
+
+    /** One app's media session (the Now Playing card). */
+    public record MediaEntry(int pid, String appId, UiProto.MediaInfo info, long atMs) {
+        public boolean playing() {
+            return info.state() == UiProto.MediaState.PLAYING || info.state() == UiProto.MediaState.BUFFERING;
+        }
+    }
+
+    /** Media sessions by connection id. */
+    private final Map<Integer, MediaEntry> media = new LinkedHashMap<>();
+    /** Background modes by pid (app id, modes), for a shell that connects later. */
+    private final Map<Integer, UiProto.AppModes> appModes = new LinkedHashMap<>();
+
+    private void mediaSession(UiConnection c, UiProto.MediaInfo info) throws UiError {
+        if ((long) info.artW() * info.artH() * 4 != info.artRgba().length) {
+            throw UiError.malformed("MediaSession art is " + info.artRgba().length + " bytes, not " + info.artW() + " x " + info.artH() + " x 4");
+        }
+        for (String a : info.actions()) if (!MEDIA_ACTIONS.contains(a)) throw UiError.malformed("unknown media action '" + a + "'");
+        String appId = c.appId == null ? "" : c.appId;
+        if (info.state() == UiProto.MediaState.NONE) media.remove(c.id);
+        else media.put(c.id, new MediaEntry(c.pid, appId, info, host.nowMs()));
+        if (shell != null) shell.queue(new UiProto.MediaSessionChanged(c.pid, appId, info));
+        host.mediaSessionChanged(c.pid, appId, info);
+    }
+
+    /** The media sessions now, oldest first. */
+    public synchronized List<MediaEntry> mediaSessions() {
+        return new ArrayList<>(media.values());
+    }
+
+    /**
+     * Send {@code MediaAction{action}} to program {@code pid}'s media session (the shell's
+     * Now Playing card, AirPods). False if it has none.
+     */
+    public synchronized boolean mediaAction(int pid, String action, int positionMs) {
+        if (!MEDIA_ACTIONS.contains(action)) return false;
+        boolean sent = false;
+        for (Map.Entry<Integer, MediaEntry> e : media.entrySet()) {
+            UiConnection c = conns.get(e.getKey());
+            if (e.getValue().pid() == pid && c != null && !c.closed) {
+                c.queue(new UiProto.MediaAction(action, Math.max(0, positionMs)));
+                sent = true;
+            }
+        }
+        return sent;
+    }
+
+    /**
+     * The session a play/pause button with no screen (AirPods) means: the one playing, else
+     * the one changed last. Null if there is none.
+     */
+    public synchronized MediaEntry activeMedia() {
+        MediaEntry best = null;
+        for (MediaEntry m : media.values()) {
+            if (best == null || m.playing() && !best.playing() || m.playing() == best.playing() && m.atMs() >= best.atMs()) best = m;
+        }
+        return best;
+    }
+
+    /** An app's background modes changed: tell the shell ({@code AppModes}; the desktop tray, the phone's pills). */
+    public synchronized void appModesChanged(int pid, String appId, java.util.Collection<String> modes) {
+        UiProto.AppModes m = new UiProto.AppModes(pid, appId, List.copyOf(new java.util.TreeSet<>(modes)));
+        if (modes.isEmpty()) appModes.remove(pid);
+        else appModes.put(pid, m);
+        if (shell != null) shell.queue(m);
+    }
+
     // =================================================================== services (§10, §12)
+
+    /** A notification from the system about app {@code appId} (no app connection posts it). */
+    public synchronized void postSystem(String appId, String tag, String title, String body) {
+        int nid = nextNid++;
+        notifications.put(nid, new Object[]{null, tag, appId});
+        posted.add(new PostedNotification(nid, appId, tag, title, body, host.nowMs()));
+        if (posted.size() > 64) posted.remove(0);
+        if (shell != null) shell.queue(new UiProto.NotificationPosted(nid, appId, tag, title, body, "", List.of()));
+    }
 
     /** Post a notification that passed its permission check. */
     private void post(UiConnection c, UiProto.Notify n) {
@@ -588,6 +683,12 @@ public final class Compositor {
         if (n == null) return;
         UiConnection app = (UiConnection) n[0];
         UiProto.NotificationAction action = new UiProto.NotificationAction((String) n[1], ni.action());
+        if (app == null) {
+            // A system notice about an app (the background limit): tapping it opens that app.
+            String appId = (String) n[2];
+            if (appId != null && !appId.isEmpty()) host.launch(0, appId, List.of());
+            return;
+        }
         if (!app.closed) {
             app.queue(action);
             return;
@@ -693,6 +794,8 @@ public final class Compositor {
             shellConnectedMs = host.nowMs();
             if (c.pid != shellPid && shellPid > 0) host.log("shell connected from pid " + c.pid + " (started pid " + shellPid + ")");
             for (UiWindow w : stack) shell.queue(opened(w));
+            for (MediaEntry m : media.values()) shell.queue(new UiProto.MediaSessionChanged(m.pid(), m.appId(), m.info()));
+            for (UiProto.AppModes m : appModes.values()) shell.queue(m);
             leaveSafeMode();
         }
     }
@@ -1813,18 +1916,36 @@ public final class Compositor {
     /**
      * Hotkey slot {@code slot} (1-6) went down or up on an ePhone in hand: a
      * {@code Hotkey} for the app whose window is open (focused), if it claimed the
-     * slot. Returns the app id it went to, or null (no open app, or not claimed).
+     * slot; otherwise for the app with the active media session if it claimed the slot.
+     * Returns the app id it went to, or null (nobody claimed it).
      */
     public synchronized String hotkey(int slot, boolean down) {
         if (slot < 1 || slot > 6) return null;
         UiWindow w = focused;
-        if (w == null || w.surface.conn.closed || w.surface.conn.legacy != null) return null;
-        UiConnection c = w.surface.conn;
-        String[] slots = hotkeyClaims.get(c.id);
-        if (slots == null || slots[slot] == null) return null;
+        UiConnection c = w == null || w.surface.conn.closed || w.surface.conn.legacy != null ? null : w.surface.conn;
+        String[] slots = c == null ? null : hotkeyClaims.get(c.id);
+        if (slots == null || slots[slot] == null) {
+            // Not claimed on screen (or at home): the app holding the active media session gets
+            // it, so Music's Play/Pause works from home and in the background.
+            c = mediaHotkeyTarget(slot);
+            if (c == null) return null;
+        }
         c.queue(new UiProto.Hotkey(slot, down));
         drainFails();
         return c.appId == null ? "" : c.appId;
+    }
+
+    /** The connection of the active media session ({@link #activeMedia}) if it claimed {@code slot}. */
+    private UiConnection mediaHotkeyTarget(int slot) {
+        MediaEntry m = activeMedia();
+        if (m == null) return null;
+        for (Map.Entry<Integer, MediaEntry> e : media.entrySet()) {
+            if (e.getValue() != m) continue;
+            UiConnection mc = conns.get(e.getKey());
+            String[] s = mc == null || mc.closed ? null : hotkeyClaims.get(mc.id);
+            return s != null && s[slot] != null ? mc : null;
+        }
+        return null;
     }
 
     /** The OS "switch app" key: the shell switches to the next open app; without a shell the next window gets focus. */
@@ -2038,6 +2159,25 @@ public final class Compositor {
             if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
         }
         return null;
+    }
+
+    /**
+     * The clickable (hit-testable) nodes of the shell's layer titled {@code title}, as
+     * {hitId, device x, device y} at their centres, left to right: checks find icons with no
+     * text (the desktop's tray) by what appeared or went away.
+     */
+    public synchronized List<int[]> layerHits(String title) {
+        List<int[]> out = new ArrayList<>();
+        for (Surface s : layers) {
+            if (!s.title.equals(title) || s.tree == null || !s.mapped) continue;
+            Geo g = geo(s, host.nowMs());
+            if (g == null) continue;
+            List<int[]> lu = new ArrayList<>();
+            NodeTree.collectHits(s.tree.root(), lu);
+            for (int[] h : lu) out.add(new int[]{h[0], g.ox + h[1] * g.k, g.oy + h[2] * g.k});
+        }
+        out.sort((a, b) -> Integer.compare(a[1], b[1]));
+        return out;
     }
 
     /** Like {@link #locateText} for any open popup surface. */

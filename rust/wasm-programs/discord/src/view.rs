@@ -88,6 +88,12 @@ fn rail(m: &M, st: &Model) -> Element {
         }
         c = c.child(b);
     }
+    // Backends that need the player to sign in.
+    for i in st.sign_ins() {
+        let p = m.clone();
+        let b = &st.backends[i];
+        c = c.child(button(initials(&b.name)).id(format!("signin:{i}")).style("danger").width(36).on_click(move |_, _| p.borrow_mut().open_sign_in(i)));
+    }
     let add = m.clone();
     c.child(button("+").id("add").width(36).on_click(move |_, _| {
         let mut s = add.borrow_mut();
@@ -102,11 +108,23 @@ fn channel_list(m: &M, st: &Model, cx: &ViewCtx, h: i32) -> Element {
     let Some((b, g)) = st.current() else {
         let mut c = column().gap(8).padding(8).grow(1).child(heading("Discord"));
         c = c.child(label(no_server_text(st)).color(MUTED));
+        for i in st.sign_ins() {
+            let p = m.clone();
+            c = c.child(row().child(button(format!("Sign in to {}", st.backends[i].name)).id(format!("signin_side:{i}")).style("primary").grow(1).on_click(move |_, _| p.borrow_mut().open_sign_in(i))));
+        }
+        // Accounts (sign out, Forget realm) are reachable without a server too.
+        let gear = m.clone();
+        c = c.child(row().child(button("Settings").id("settings").style("flat").on_click(move |_, _| gear.borrow_mut().open_settings())));
         return c;
     };
     let (bi, gid) = st.guild.unwrap();
     let owner = st.owns_current();
     let mut c = column().gap(4);
+    // Other backends still waiting for a sign-in.
+    for i in st.sign_ins() {
+        let p = m.clone();
+        c = c.child(row().child(button(format!("Sign in to {}", st.backends[i].name)).id(format!("signin_side:{i}")).style("primary").grow(1).on_click(move |_, _| p.borrow_mut().open_sign_in(i))));
+    }
     c = c.child(heading(g.name.clone()));
     c = c.child(caption(format!("{} · {} member{}", b.name, g.members, if g.members == 1 { "" } else { "s" })));
     let mut text_head = row().gap(4).child(caption("TEXT CHANNELS")).child(spacer());
@@ -154,9 +172,10 @@ fn channel_list(m: &M, st: &Model, cx: &ViewCtx, h: i32) -> Element {
         }
         c = c.child(r.child(btn));
         for (_, v) in b.in_voice(cid) {
-            let me = v.nick.eq_ignore_ascii_case(&b.me);
+            let me = v.uid == b.me;
             let speaking = v.speaking || me && st.talking;
-            let name = if me && st.muted { format!("{} (muted)", v.nick) } else { v.nick.clone() };
+            let who = b.name_of(v.uid);
+            let name = if me && st.muted { format!("{who} (muted)") } else { who };
             c = c.child(row().child(spacer().width(16)).child(label(name).color(if speaking { GREEN } else { MUTED }).wrap(false)));
         }
     }
@@ -186,6 +205,8 @@ fn no_server_text(st: &Model) -> String {
         } else {
             "No Discord backend found yet. Tap + to search again or add one by address.".into()
         }
+    } else if !st.sign_ins().is_empty() && st.rail().is_empty() {
+        "Sign in to start talking.".into()
     } else if st.backends.iter().any(|b| matches!(b.link, Link::Idle | Link::Connecting)) {
         "Connecting ...".into()
     } else if st.rail().is_empty() && st.backends.iter().any(|b| b.up()) {
@@ -217,7 +238,13 @@ fn user_area(m: &M, st: &Model) -> Element {
     let mute = m.clone();
     let deaf = m.clone();
     let gear = m.clone();
-    let me = if st.nick.is_empty() { "you".to_string() } else { st.nick.clone() };
+    // Your name on the open server's backend (each backend may know you by another nickname).
+    let me = st
+        .current()
+        .map(|(b, _)| b.my_name())
+        .or_else(|| st.backends.iter().find(|b| b.me != 0).map(|b| b.my_name()))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "you".to_string());
     c.child(
         // Your name and Settings, then Mute / Deafen under them (one row is too wide for the sidebar).
         panel().fill(PANEL).radius(4).padding(4).child(
@@ -278,15 +305,17 @@ fn messages(cx: &ViewCtx, st: &Model, h: i32) -> Element {
             if ch.messages.is_empty() {
                 c = c.child(heading(format!("Welcome to #{}!", ch.name))).child(label(format!("This is the start of the #{} channel.", ch.name)).color(MUTED));
             }
-            let me = st.current().map(|(b, _)| b.me.clone()).unwrap_or_default();
-            let mut last: Option<&str> = None;
+            let b = st.current().map(|(b, _)| b);
+            let me = b.map(|b| b.my_name()).unwrap_or_default();
+            let mut last: Option<u64> = None;
             for msg in &ch.messages {
                 // Discord groups a run of messages by one person under one name.
-                if last != Some(msg.nick.as_str()) {
+                if last != Some(msg.uid) {
                     let when = if msg.earlier { format!("{} · earlier", msg.time) } else { msg.time.clone() };
-                    c = c.child(row().gap(6).child(label(msg.nick.clone()).color(if msg.mine { BLURPLE } else { TEXT }).wrap(false)).child(caption(when)));
+                    let who = b.map(|b| b.name_of(msg.uid)).unwrap_or_default();
+                    c = c.child(row().gap(6).child(label(who).color(if msg.mine { BLURPLE } else { TEXT }).wrap(false)).child(caption(when)));
                 }
-                last = Some(msg.nick.as_str());
+                last = Some(msg.uid);
                 let mentioned = !me.is_empty() && msg.text.contains(&format!("@{me}"));
                 c = c.child(label(msg.text.clone()).color(if mentioned { MENTION } else { TEXT }));
             }
@@ -326,16 +355,16 @@ fn members(st: &Model) -> Element {
     let Some((b, _)) = st.current() else { return c };
     let (_, gid) = st.guild.unwrap();
     let list = b.members.get(&gid).cloned().unwrap_or_default();
-    let online: Vec<&(String, Presence)> = list.iter().filter(|(_, p)| *p == Presence::Online).collect();
-    let offline: Vec<&(String, Presence)> = list.iter().filter(|(_, p)| *p != Presence::Online).collect();
+    let online: Vec<&(u64, Presence)> = list.iter().filter(|(_, p)| *p == Presence::Online).collect();
+    let offline: Vec<&(u64, Presence)> = list.iter().filter(|(_, p)| *p != Presence::Online).collect();
     c = c.child(caption(format!("ONLINE - {}", online.len())));
-    for (n, _) in online {
-        c = c.child(label(n.clone()).color(TEXT).wrap(false));
+    for (u, _) in online {
+        c = c.child(label(b.name_of(*u)).color(TEXT).wrap(false));
     }
     if !offline.is_empty() {
         c = c.child(caption(format!("OFFLINE - {}", offline.len())));
-        for (n, _) in offline {
-            c = c.child(label(n.clone()).color(MUTED).wrap(false));
+        for (u, _) in offline {
+            c = c.child(label(b.name_of(*u)).color(MUTED).wrap(false));
         }
     }
     c
@@ -372,6 +401,8 @@ fn add_page(m: &M, st: &Model) -> Element {
     for b in &st.backends {
         let state = match &b.link {
             Link::Idle | Link::Connecting => "connecting".to_string(),
+            Link::Up { .. } if b.needs_sign_in() => "not signed in".to_string(),
+            Link::Up { .. } if !b.ready() => "signing in".to_string(),
             Link::Up { .. } => format!("{} server{}", b.guilds.len(), if b.guilds.len() == 1 { "" } else { "s" }),
             Link::Down(why) => why.clone(),
         };
@@ -504,36 +535,92 @@ fn new_channel_page(m: &M, st: &Model) -> Element {
 }
 
 fn settings_page(m: &M, st: &Model) -> Element {
-    let draft = m.clone();
-    let go = m.clone();
-    let go2 = m.clone();
-    let save = move |m: &M| {
-        let r = m.borrow_mut().save_username();
-        if let Err(e) = r {
-            m.borrow_mut().notice = Some(e);
+    let mut c = column().gap(8).child(heading("Settings")).child(caption("MY ACCOUNTS"));
+    if st.backends.is_empty() {
+        c = c.child(label("No Discord backend yet.").color(MUTED));
+    }
+    c = c.child(
+        label("Each backend uses the accounts of one realm (its own, or a shared Auth server). Your nickname is per backend; empty uses your display name.")
+            .color(MUTED),
+    );
+    for (i, b) in st.backends.iter().enumerate() {
+        let mut card = column().gap(4).child(label(format!("{} · {}", b.name, b.endpoint())).color(TEXT).wrap(false));
+        let changed = b.screen.as_ref().and_then(|s| match &s.borrow().stage {
+            ecm_apps_ui::signin::Stage::Changed { old_fp, .. } => Some(old_fp.clone()),
+            _ => None,
+        });
+        let realm = b.greeting.realm.as_ref();
+        if let Some(r) = realm {
+            card = card.child(caption(format!("Accounts: {} · {}", r.name, ecm_auth::short_fingerprint(&r.fp))));
         }
-    };
-    let save2 = save.clone();
-    let mut c = column()
-        .gap(8)
-        .child(heading("Settings"))
-        .child(caption("MY ACCOUNT"))
-        .child(label("Username").color(TEXT))
-        .child(text_field().id("username").placeholder("Username").text(st.name_draft.clone()).on_change(move |cx, _| {
-            let t = cx.text("username");
-            draft.borrow_mut().name_draft = t;
-        }).on_submit(move |_, _| save2(&go2)))
-        .child(label("1-16 letters, digits, '-', '_' or '.'. Everyone on every backend sees the new name.").color(MUTED));
-    // What each connected backend calls you now (it may have added a number if the name was taken there).
-    for b in st.backends.iter().filter(|b| b.up() && !b.me.is_empty()) {
-        c = c.child(caption(format!("On {}: {}", b.name, b.me)));
+        match (&b.account, &changed) {
+            (_, Some(_)) => {
+                card = card.child(label(format!("The identity of {} has changed: sign-in refused.", realm.map(|r| r.name.as_str()).unwrap_or(&b.name))).color(RED));
+            }
+            (Some(a), None) if b.ready() => {
+                card = card.child(label(format!("Signed in as {} (@{})", a.display, a.username)).color(TEXT).id(format!("account:{i}")));
+                let draft = m.clone();
+                let save = m.clone();
+                let save2 = m.clone();
+                let go = move |m: &M| {
+                    let r = m.borrow_mut().save_nick(i);
+                    if let Err(e) = r {
+                        m.borrow_mut().notice = Some(e);
+                    }
+                };
+                let go2 = go.clone();
+                card = card.child(
+                    row()
+                        .gap(6)
+                        .child(text_field().id(format!("nick:{i}")).placeholder("Nickname on this backend").text(b.nick_draft.clone()).grow(1).on_change(move |cx, _| {
+                            let t = cx.text(&format!("nick:{i}"));
+                            if let Some(b) = draft.borrow_mut().backends.get_mut(i) {
+                                b.nick_draft = t;
+                            }
+                        }).on_submit(move |_, _| go2(&save2)))
+                        .child(button("Save").id(format!("save_nick:{i}")).style("primary").on_click(move |_, _| go(&save))),
+                );
+                let out = m.clone();
+                let fp = a.realm_fp.clone();
+                card = card.child(row().child(button("Sign out").id(format!("signout:{i}")).style("flat").on_click(move |_, _| {
+                    out.borrow_mut().account_requests.push(crate::model::AccountRequest::SignOut(fp.clone()));
+                })));
+            }
+            _ if b.needs_sign_in() => {
+                let p = m.clone();
+                card = card.child(label("Not signed in.").color(MUTED)).child(row().child(button("Sign in").id(format!("settings_signin:{i}")).on_click(move |_, _| p.borrow_mut().open_sign_in(i))));
+            }
+            _ => card = card.child(caption(match &b.link {
+                Link::Down(why) => why.clone(),
+                _ => "Connecting ...".into(),
+            })),
+        }
+        // Removing a pin by hand: the only way past a changed key.
+        let pin = changed.clone().or_else(|| realm.map(|r| r.fp.clone()));
+        if let Some(fp) = pin {
+            let f = m.clone();
+            card = card.child(row().child(button("Forget realm").id(format!("forget:{i}")).style("danger").on_click(move |_, _| {
+                f.borrow_mut().account_requests.push(crate::model::AccountRequest::ForgetRealm(fp.clone()));
+            })));
+        }
+        c = c.child(panel().fill(PANEL).radius(4).padding(6).child(card));
     }
     if let Some(n) = &st.notice {
         c = c.child(label(n.clone()).color(MUTED).id("notice"));
     }
-    c.child(row().gap(6).child(back_button(m)).child(spacer()).child(button("Save").id("save_username").style("primary").on_click(move |_, _| save(&go))))
+    c.child(row().gap(6).child(back_button(m)))
 }
 
+/// A backend's sign-in screen, with the backend it is for.
+fn sign_in_page(m: &M, st: &Model, i: usize) -> Element {
+    let Some(b) = st.backends.get(i) else { return column() };
+    let mut c = column().gap(4).child(row().gap(6).align(Align::Center).child(back_button(m)).child(heading(format!("Sign in to {}", b.name))));
+    c = c.child(caption(format!("{} uses these accounts:", b.endpoint())));
+    match &b.screen {
+        Some(s) => c.child(panel().fill(SIDEBAR).radius(4).child(ecm_apps_ui::signin::view(s))),
+        None => c.child(label("Connecting ...").color(MUTED)),
+    }
+}
 /// A page that isn't Servers/Chat, in a scroll view `h` tall; None for those two.
 fn other_page(m: &M, st: &Model, h: i32) -> Option<Element> {
     let page = match st.page {
@@ -542,6 +629,7 @@ fn other_page(m: &M, st: &Model, h: i32) -> Option<Element> {
         Page::Join => join_page(m, st),
         Page::NewChannel => new_channel_page(m, st),
         Page::Settings => settings_page(m, st),
+        Page::SignIn(i) => sign_in_page(m, st, i),
         Page::Members => column().gap(8).child(row().child(back_button(m)).child(heading("Members"))).child(members(st)),
         Page::Servers | Page::Chat => return None,
     };

@@ -209,7 +209,7 @@ public final class LuaScenarios {
     }
 
     private static int rate(ScenarioRun r) {
-        return r.level().getBlockEntity(r.abs(SPEAKER)) instanceof SpeakerBlockEntity s ? s.audio().rate() : -1;
+        return r.level().getBlockEntity(r.abs(SPEAKER)) instanceof SpeakerBlockEntity s ? s.audio().outputRate() : -1;
     }
 
     /** The player puts a Redstone Lamp on top of the computer. */

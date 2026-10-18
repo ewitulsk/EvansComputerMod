@@ -5,29 +5,59 @@
 //! [`Backend::tick`] now and then, and performs the returned [`Out`] actions in
 //! order. Clients are identified by any number the caller chooses (the socket fd).
 //!
+//! Accounts are required. The backend trusts one realm ([`AuthSetup`]): every
+//! connection is greeted with `AUTH` and `BACKEND` lines (the realm, the backend's own
+//! key fingerprint and a fresh nonce) and must sign in with a token for this backend
+//! and the session key's proof for the nonce ([`ecm_auth::BackendGate`]) before
+//! anything else. People are their realm user ids; what others see is their name
+//! (a nickname set here with `NICK`, else the account's display name).
+//!
 //! The backend hosts servers ("guilds"), each with text and voice channels and
 //! members. Server 1 is the backend's home server (named after the backend, owned
-//! by nobody): every Discord user joins it on their first visit, and the old chat
-//! protocol's room is its first text channel, so `chat` users and Discord users
-//! talk together in `#general`.
+//! by nobody): every user joins it when they first sign in, and the old chat
+//! protocol's room is its first text channel, so `chat` users (`LOGIN` instead of
+//! `HELLO`, then `MSG`/`WHO`, shown by username) and Discord users talk together in
+//! `#general`.
 //!
-//! What must survive a restart (servers, channels, members, recent messages) is
-//! written as text by [`Backend::save_text`] whenever [`Out::Save`] is returned.
+//! What must survive a restart (users' names, servers, channels, members, recent
+//! messages) is written as text by [`Backend::save_text`] whenever [`Out::Save`] is
+//! returned.
 
 use crate::proto::{self, Cmd, Event, Kind, Presence, VoiceEvent};
 use crate::voice::{Packet, PacketKind, SPEAKING_HOLD_MS};
+use ecm_auth::{BackendGate, RealmRef};
 use ecm_chat::proto as chat;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Most clients one backend accepts (the kernel allows 32 sockets per program; the
-/// backend uses two itself).
-pub const MAX_CLIENTS: usize = 28;
+/// backend uses a few itself).
+pub const MAX_CLIENTS: usize = 26;
 /// The home server's id.
 pub const HOME: u32 = 1;
 /// Old-protocol clients get this many messages of `#general` when they join.
 pub const LEGACY_HISTORY: usize = 20;
 /// The owner of the home server: nobody.
-pub const NOBODY: &str = "-";
+pub const NOBODY: u64 = 0;
+/// Failed sign-ins on one connection before the backend hangs up.
+pub const SIGN_IN_TRIES: u8 = 3;
+
+/// Longest line a client may send (a `HELLO` with its token is about 600 bytes, more
+/// than the old chat protocol's 400).
+pub const MAX_LINE: usize = 2048;
+
+/// Cut received bytes into lines (`\r` dropped); a longer line is cut at [`MAX_LINE`].
+pub fn take_lines(buf: &mut Vec<u8>, data: &[u8]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for &b in data {
+        if b == b'\n' {
+            lines.push(String::from_utf8_lossy(buf).trim_end_matches('\r').to_string());
+            buf.clear();
+        } else if buf.len() < MAX_LINE {
+            buf.push(b);
+        }
+    }
+    lines
+}
 
 /// Something `discordd` must do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +74,21 @@ pub enum Out {
     Save,
 }
 
+/// Which realm the backend trusts, and who the backend is.
+#[derive(Debug, Clone)]
+pub struct AuthSetup {
+    /// The realm, as the `AUTH` line names it (`-:port` for `--auth local`).
+    pub realm: RealmRef,
+    /// The realm's public key (its fingerprint is `realm.fp`).
+    pub realm_pub: [u8; 32],
+    /// The backend's own public key: tokens must name its fingerprint.
+    pub backend_pub: [u8; 32],
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
+    /// Greeted, not signed in yet.
+    Pending,
     /// The old chat protocol (the `chat` command).
     Legacy,
     Discord,
@@ -55,24 +98,34 @@ enum Mode {
 struct Conn {
     peer: String,
     buf: Vec<u8>,
-    nick: Option<String>,
+    user: Option<u64>,
     mode: Mode,
+    nonce: [u8; 32],
+    tries: u8,
     /// Voice session, if in a voice channel.
     sid: Option<u32>,
+}
+
+/// A user this backend has seen.
+#[derive(Debug, Clone)]
+struct Account {
+    username: String,
+    display: String,
+    nick: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 struct Guild {
     name: String,
-    owner: String,
-    members: Vec<String>,
+    owner: u64,
+    members: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
 struct Message {
     id: u32,
     time: String,
-    nick: String,
+    uid: u64,
     text: String,
 }
 
@@ -89,7 +142,7 @@ struct Voice {
     conn: u32,
     channel: u32,
     token: u32,
-    nick: String,
+    uid: u64,
     addr: Option<([u8; 4], u16)>,
     last_audio: u64,
     speaking: bool,
@@ -99,10 +152,12 @@ struct Voice {
 }
 
 /// One Discord backend.
-#[derive(Debug)]
 pub struct Backend {
     pub name: String,
     pub voice_port: u16,
+    auth: AuthSetup,
+    gate: BackendGate,
+    users: BTreeMap<u64, Account>,
     guilds: BTreeMap<u32, Guild>,
     channels: BTreeMap<u32, Channel>,
     next_guild: u32,
@@ -116,17 +171,17 @@ pub struct Backend {
     pub forwarded: u64,
 }
 
-fn same(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b)
-}
-
 impl Backend {
     /// A new backend with only its home server (`#general` and a `General` voice channel).
     /// `seed` makes the voice tokens unpredictable (the program passes random bits).
-    pub fn new(name: &str, voice_port: u16, seed: u64) -> Backend {
+    pub fn new(name: &str, voice_port: u16, seed: u64, auth: AuthSetup) -> Backend {
+        let gate = BackendGate::new(auth.realm_pub, auth.backend_pub);
         let mut b = Backend {
             name: name.to_string(),
             voice_port,
+            auth,
+            gate,
+            users: BTreeMap::new(),
             guilds: BTreeMap::new(),
             channels: BTreeMap::new(),
             next_guild: HOME,
@@ -143,8 +198,8 @@ impl Backend {
     }
 
     /// A backend restored from [`Backend::save_text`] output (unreadable lines are skipped).
-    pub fn load(name: &str, voice_port: u16, seed: u64, text: &str) -> Backend {
-        let mut b = Backend::new(name, voice_port, seed);
+    pub fn load(name: &str, voice_port: u16, seed: u64, auth: AuthSetup, text: &str) -> Backend {
+        let mut b = Backend::new(name, voice_port, seed, auth);
         b.guilds.clear();
         b.channels.clear();
         for line in text.lines() {
@@ -152,6 +207,7 @@ impl Backend {
             let (w, rest) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
             let p: Vec<&str> = rest.splitn(5, ' ').collect();
             let n = |i: usize| p.get(i).and_then(|s| s.parse::<u32>().ok());
+            let u = |i: usize| p.get(i).and_then(|s| s.parse::<u64>().ok());
             let tail = |i: usize| rest.splitn(i + 1, ' ').nth(i).unwrap_or("").to_string();
             match w {
                 "next" => {
@@ -161,16 +217,26 @@ impl Backend {
                         b.next_msg = m;
                     }
                 }
+                "user" => {
+                    if let (Some(uid), Some(username)) = (u(0), p.get(1)) {
+                        b.users.insert(uid, Account { username: username.to_string(), display: tail(2), nick: None });
+                    }
+                }
+                "nick" => {
+                    if let Some(a) = u(0).and_then(|uid| b.users.get_mut(&uid)) {
+                        a.nick = Some(tail(1)).filter(|s| !s.is_empty());
+                    }
+                }
                 "guild" => {
-                    if let (Some(id), Some(owner)) = (n(0), p.get(1)) {
-                        b.guilds.insert(id, Guild { name: tail(2), owner: owner.to_string(), members: Vec::new() });
+                    if let (Some(id), Some(owner)) = (n(0), u(1)) {
+                        b.guilds.insert(id, Guild { name: tail(2), owner, members: Vec::new() });
                     }
                 }
                 "member" => {
-                    if let (Some(g), Some(nick)) = (n(0), p.get(1)) {
+                    if let (Some(g), Some(uid)) = (n(0), u(1)) {
                         if let Some(guild) = b.guilds.get_mut(&g) {
-                            if !guild.members.iter().any(|m| same(m, nick)) {
-                                guild.members.push(nick.to_string());
+                            if !guild.members.contains(&uid) {
+                                guild.members.push(uid);
                             }
                         }
                     }
@@ -183,9 +249,9 @@ impl Backend {
                     }
                 }
                 "msg" => {
-                    if let (Some(c), Some(id), Some(time), Some(nick)) = (n(0), n(1), p.get(2), p.get(3)) {
+                    if let (Some(c), Some(id), Some(time), Some(uid)) = (n(0), n(1), p.get(2), u(3)) {
                         if let Some(ch) = b.channels.get_mut(&c) {
-                            ch.messages.push_back(Message { id, time: time.to_string(), nick: nick.to_string(), text: tail(4) });
+                            ch.messages.push_back(Message { id, time: time.to_string(), uid, text: tail(4) });
                             while ch.messages.len() > proto::HISTORY {
                                 ch.messages.pop_front();
                             }
@@ -209,7 +275,13 @@ impl Backend {
 
     /// The state to keep across restarts.
     pub fn save_text(&self) -> String {
-        let mut s = format!("discordd 1\nnext {} {} {}\n", self.next_guild, self.next_channel, self.next_msg);
+        let mut s = format!("discordd 2\nnext {} {} {}\n", self.next_guild, self.next_channel, self.next_msg);
+        for (uid, a) in &self.users {
+            s.push_str(&format!("user {} {} {}\n", uid, a.username, a.display));
+            if let Some(n) = &a.nick {
+                s.push_str(&format!("nick {} {}\n", uid, n));
+            }
+        }
         for (id, g) in &self.guilds {
             s.push_str(&format!("guild {} {} {}\n", id, g.owner, g.name));
             for m in &g.members {
@@ -219,7 +291,7 @@ impl Backend {
         for (id, c) in &self.channels {
             s.push_str(&format!("channel {} {} {} {}\n", id, c.guild, c.kind.word(), c.name));
             for m in &c.messages {
-                s.push_str(&format!("msg {} {} {} {} {}\n", id, m.id, m.time, m.nick, m.text));
+                s.push_str(&format!("msg {} {} {} {} {}\n", id, m.id, m.time, m.uid, m.text));
             }
         }
         s
@@ -229,7 +301,7 @@ impl Backend {
         if self.guilds.contains_key(&HOME) {
             return;
         }
-        self.guilds.insert(HOME, Guild { name: self.name.clone(), owner: NOBODY.into(), members: Vec::new() });
+        self.guilds.insert(HOME, Guild { name: self.name.clone(), owner: NOBODY, members: Vec::new() });
         self.next_guild = self.next_guild.max(HOME + 1);
         self.add_channel(HOME, Kind::Text, "general");
         self.add_channel(HOME, Kind::Voice, "General");
@@ -262,6 +334,16 @@ impl Backend {
         self.conns.is_empty()
     }
 
+    /// This backend's key fingerprint (the audience of its tokens).
+    pub fn audience(&self) -> String {
+        self.gate.audience()
+    }
+
+    /// The realm it trusts.
+    pub fn realm(&self) -> &RealmRef {
+        &self.auth.realm
+    }
+
     /// Server names, by id.
     pub fn guild_names(&self) -> Vec<(u32, String)> {
         self.guilds.iter().map(|(id, g)| (*id, g.name.clone())).collect()
@@ -272,19 +354,22 @@ impl Backend {
         self.channels.iter().filter(|(_, c)| c.guild == guild).map(|(id, c)| (*id, c.kind, c.name.clone())).collect()
     }
 
-    /// The members of a server.
+    /// The names of a server's members.
     pub fn members_of(&self, guild: u32) -> Vec<String> {
-        self.guilds.get(&guild).map(|g| g.members.clone()).unwrap_or_default()
+        self.guilds.get(&guild).map(|g| g.members.iter().map(|u| self.name_of(*u)).collect()).unwrap_or_default()
     }
 
-    /// Texts in a channel, oldest first.
+    /// Texts in a channel, oldest first, as `<name> text`.
     pub fn messages_of(&self, channel: u32) -> Vec<String> {
-        self.channels.get(&channel).map(|c| c.messages.iter().map(|m| format!("<{}> {}", m.nick, m.text)).collect()).unwrap_or_default()
+        self.channels
+            .get(&channel)
+            .map(|c| c.messages.iter().map(|m| format!("<{}> {}", self.name_of(m.uid), m.text)).collect())
+            .unwrap_or_default()
     }
 
-    /// Who is in a voice channel.
+    /// Who is in a voice channel (names).
     pub fn voice_in(&self, channel: u32) -> Vec<String> {
-        self.voice.values().filter(|v| v.channel == channel).map(|v| v.nick.clone()).collect()
+        self.voice.values().filter(|v| v.channel == channel).map(|v| self.name_of(v.uid)).collect()
     }
 
     /// The old chat room: the home server's first text channel.
@@ -292,52 +377,37 @@ impl Backend {
         self.channels.iter().find(|(_, c)| c.guild == HOME && c.kind == Kind::Text).map(|(id, _)| *id)
     }
 
-    /// Nicknames connected now, sorted.
-    pub fn nicks(&self) -> Vec<String> {
-        let mut n: Vec<String> = self.conns.values().filter_map(|c| c.nick.clone()).collect();
-        n.sort_by_key(|s| s.to_lowercase());
-        n
+    /// Usernames signed in now, sorted, once each.
+    pub fn online_users(&self) -> Vec<String> {
+        let set: BTreeSet<String> = self.conns.values().filter_map(|c| c.user).map(|u| self.username(u)).collect();
+        set.into_iter().collect()
     }
 
-    fn online(&self, nick: &str) -> bool {
-        self.conns.values().any(|c| c.nick.as_deref().is_some_and(|n| same(n, nick)))
-    }
-
-    fn is_member(&self, guild: u32, nick: &str) -> bool {
-        self.guilds.get(&guild).is_some_and(|g| g.members.iter().any(|m| same(m, nick)))
-    }
-
-    fn taken(&self, nick: &str, except: u32) -> bool {
-        self.conns.iter().any(|(id, c)| *id != except && c.nick.as_deref().is_some_and(|n| same(n, nick)))
-    }
-
-    /// A free variant of `wanted`: `wanted`, `wanted2`, `wanted3`, ...
-    fn free_nick(&self, wanted: &str, id: u32) -> String {
-        if !self.taken(wanted, id) {
-            return wanted.to_string();
+    /// What everyone sees for a user: the nickname, else the display name.
+    pub fn name_of(&self, uid: u64) -> String {
+        match self.users.get(&uid) {
+            Some(a) => a.nick.clone().unwrap_or_else(|| a.display.clone()),
+            None => format!("user {uid}"),
         }
-        for n in 2.. {
-            let suffix = n.to_string();
-            let base: String = wanted.chars().take(chat::MAX_NICK - suffix.len()).collect();
-            let candidate = format!("{}{}", base, suffix);
-            if !self.taken(&candidate, id) {
-                return candidate;
-            }
-        }
-        unreachable!()
+    }
+
+    fn username(&self, uid: u64) -> String {
+        self.users.get(&uid).map(|a| a.username.clone()).unwrap_or_else(|| format!("user{uid}"))
+    }
+
+    fn online(&self, uid: u64) -> bool {
+        self.conns.values().any(|c| c.user == Some(uid))
+    }
+
+    fn is_member(&self, guild: u32, uid: u64) -> bool {
+        self.guilds.get(&guild).is_some_and(|g| g.members.contains(&uid))
     }
 
     // ------------------------------------------------------------------ event lines
 
-    fn guild_event(&self, id: u32, for_nick: &str) -> Option<Event> {
+    fn guild_event(&self, id: u32, for_uid: u64) -> Option<Event> {
         let g = self.guilds.get(&id)?;
-        Some(Event::Guild {
-            id,
-            owner: g.owner.clone(),
-            joined: g.members.iter().any(|m| same(m, for_nick)),
-            members: g.members.len() as u32,
-            name: g.name.clone(),
-        })
+        Some(Event::Guild { id, owner: g.owner, joined: g.members.contains(&for_uid), members: g.members.len() as u32, name: g.name.clone() })
     }
 
     fn channel_event(&self, id: u32) -> Option<Event> {
@@ -345,45 +415,38 @@ impl Backend {
         Some(Event::Channel { guild: c.guild, id, kind: c.kind, name: c.name.clone() })
     }
 
-    /// Discord connections (id, nick).
-    fn discord_conns(&self) -> Vec<(u32, String)> {
-        self.conns
-            .iter()
-            .filter(|(_, c)| c.mode == Mode::Discord)
-            .filter_map(|(id, c)| c.nick.clone().map(|n| (*id, n)))
-            .collect()
+    fn member_event(&self, guild: u32, uid: u64, presence: Presence) -> Event {
+        Event::Member { guild, uid, presence, name: self.name_of(uid) }
+    }
+
+    /// Discord connections (id, uid).
+    fn discord_conns(&self) -> Vec<(u32, u64)> {
+        self.conns.iter().filter(|(_, c)| c.mode == Mode::Discord).filter_map(|(id, c)| c.user.map(|u| (*id, u))).collect()
     }
 
     /// Send `e` to every Discord connection that is a member of `guild`.
     fn to_members(&self, guild: u32, e: &Event) -> Vec<Out> {
         let line = e.line();
-        self.discord_conns()
-            .into_iter()
-            .filter(|(_, n)| self.is_member(guild, n))
-            .map(|(id, _)| Out::Send(id, line.clone()))
-            .collect()
+        self.discord_conns().into_iter().filter(|(_, u)| self.is_member(guild, *u)).map(|(id, _)| Out::Send(id, line.clone())).collect()
     }
 
     /// Every Discord connection gets the server's line, with its own `joined` flag.
     fn guild_to_all(&self, guild: u32) -> Vec<Out> {
-        self.discord_conns()
-            .into_iter()
-            .filter_map(|(id, n)| self.guild_event(guild, &n).map(|e| Out::Send(id, e.line())))
-            .collect()
+        self.discord_conns().into_iter().filter_map(|(id, u)| self.guild_event(guild, u).map(|e| Out::Send(id, e.line()))).collect()
     }
 
-    /// Old-protocol connections that joined.
+    /// Old-protocol connections that signed in.
     fn to_legacy(&self, line: &str) -> Vec<Out> {
         self.conns
             .iter()
-            .filter(|(_, c)| c.mode == Mode::Legacy && c.nick.is_some())
+            .filter(|(_, c)| c.mode == Mode::Legacy && c.user.is_some())
             .map(|(id, _)| Out::Send(*id, line.to_string()))
             .collect()
     }
 
     // ------------------------------------------------------------------ connections
 
-    /// A client connected from `peer` ("a.b.c.d:port").
+    /// A client connected from `peer` ("a.b.c.d:port"): greet it with the realm and a nonce.
     pub fn connect(&mut self, id: u32, peer: &str) -> Vec<Out> {
         if self.conns.len() >= MAX_CLIENTS {
             return vec![
@@ -392,14 +455,19 @@ impl Backend {
                 Out::Log(format!("refused {}: full", peer)),
             ];
         }
-        self.conns.insert(id, Conn { peer: peer.into(), buf: Vec::new(), nick: None, mode: Mode::Legacy, sid: None });
-        vec![Out::Log(format!("connection from {}", peer))]
+        let nonce = self.gate.challenge();
+        self.conns.insert(id, Conn { peer: peer.into(), buf: Vec::new(), user: None, mode: Mode::Pending, nonce, tries: 0, sid: None });
+        vec![
+            Out::Send(id, Event::Auth(self.auth.realm.clone()).line()),
+            Out::Send(id, Event::Backend { fp: self.audience(), nonce: ecm_auth::hex(&nonce), name: self.name.clone() }.line()),
+            Out::Log(format!("connection from {}", peer)),
+        ]
     }
 
     /// Bytes arrived from a client. `now` is Unix time in milliseconds.
     pub fn receive(&mut self, id: u32, data: &[u8], now: u64) -> Vec<Out> {
         let lines = match self.conns.get_mut(&id) {
-            Some(c) => chat::take_lines(&mut c.buf, data),
+            Some(c) => take_lines(&mut c.buf, data),
             None => return Vec::new(),
         };
         let mut out = Vec::new();
@@ -409,10 +477,11 @@ impl Backend {
             }
             let mode = self.conns[&id].mode;
             out.extend(match mode {
+                Mode::Pending => self.sign_in(id, &line, now),
                 Mode::Legacy => self.legacy(id, &line, now),
                 Mode::Discord => self.discord(id, &line, now),
             });
-            if !self.conns.contains_key(&id) {
+            if !self.conns.contains_key(&id) || out.contains(&Out::Close(id)) {
                 break;
             }
         }
@@ -427,149 +496,175 @@ impl Backend {
     fn leave(&mut self, id: u32, reason: &str, now: u64) -> Vec<Out> {
         let mut out = self.voice_leave(id);
         let Some(c) = self.conns.remove(&id) else { return out };
-        let Some(nick) = c.nick else {
+        let Some(uid) = c.user else {
             out.push(Out::Log(format!("{} disconnected", c.peer)));
             return out;
         };
-        out.extend(self.to_legacy(&chat::Event::Leave { time: chat::hms(now / 1000), nick: nick.clone(), reason: reason.into() }.line()));
-        if !self.online(&nick) {
+        let username = self.username(uid);
+        if c.mode == Mode::Legacy {
+            out.extend(self.to_legacy(&chat::Event::Leave { time: chat::hms(now / 1000), nick: username.clone(), reason: reason.into() }.line()));
+        }
+        if !self.online(uid) {
             let guilds: Vec<u32> = self.guilds.keys().copied().collect();
             for g in guilds {
-                if self.is_member(g, &nick) {
-                    out.extend(self.to_members(g, &Event::Member { guild: g, nick: nick.clone(), presence: Presence::Offline }));
-                } else if g == HOME && c.mode == Mode::Legacy {
-                    out.extend(self.to_members(g, &Event::Member { guild: g, nick: nick.clone(), presence: Presence::Left }));
+                if self.is_member(g, uid) {
+                    out.extend(self.to_members(g, &self.member_event(g, uid, Presence::Offline)));
                 }
             }
         }
-        out.push(Out::Log(format!("{} left ({})", nick, reason)));
+        out.push(Out::Log(format!("{} left ({})", username, reason)));
         out
     }
 
-    /// Announce that `nick` came online (to old-protocol rooms and to the members of its servers).
-    fn arrived(&self, id: u32, nick: &str, now: u64, legacy: bool) -> Vec<Out> {
-        let mut out: Vec<Out> = self
-            .to_legacy(&chat::Event::Join { time: chat::hms(now / 1000), nick: nick.into() }.line())
-            .into_iter()
-            .filter(|o| !matches!(o, Out::Send(to, _) if *to == id && !legacy))
-            .collect();
+    /// Announce that `uid` came online (to old-protocol rooms and to the members of its servers).
+    fn arrived(&self, id: u32, uid: u64, now: u64, legacy: bool) -> Vec<Out> {
+        let mut out = Vec::new();
+        if legacy {
+            out.extend(self.to_legacy(&chat::Event::Join { time: chat::hms(now / 1000), nick: self.username(uid) }.line()));
+        }
         for g in self.guilds.keys() {
-            if self.is_member(*g, nick) || (*g == HOME && legacy) {
-                let e = Event::Member { guild: *g, nick: nick.into(), presence: Presence::Online };
+            if self.is_member(*g, uid) {
+                let e = self.member_event(*g, uid, Presence::Online);
                 out.extend(self.to_members(*g, &e).into_iter().filter(|o| !matches!(o, Out::Send(to, _) if *to == id)));
             }
         }
         out
     }
 
+    // ------------------------------------------------------------------ signing in
+
+    fn sign_in(&mut self, id: u32, line: &str, now: u64) -> Vec<Out> {
+        let (token, proof, chat_mode) = match Cmd::parse(line) {
+            Ok(Cmd::Hello { token, proof }) => (token, proof, false),
+            Ok(Cmd::Login { token, proof }) => (token, proof, true),
+            Ok(Cmd::Quit) => {
+                let mut out = self.leave(id, "quit", now);
+                out.push(Out::Close(id));
+                return out;
+            }
+            Ok(_) => return Self::err(id, "sign in first (HELLO <token> <proof>)"),
+            Err(e) => return Self::err(id, e),
+        };
+        let nonce = self.conns[&id].nonce;
+        let proof = ecm_auth::unhex(&proof).unwrap_or_default();
+        let claims = match self.gate.check(&token, &proof, &nonce, now) {
+            Ok(c) => c,
+            Err(e) => {
+                let c = self.conns.get_mut(&id).unwrap();
+                c.tries += 1;
+                let peer = c.peer.clone();
+                let mut out = Self::err(id, format!("sign-in refused: {e}"));
+                out.push(Out::Log(format!("refused a sign-in from {peer}: {e}")));
+                if self.conns[&id].tries >= SIGN_IN_TRIES {
+                    out.push(Out::Close(id));
+                    self.conns.remove(&id);
+                }
+                return out;
+            }
+        };
+        let uid = claims.user_id;
+        let mut out = Vec::new();
+        // The account's names as the realm says now.
+        let renamed = match self.users.get_mut(&uid) {
+            Some(a) => {
+                let before = a.nick.clone().unwrap_or_else(|| a.display.clone());
+                let changed = a.username != claims.username || a.display != claims.display_name;
+                a.username = claims.username.clone();
+                a.display = claims.display_name.clone();
+                if changed {
+                    out.push(Out::Save);
+                }
+                a.nick.is_none() && before != a.display
+            }
+            None => {
+                self.users.insert(uid, Account { username: claims.username.clone(), display: claims.display_name.clone(), nick: None });
+                out.push(Out::Save);
+                false
+            }
+        };
+        if renamed {
+            let line = Event::Renamed { uid, name: self.name_of(uid) }.line();
+            out.extend(self.discord_conns().into_iter().map(|(c, _)| Out::Send(c, line.clone())));
+        }
+        if let Some(c) = self.conns.get_mut(&id) {
+            c.user = Some(uid);
+            c.mode = if chat_mode { Mode::Legacy } else { Mode::Discord };
+        }
+        // First visit: a member of the home server.
+        if !self.is_member(HOME, uid) {
+            if let Some(home) = self.guilds.get_mut(&HOME) {
+                home.members.push(uid);
+                out.push(Out::Save);
+                out.extend(self.guild_to_all(HOME).into_iter().filter(|o| !matches!(o, Out::Send(to, _) if *to == id)));
+            }
+        }
+        out.extend(if chat_mode { self.legacy_join(id, uid, now) } else { self.hello(id, uid, now) });
+        out
+    }
+
     // ------------------------------------------------------------------ the old chat protocol
 
     fn legacy(&mut self, id: u32, line: &str, now: u64) -> Vec<Out> {
-        let first = line.trim_start().get(..6).map(|w| w.eq_ignore_ascii_case("HELLO ")).unwrap_or(false);
+        let first = line.trim_start().get(..6).map(|w| w.eq_ignore_ascii_case("HELLO ") || w.eq_ignore_ascii_case("LOGIN ")).unwrap_or(false);
         if first {
-            if self.conns[&id].nick.is_some() {
-                return vec![Out::Send(id, chat::Event::Err("HELLO must be the first line".into()).line())];
-            }
-            return match Cmd::parse(line) {
-                Ok(Cmd::Hello(nick)) => self.hello(id, &nick, now),
-                Ok(_) => Vec::new(),
-                Err(e) => vec![Out::Send(id, Event::Err(e).line())],
-            };
+            return vec![Out::Send(id, chat::Event::Err("already signed in".into()).line())];
         }
         let req = match chat::parse_request(line) {
             Ok(r) => r,
             Err(e) => return vec![Out::Send(id, chat::Event::Err(e).line())],
         };
-        let joined = self.conns.get(&id).and_then(|c| c.nick.clone());
-        match (req, joined) {
-            (chat::Request::Quit, _) => {
+        let uid = self.conns.get(&id).and_then(|c| c.user).unwrap_or(NOBODY);
+        match req {
+            chat::Request::Quit => {
                 let mut out = self.leave(id, "quit", now);
                 out.push(Out::Close(id));
                 out
             }
-            (chat::Request::Nick(wanted), None) => self.legacy_join(id, &wanted, now),
-            (chat::Request::Nick(wanted), Some(old)) => self.rename(id, &old, &wanted, now),
-            (chat::Request::Msg(text), joined) => {
-                let mut out = Vec::new();
-                let nick = match joined {
-                    Some(n) => n,
-                    None => {
-                        out.extend(self.legacy_join(id, &format!("guest{}", id), now));
-                        self.conns[&id].nick.clone().unwrap_or_default()
-                    }
-                };
-                match self.home_general() {
-                    Some(cid) => out.extend(self.post(cid, &nick, &proto::clean_text(&text), now)),
-                    None => out.push(Out::Send(id, chat::Event::Err("this server has no text channel".into()).line())),
-                }
-                out
-            }
-            (chat::Request::Who, _) => vec![Out::Send(id, chat::Event::Who(self.nicks()).line())],
+            chat::Request::Nick(_) => vec![Out::Send(
+                id,
+                chat::Event::Err("chat shows your account's username; set a nickname in the Discord app".into()).line(),
+            )],
+            chat::Request::Msg(text) => match self.home_general() {
+                Some(cid) => self.post(cid, uid, &proto::clean_text(&text), now),
+                None => vec![Out::Send(id, chat::Event::Err("this server has no text channel".into()).line())],
+            },
+            chat::Request::Who => vec![Out::Send(id, chat::Event::Who(self.online_users()).line())],
         }
     }
 
-    fn legacy_join(&mut self, id: u32, wanted: &str, now: u64) -> Vec<Out> {
-        let nick = self.free_nick(wanted, id);
-        let peer = match self.conns.get_mut(&id) {
-            Some(c) => {
-                c.nick = Some(nick.clone());
-                c.peer.clone()
-            }
-            None => return Vec::new(),
-        };
-        let mut out = vec![Out::Send(id, chat::Event::Welcome { nick: nick.clone(), room: self.name.clone() }.line())];
+    fn legacy_join(&mut self, id: u32, uid: u64, now: u64) -> Vec<Out> {
+        let username = self.username(uid);
+        let peer = self.conns.get(&id).map(|c| c.peer.clone()).unwrap_or_default();
+        let mut out = vec![Out::Send(id, chat::Event::Welcome { nick: username.clone(), room: self.name.clone() }.line())];
         if let Some(cid) = self.home_general() {
             let ch = &self.channels[&cid];
             let skip = ch.messages.len().saturating_sub(LEGACY_HISTORY);
             for m in ch.messages.iter().skip(skip) {
-                out.push(Out::Send(id, chat::Event::History { time: m.time.clone(), nick: m.nick.clone(), text: m.text.clone() }.line()));
+                out.push(Out::Send(id, chat::Event::History { time: m.time.clone(), nick: self.username(m.uid), text: m.text.clone() }.line()));
             }
         }
-        out.extend(self.arrived(id, &nick, now, true));
-        out.push(Out::Log(format!("{} joined from {} (chat)", nick, peer)));
+        out.extend(self.arrived(id, uid, now, true));
+        out.push(Out::Log(format!("{} signed in from {} (chat)", username, peer)));
         out
     }
 
     // ------------------------------------------------------------------ Discord
 
-    fn hello(&mut self, id: u32, wanted: &str, now: u64) -> Vec<Out> {
-        let nick = self.free_nick(wanted, id);
-        let peer = match self.conns.get_mut(&id) {
-            Some(c) => {
-                c.nick = Some(nick.clone());
-                c.mode = Mode::Discord;
-                c.peer.clone()
-            }
-            None => return Vec::new(),
-        };
-        let mut out = Vec::new();
-        // First visit: a member of the home server.
-        if !self.is_member(HOME, &nick) {
-            if let Some(home) = self.guilds.get_mut(&HOME) {
-                home.members.push(nick.clone());
-                out.push(Out::Save);
-                out.extend(self.guild_to_all(HOME).into_iter().filter(|o| !matches!(o, Out::Send(to, _) if *to == id)));
-            }
-        }
-        out.push(Out::Send(id, Event::Ready { nick: nick.clone(), backend: self.name.clone() }.line()));
+    fn hello(&mut self, id: u32, uid: u64, now: u64) -> Vec<Out> {
+        let peer = self.conns.get(&id).map(|c| c.peer.clone()).unwrap_or_default();
+        let mut out = vec![Out::Send(id, Event::Ready { uid, name: self.name_of(uid) }.line())];
         let guilds: Vec<u32> = self.guilds.keys().copied().collect();
         for g in &guilds {
-            out.extend(self.guild_event(*g, &nick).map(|e| Out::Send(id, e.line())));
+            out.extend(self.guild_event(*g, uid).map(|e| Out::Send(id, e.line())));
         }
         for g in &guilds {
-            if self.is_member(*g, &nick) {
+            if self.is_member(*g, uid) {
                 out.extend(self.joined_picture(id, *g));
             }
         }
-        // Old-protocol people in the home room are online there too.
-        let legacy: Vec<String> =
-            self.conns.values().filter(|c| c.mode == Mode::Legacy).filter_map(|c| c.nick.clone()).collect();
-        for n in legacy {
-            out.push(Out::Send(id, Event::Member { guild: HOME, nick: n, presence: Presence::Online }.line()));
-        }
         out.push(Out::Send(id, Event::Synced.line()));
-        out.extend(self.arrived(id, &nick, now, false));
-        out.push(Out::Log(format!("{} joined from {}", nick, peer)));
+        out.extend(self.arrived(id, uid, now, false));
+        out.push(Out::Log(format!("{} signed in from {}", self.username(uid), peer)));
         out
     }
 
@@ -583,18 +678,15 @@ impl Backend {
         }
         if let Some(g) = self.guilds.get(&guild) {
             for m in &g.members {
-                let presence = if self.online(m) { Presence::Online } else { Presence::Offline };
-                out.push(Out::Send(id, Event::Member { guild, nick: m.clone(), presence }.line()));
+                let presence = if self.online(*m) { Presence::Online } else { Presence::Offline };
+                out.push(Out::Send(id, self.member_event(guild, *m, presence).line()));
             }
         }
         for (sid, v) in &self.voice {
             if self.channels.get(&v.channel).is_some_and(|c| c.guild == guild) {
-                out.push(Out::Send(id, Event::VoiceState { channel: v.channel, sid: *sid, nick: v.nick.clone(), event: VoiceEvent::Join }.line()));
+                out.push(Out::Send(id, Event::VoiceState { channel: v.channel, sid: *sid, uid: v.uid, event: VoiceEvent::Join }.line()));
                 if v.speaking {
-                    out.push(Out::Send(
-                        id,
-                        Event::VoiceState { channel: v.channel, sid: *sid, nick: v.nick.clone(), event: VoiceEvent::Speaking }.line(),
-                    ));
+                    out.push(Out::Send(id, Event::VoiceState { channel: v.channel, sid: *sid, uid: v.uid, event: VoiceEvent::Speaking }.line()));
                 }
             }
         }
@@ -610,53 +702,54 @@ impl Backend {
             Ok(c) => c,
             Err(e) => return Self::err(id, e),
         };
-        let nick = self.conns.get(&id).and_then(|c| c.nick.clone()).unwrap_or_default();
+        let uid = self.conns.get(&id).and_then(|c| c.user).unwrap_or(NOBODY);
+        let who = self.name_of(uid);
         match cmd {
-            Cmd::Hello(_) => Self::err(id, "already connected"),
+            Cmd::Hello { .. } | Cmd::Login { .. } => Self::err(id, "already signed in"),
             Cmd::Ping => vec![Out::Send(id, Event::Pong.line())],
             Cmd::Quit => {
                 let mut out = self.leave(id, "quit", now);
                 out.push(Out::Close(id));
                 out
             }
-            Cmd::Nick(wanted) => self.rename(id, &nick, &wanted, now),
+            Cmd::Nick(n) => self.set_nick(uid, n),
             Cmd::GuildCreate(name) => {
                 if self.guilds.len() >= proto::MAX_GUILDS {
                     return Self::err(id, format!("this backend already hosts {} servers", proto::MAX_GUILDS));
                 }
                 let gid = self.next_guild;
                 self.next_guild += 1;
-                self.guilds.insert(gid, Guild { name: name.clone(), owner: nick.clone(), members: vec![nick.clone()] });
+                self.guilds.insert(gid, Guild { name: name.clone(), owner: uid, members: vec![uid] });
                 self.add_channel(gid, Kind::Text, "general");
                 self.add_channel(gid, Kind::Voice, "General");
                 let mut out = vec![Out::Save];
                 out.extend(self.guild_to_all(gid));
                 out.extend(self.joined_picture(id, gid));
-                out.push(Out::Log(format!("{} made the server \"{}\" ({})", nick, name, gid)));
+                out.push(Out::Log(format!("{} made the server \"{}\" ({})", who, name, gid)));
                 out
             }
             Cmd::GuildJoin(gid) => {
                 if !self.guilds.contains_key(&gid) {
                     return Self::err(id, "no such server");
                 }
-                if self.is_member(gid, &nick) {
+                if self.is_member(gid, uid) {
                     return Vec::new();
                 }
-                self.guilds.get_mut(&gid).unwrap().members.push(nick.clone());
+                self.guilds.get_mut(&gid).unwrap().members.push(uid);
                 let mut out = vec![Out::Save];
                 out.extend(self.guild_to_all(gid));
                 out.extend(self.joined_picture(id, gid));
-                let e = Event::Member { guild: gid, nick: nick.clone(), presence: Presence::Online };
+                let e = self.member_event(gid, uid, Presence::Online);
                 out.extend(self.to_members(gid, &e).into_iter().filter(|o| !matches!(o, Out::Send(to, _) if *to == id)));
-                out.push(Out::Log(format!("{} joined the server \"{}\"", nick, self.guilds[&gid].name)));
+                out.push(Out::Log(format!("{} joined the server \"{}\"", who, self.guilds[&gid].name)));
                 out
             }
             Cmd::GuildLeave(gid) => {
                 let Some(g) = self.guilds.get(&gid) else { return Self::err(id, "no such server") };
-                if same(&g.owner, &nick) {
+                if g.owner == uid {
                     return Self::err(id, "you own this server: delete it instead");
                 }
-                if !self.is_member(gid, &nick) {
+                if !self.is_member(gid, uid) {
                     return Vec::new();
                 }
                 let mut out = Vec::new();
@@ -664,15 +757,15 @@ impl Backend {
                 {
                     out.extend(self.voice_leave(id));
                 }
-                out.extend(self.to_members(gid, &Event::Member { guild: gid, nick: nick.clone(), presence: Presence::Left }));
-                self.guilds.get_mut(&gid).unwrap().members.retain(|m| !same(m, &nick));
+                out.extend(self.to_members(gid, &self.member_event(gid, uid, Presence::Left)));
+                self.guilds.get_mut(&gid).unwrap().members.retain(|m| *m != uid);
                 out.push(Out::Save);
                 out.extend(self.guild_to_all(gid));
                 out
             }
             Cmd::GuildDelete(gid) => {
                 let Some(g) = self.guilds.get(&gid) else { return Self::err(id, "no such server") };
-                if !same(&g.owner, &nick) {
+                if g.owner != uid || g.owner == NOBODY {
                     return Self::err(id, "only the server's owner can delete it");
                 }
                 let mut out = Vec::new();
@@ -685,30 +778,30 @@ impl Backend {
                 out.push(Out::Save);
                 let line = Event::GuildGone(gid).line();
                 out.extend(self.discord_conns().into_iter().map(|(c, _)| Out::Send(c, line.clone())));
-                out.push(Out::Log(format!("{} deleted the server \"{}\"", nick, name)));
+                out.push(Out::Log(format!("{} deleted the server \"{}\"", who, name)));
                 out
             }
             Cmd::ChannelCreate { guild, kind, name } => {
                 let Some(g) = self.guilds.get(&guild) else { return Self::err(id, "no such server") };
-                if !same(&g.owner, &nick) {
+                if g.owner != uid {
                     return Self::err(id, "only the server's owner can make channels");
                 }
                 if self.channels.values().filter(|c| c.guild == guild).count() >= proto::MAX_CHANNELS {
                     return Self::err(id, format!("a server has at most {} channels", proto::MAX_CHANNELS));
                 }
-                if self.channels.values().any(|c| c.guild == guild && c.kind == kind && same(&c.name, &name)) {
+                if self.channels.values().any(|c| c.guild == guild && c.kind == kind && c.name.eq_ignore_ascii_case(&name)) {
                     return Self::err(id, format!("there already is a {} channel called {}", kind.word(), name));
                 }
                 let cid = self.add_channel(guild, kind, &name);
                 let mut out = vec![Out::Save];
                 out.extend(self.to_members(guild, &self.channel_event(cid).unwrap()));
-                out.push(Out::Log(format!("{} made the {} channel {} in \"{}\"", nick, kind.word(), name, self.guilds[&guild].name)));
+                out.push(Out::Log(format!("{} made the {} channel {} in \"{}\"", who, kind.word(), name, self.guilds[&guild].name)));
                 out
             }
             Cmd::ChannelDelete(cid) => {
                 let Some(c) = self.channels.get(&cid) else { return Self::err(id, "no such channel") };
                 let guild = c.guild;
-                if !same(&self.guilds[&guild].owner, &nick) {
+                if self.guilds[&guild].owner != uid {
                     return Self::err(id, "only the server's owner can delete channels");
                 }
                 let mut out = self.drop_voice_in(&[cid]);
@@ -719,20 +812,18 @@ impl Backend {
             }
             Cmd::History(cid) => {
                 let Some(c) = self.channels.get(&cid) else { return Self::err(id, "no such channel") };
-                if !self.is_member(c.guild, &nick) {
+                if !self.is_member(c.guild, uid) {
                     return Self::err(id, "join the server first");
                 }
-                let mut out: Vec<Out> = c
-                    .messages
-                    .iter()
-                    .map(|m| {
-                        Out::Send(
-                            id,
-                            Event::Msg { channel: cid, id: m.id, time: m.time.clone(), nick: m.nick.clone(), text: m.text.clone(), earlier: true }
-                                .line(),
-                        )
-                    })
+                // Who wrote them first (some may have left the server since).
+                let authors: BTreeSet<u64> = c.messages.iter().map(|m| m.uid).collect();
+                let mut out: Vec<Out> = authors
+                    .into_iter()
+                    .map(|u| Out::Send(id, Event::User { uid: u, username: self.username(u), name: self.name_of(u) }.line()))
                     .collect();
+                out.extend(c.messages.iter().map(|m| {
+                    Out::Send(id, Event::Msg { channel: cid, id: m.id, time: m.time.clone(), uid: m.uid, text: m.text.clone(), earlier: true }.line())
+                }));
                 out.push(Out::Send(id, Event::HistoryEnd(cid).line()));
                 out
             }
@@ -741,17 +832,17 @@ impl Backend {
                 if c.kind != Kind::Text {
                     return Self::err(id, "that is a voice channel");
                 }
-                if !self.is_member(c.guild, &nick) {
+                if !self.is_member(c.guild, uid) {
                     return Self::err(id, "join the server first");
                 }
-                self.post(channel, &nick, &text, now)
+                self.post(channel, uid, &text, now)
             }
             Cmd::VoiceJoin(cid) => {
                 let Some(c) = self.channels.get(&cid) else { return Self::err(id, "no such channel") };
                 if c.kind != Kind::Voice {
                     return Self::err(id, "that is a text channel");
                 }
-                if !self.is_member(c.guild, &nick) {
+                if !self.is_member(c.guild, uid) {
                     return Self::err(id, "join the server first");
                 }
                 let guild = c.guild;
@@ -759,13 +850,13 @@ impl Backend {
                 let sid = self.next_sid;
                 self.next_sid += 1;
                 let token = self.token();
-                self.voice.insert(sid, Voice { conn: id, channel: cid, token, nick: nick.clone(), addr: None, last_audio: 0, speaking: false, packets: 0, copies: 0 });
+                self.voice.insert(sid, Voice { conn: id, channel: cid, token, uid, addr: None, last_audio: 0, speaking: false, packets: 0, copies: 0 });
                 if let Some(c) = self.conns.get_mut(&id) {
                     c.sid = Some(sid);
                 }
                 out.push(Out::Send(id, Event::Voice { channel: cid, port: self.voice_port, token, sid }.line()));
-                out.extend(self.to_members(guild, &Event::VoiceState { channel: cid, sid, nick: nick.clone(), event: VoiceEvent::Join }));
-                out.push(Out::Log(format!("{} joined the voice channel {}", nick, self.channels[&cid].name)));
+                out.extend(self.to_members(guild, &Event::VoiceState { channel: cid, sid, uid, event: VoiceEvent::Join }));
+                out.push(Out::Log(format!("{} joined the voice channel {}", who, self.channels[&cid].name)));
                 out
             }
             Cmd::VoiceLeave => self.voice_leave(id),
@@ -774,59 +865,39 @@ impl Backend {
 
     /// Post a message in a text channel: kept, sent to the server's members (and to the
     /// old-protocol room when it is the home server's `#general`).
-    fn post(&mut self, cid: u32, nick: &str, text: &str, now: u64) -> Vec<Out> {
+    fn post(&mut self, cid: u32, uid: u64, text: &str, now: u64) -> Vec<Out> {
         let time = chat::hms(now / 1000);
         let mid = self.next_msg;
         self.next_msg += 1;
         let Some(c) = self.channels.get_mut(&cid) else { return Vec::new() };
-        c.messages.push_back(Message { id: mid, time: time.clone(), nick: nick.into(), text: text.into() });
+        c.messages.push_back(Message { id: mid, time: time.clone(), uid, text: text.into() });
         while c.messages.len() > proto::HISTORY {
             c.messages.pop_front();
         }
         let guild = c.guild;
         let name = c.name.clone();
         let mut out = vec![Out::Save];
-        out.extend(self.to_members(
-            guild,
-            &Event::Msg { channel: cid, id: mid, time: time.clone(), nick: nick.into(), text: text.into(), earlier: false },
-        ));
+        out.extend(self.to_members(guild, &Event::Msg { channel: cid, id: mid, time: time.clone(), uid, text: text.into(), earlier: false }));
         if Some(cid) == self.home_general() {
-            out.extend(self.to_legacy(&chat::Event::Msg { time, nick: nick.into(), text: text.into() }.line()));
+            out.extend(self.to_legacy(&chat::Event::Msg { time, nick: self.username(uid), text: text.into() }.line()));
         }
-        out.push(Out::Log(format!("#{} <{}> {}", name, nick, text)));
+        out.push(Out::Log(format!("#{} <{}> {}", name, self.username(uid), text)));
         out
     }
 
-    fn rename(&mut self, id: u32, old: &str, wanted: &str, now: u64) -> Vec<Out> {
-        if wanted == old {
+    /// `NICK`: the name this backend shows for the user (None: the display name again).
+    fn set_nick(&mut self, uid: u64, nick: Option<String>) -> Vec<Out> {
+        let Some(a) = self.users.get_mut(&uid) else { return Vec::new() };
+        if a.nick == nick {
             return Vec::new();
         }
-        if self.taken(wanted, id) {
-            return vec![Out::Send(id, chat::Event::Err(format!("nickname {} is taken", wanted)).line())];
-        }
-        if let Some(c) = self.conns.get_mut(&id) {
-            c.nick = Some(wanted.to_string());
-        }
-        for g in self.guilds.values_mut() {
-            for m in g.members.iter_mut() {
-                if same(m, old) {
-                    *m = wanted.to_string();
-                }
-            }
-            if same(&g.owner, old) {
-                g.owner = wanted.to_string();
-            }
-        }
-        for v in self.voice.values_mut() {
-            if v.conn == id {
-                v.nick = wanted.to_string();
-            }
-        }
+        let old = a.nick.clone().unwrap_or_else(|| a.display.clone());
+        a.nick = nick;
+        let name = self.name_of(uid);
         let mut out = vec![Out::Save];
-        let line = Event::Renamed { old: old.into(), new: wanted.into() }.line();
+        let line = Event::Renamed { uid, name: name.clone() }.line();
         out.extend(self.discord_conns().into_iter().map(|(c, _)| Out::Send(c, line.clone())));
-        out.extend(self.to_legacy(&chat::Event::Nick { time: chat::hms(now / 1000), old: old.into(), new: wanted.into() }.line()));
-        out.push(Out::Log(format!("{} is now {}", old, wanted)));
+        out.push(Out::Log(format!("{} is now {}", old, name)));
         out
     }
 
@@ -836,12 +907,13 @@ impl Backend {
         let Some(sid) = self.conns.get_mut(&id).and_then(|c| c.sid.take()) else { return Vec::new() };
         let Some(v) = self.voice.remove(&sid) else { return Vec::new() };
         let Some(guild) = self.channels.get(&v.channel).map(|c| c.guild) else { return Vec::new() };
-        let mut out = self.to_members(guild, &Event::VoiceState { channel: v.channel, sid, nick: v.nick.clone(), event: VoiceEvent::Leave });
+        let e = Event::VoiceState { channel: v.channel, sid, uid: v.uid, event: VoiceEvent::Leave };
+        let mut out = self.to_members(guild, &e);
         // The leaver hears about it too (it may no longer be a member, after GLEAVE).
         if !out.iter().any(|o| matches!(o, Out::Send(to, _) if *to == id)) {
-            out.push(Out::Send(id, Event::VoiceState { channel: v.channel, sid, nick: v.nick.clone(), event: VoiceEvent::Leave }.line()));
+            out.push(Out::Send(id, e.line()));
         }
-        out.push(Out::Log(format!("{} left voice", v.nick)));
+        out.push(Out::Log(format!("{} left voice", self.name_of(v.uid))));
         out
     }
 
@@ -886,11 +958,11 @@ impl Backend {
         }
         if !self.voice[&sid].speaking {
             self.voice.get_mut(&sid).unwrap().speaking = true;
-            let v = &self.voice[&sid];
+            let uid = self.voice[&sid].uid;
             let cname = self.channels.get(&channel).map(|c| c.name.clone()).unwrap_or_default();
-            out.push(Out::Log(format!("{} is talking in {}", v.nick, cname)));
+            out.push(Out::Log(format!("{} is talking in {}", self.name_of(uid), cname)));
             if let Some(guild) = self.channels.get(&channel).map(|c| c.guild) {
-                out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, nick: v.nick.clone(), event: VoiceEvent::Speaking }));
+                out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, uid, event: VoiceEvent::Speaking }));
             }
         }
         out
@@ -908,12 +980,12 @@ impl Backend {
         for sid in quiet {
             let v = self.voice.get_mut(&sid).unwrap();
             v.speaking = false;
-            let (channel, nick) = (v.channel, v.nick.clone());
-            out.push(Out::Log(format!("{} stopped talking ({} packets, {} forwarded)", nick, v.packets, v.copies)));
+            let (channel, uid, packets, copies) = (v.channel, v.uid, v.packets, v.copies);
             v.packets = 0;
             v.copies = 0;
+            out.push(Out::Log(format!("{} stopped talking ({} packets, {} forwarded)", self.name_of(uid), packets, copies)));
             if let Some(guild) = self.channels.get(&channel).map(|c| c.guild) {
-                out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, nick, event: VoiceEvent::Quiet }));
+                out.extend(self.to_members(guild, &Event::VoiceState { channel, sid, uid, event: VoiceEvent::Quiet }));
             }
         }
         out
