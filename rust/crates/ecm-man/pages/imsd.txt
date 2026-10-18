@@ -1,0 +1,173 @@
+NAME
+    imsd - the carrier's IMS server: registrations, calls, texts, peering
+
+SYNOPSIS
+    imsd start [--wait]
+
+    imsd stop | status | log [n]
+
+    imsd config | config keys | config set <key> <value>...
+
+    imsd peer add <domain> <ip[:port]|srv> <secret>
+
+    imsd peer remove <domain> | peers
+
+    imsd enable | disable
+
+DESCRIPTION
+    The heart of a carrier's phone service (VoLTE, SMS, MMS). It runs on
+    the carrier's IMS computer, normally the same computer as cored,
+    beside smscd, mmscd and mrfd. One program plays every IMS role:
+
+      P-CSCF    the phones' entry point (SIP, UDP 5060)
+      S-CSCF    registrations, checked with the SIM (IMS AKA)
+      TAS       caller ID, forwarding, call waiting, DND,
+                block lists, voicemail, three-way calls
+      border    calls and texts to and from other carriers
+      relay     every call's voice goes through it
+
+    A phone registers when its telephonyd has the IMS bearer from
+    celld. imsd asks cored's HSS (TCP 3868) for the SIM's challenge
+    (MAR), checks the answer, records the registration (SAR) and gives
+    the phone its number. A phone can only send from the IMS address
+    registered for its number, so nobody can call or text as another.
+
+    Calls are relayed back to back: each leg's voice uses a pair of
+    UDP ports from relay_ports, and imsd asks cored for a voice bearer
+    (AAR) for each phone. A phone that does not answer within
+    no_answer seconds goes to voicemail on mrfd (or to its no-answer
+    forwarding). Texts are passed to smscd and from smscd to the
+    phone; registrations are announced to smscd, mmscd and mrfd so
+    stored texts and voicemail notices go out at once. Every call
+    ends in a CDR line.
+
+    At start imsd asks the HSS (NUM) for the carrier, its SIP domain
+    (cored ims domain=, default <carrier>.ecm), the P-CSCF address and
+    the phones' IMS pool. With --wait it keeps asking until cored
+    answers (for boot); without it, it gives up after 5 seconds.
+
+COMMANDS
+    start [--wait]
+        Run imsd (background it: imsd start &).
+
+    stop, status, log [n]
+        Ask the running imsd over its admin socket (127.0.0.1, TCP
+        7721). status shows the domain, carrier, ims_ip, public_ip,
+        whether the HSS is up, counters, then one line per
+        registration (reg number imsi contact expires-in calls), call
+        (call from to state seconds) and peer. log shows the last n
+        lines (default 50).
+
+    config, config keys, config set <key> <value>...
+        Show /etc/imsd.toml with defaults filled in, explain the keys,
+        or change some (checked before saving). Restart imsd to apply.
+
+    peer add <domain> <ip[:port]|srv> <secret>
+        Add (or replace) another carrier in the peers key. srv finds
+        its border in DNS. peer remove drops it; peers lists them
+        (without secrets).
+
+    enable, disable
+        Start (or stop starting) imsd at boot: the line
+        "imsd start --wait &" in /services.cfg.
+
+CONFIG
+    /etc/imsd.toml, key = value lines. On cored's own computer every
+    key can stay at its default.
+
+    hss = 127.0.0.1:3868
+        cored's HSS port.
+
+    hss_secret = ""
+        cored's hss_secret, when cored runs on another computer.
+
+    ims_ip = ""
+        This computer's address towards the phones. Default: the
+        P-CSCF the HSS names (cored ims pcscf=, default the core's
+        gateway address).
+
+    public_ip = ""
+        The address towards other carriers (default: ims_ip).
+
+    smsc = "", mrf = "", mmsc = ""
+        smscd, mrfd and mmscd. Defaults: ims_ip port 5062, 5064 and
+        5063.
+
+    mmsc_http = 8002
+        mmscd's http_port: phones are told to send and fetch MMS at
+        http://<mmsc>:<mmsc_http>/mms.
+
+    vvm_http = 8003
+        mrfd's http_port: visual voicemail at http://<mrf>:<vvm_http>/vm.
+
+    relay_ports = 30000-31000
+        The media relay's UDP ports, from-to (at least 4).
+
+    no_answer = 30
+        Seconds a phone rings before voicemail (5 to 120).
+
+    max_expires = 3600
+        The longest registration, seconds (60 to 86400).
+
+    peers = ""
+        Other carriers: domain@ip[:port]/secret, ... (domain@srv/secret
+        finds the border in DNS). Easier with imsd peer add.
+
+    public_peering = false
+        true: also take and send calls with carriers that publish ENUM
+        and SRV but are not listed (no secret).
+
+    admin_port = 7721
+        The admin socket (127.0.0.1).
+
+PEERING
+    A number that is not this carrier's is looked up with ENUM: a
+    NAPTR record for the number (or for its block, the number without
+    the last 4 digits) under e164.arpa gives the SIP domain, and
+    _sip._udp.<domain> SRV gives that carrier's border (unless the
+    peer entry has an address). Answers are cached for 5 minutes.
+
+    Both carriers add each other with the same secret. Each request
+    over the border carries a P-ECM-Peer header with the sender's
+    domain and a proof: HMAC-SHA256 of the secret over "ECM-NNI", the
+    domain and the Call-ID. A request from a listed peer with a wrong
+    proof, or from another address than the configured one, and a
+    request from an unlisted carrier (without public_peering), gets
+    403. Picture messages between carriers go by MM4 (see mmscd),
+    with the same secrets.
+
+FILES
+    /etc/imsd.toml
+        The settings.
+
+    /var/log/imsd.log
+        The log (rotated at 64 KB).
+
+    /var/log/cdr/imsd.cdr
+        One line per call.
+
+EXAMPLES
+    A carrier's IMS on the core's computer:
+
+      cored ims pool=10.250.0.0/16
+      imsd start &
+      smscd start &
+      mmscd start &
+      mrfd start &
+      imsd enable
+      imsd status
+
+    Peering with another carrier (it does the same with our domain):
+
+      imsd peer add lakeline.ecm 100.66.0.9 s3cret
+      imsd peer add far.ecm srv x7k2q
+      imsd stop
+      imsd start &
+
+NOTES
+    "the HSS has no IMS set up (cored ims pool=...) and imsd.toml has
+    no ims_ip": run cored ims first. "the HSS at ... doesn't answer
+    (is cored running?)": start cored, or use imsd start --wait.
+
+SEE ALSO
+    telephony, cored, smscd, mmscd, mrfd, telephonyd, dig, cellular

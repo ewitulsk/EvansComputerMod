@@ -6,7 +6,9 @@
 # whois work by name. Controls: the same name again, a wrong password and a reserved name
 # are refused; with the registry's primary stopped the secondary still answers.
 # Then a TLD: applying for .test is refused, applying with a lame nameserver is refused,
-# applying for .base with a working nameserver puts it in the root zone.
+# applying for .base with a working nameserver puts it in the root zone. IANA's ianad also
+# keeps e164.arpa (ENUM, docs/TELEPHONY.md): starting, it delegates that zone (root serial 2),
+# so the new TLD is serial 3.
 [[node]]
 name = "root"
 ifaces = 1
@@ -83,7 +85,8 @@ steps = '''
 send root "named &"
 expect root /zone \.: loaded serial 1/
 send root "ianad &"
-expect root /TLD applications on port 80/
+expect root /TLD and number block applications on port 80/
+expect_any root /e164\.arpa delegated to iana\.ring\. \(serial 2\)/
 send reg "named &"
 expect reg /zone ecm\.: loaded serial 1/
 send reg "registryd &"
@@ -152,9 +155,9 @@ send client "domain --iana http://10.53.0.1/ tld apply base ns1.base=10.53.0.8 n
 expect client /ns2\.base\. \(10\.53\.0\.99\) did not answer .*lame/ within 20s
 wait_prompt client
 send client "domain --iana http://10.53.0.1/ tld apply base ns1.base=10.53.0.8"
-expect client /\.base is delegated to ns1\.base\.; root zone serial 2/ within 20s
+expect client /\.base is delegated to ns1\.base\.; root zone serial 3/ within 20s
 wait_prompt client
-expect_any root /zone \.: loaded serial 2/
+expect_any root /zone \.: loaded serial 3/
 send client "named flush"
 wait_prompt client
 send client "dig +trace www.shop.base"

@@ -71,11 +71,12 @@ public final class ModemSimStore extends SavedData {
 
     // ------------------------------------------------------------ the reference in the module state
 
-    /** {@code {carrier, imsi, slot}}: what a modem's (client-visible) state says about its SIM. */
+    /** {@code {carrier, imsi, msisdn, slot}}: what a modem's (client-visible) state says about its SIM. */
     public static CompoundTag writeRef(SimIdentity id, String slot) {
         CompoundTag t = new CompoundTag();
         t.putString("carrier", id.carrier());
         t.putLong("imsi", id.imsi());
+        if (!id.msisdn().isEmpty()) t.putString("msisdn", id.msisdn());
         t.putString("slot", slot);
         return t;
     }
@@ -89,7 +90,7 @@ public final class ModemSimStore extends SavedData {
     public static @Nullable SimIdentity identity(@Nullable CompoundTag t) {
         if (t == null || !t.contains("carrier")) return null;
         try {
-            return new SimIdentity(t.getString("carrier"), t.getLong("imsi"));
+            return new SimIdentity(t.getString("carrier"), t.getLong("imsi"), t.getString("msisdn"));
         } catch (IllegalArgumentException e) {
             return null;
         }

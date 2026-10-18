@@ -322,6 +322,30 @@ public final class UiManager implements CompositorHost {
                 }
                 return "ok\n";
             }
+            case "volte" -> {
+                // telephonyd's report (docs/TELEPHONY.md): volte <0|1> <number|->
+                PhoneUi p = phone;
+                if (p == null) return "gui: not a phone\n";
+                if (parts.length < 2) return "usage: volte 0|1 [NUMBER]\n";
+                p.volteReport("1".equals(parts[1]), parts.length > 2 ? parts[2] : "-");
+                return "ok\n";
+            }
+            case "ring" -> {
+                // telephonyd: a call rings (the holder gets a HUD message): ring <0|1> <name, percent-encoded>
+                PhoneUi p = phone;
+                if (p == null) return "gui: not a phone\n";
+                if (parts.length < 2) return "usage: ring 0|1 [NAME]\n";
+                p.ringing("1".equals(parts[1]) ? pctDecode(parts.length > 2 ? parts[2] : "") : null);
+                return "ok\n";
+            }
+            case "notify" -> {
+                // a system daemon posts a notification for an app: notify <app> <tag> <title> <body> (percent-encoded)
+                Compositor c = compositor;
+                if (c == null) return "gui: not running\n";
+                if (parts.length < 5) return "usage: notify APP TAG TITLE BODY\n";
+                c.postSystem(parts[1], pctDecode(parts[2]), pctDecode(parts[3]), pctDecode(parts[4]));
+                return "ok\n";
+            }
             case "prompt" -> {
                 // Show the shell's permission dialog (P4 routes real prompts this way); the answer is logged.
                 Compositor c = compositor;
@@ -335,9 +359,29 @@ public final class UiManager implements CompositorHost {
                 return "gui: asked the shell (request " + req + ")\n";
             }
             default -> {
-                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, cell, prompt)\n";
+                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, cell, volte, ring, notify, prompt)\n";
             }
         }
+    }
+
+    /** {@code %XX} escapes (ecm_tel::ctl's encoding); {@code -} alone is empty. */
+    public static String pctDecode(String s) {
+        if (s == null || s.equals("-")) return "";
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i = 0; i < b.length; i++) {
+            if (b[i] == '%' && i + 2 < b.length) {
+                try {
+                    o.write(Integer.parseInt(new String(b, i + 1, 2, java.nio.charset.StandardCharsets.US_ASCII), 16));
+                    i += 2;
+                    continue;
+                } catch (NumberFormatException ignored) {
+                    // a plain '%'
+                }
+            }
+            o.write(b[i]);
+        }
+        return o.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public String status() {
@@ -686,6 +730,12 @@ public final class UiManager implements CompositorHost {
      * (it keeps that app's identity and permissions: no escape through Launch
      * or {@code /dev/uictl launch}).
      */
+    @Override
+    public void raise(String appId) {
+        PhoneUi p = phone;
+        if (p != null) p.launch(appId, List.of());
+    }
+
     @Override
     public int launch(int fromPid, String appId, List<String> args) {
         var apps = computer.getAppManager();

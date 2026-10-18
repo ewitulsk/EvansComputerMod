@@ -56,6 +56,21 @@ pub fn simauth_v1(k: &[u8; KEY_LEN], rand: &[u8; RAND_LEN]) -> SimResponse {
     SimResponse { res, ks }
 }
 
+/// IMS AKA (docs/TELEPHONY.md): the same construction with IMS labels, so the
+/// keys the phone's IMS stack gets differ from the radio's.
+///
+/// ```text
+/// RES = HMAC-SHA256(K, "ECM-IMS-RES" || RAND)[0..16)
+/// KS  = HMAC-SHA256(K, "ECM-IMS-KS"  || RAND)
+/// ```
+pub fn ims_aka(k: &[u8; KEY_LEN], rand: &[u8; RAND_LEN]) -> SimResponse {
+    let r = hmac_sha256_parts(k, &[b"ECM-IMS-RES", rand]);
+    let ks = hmac_sha256_parts(k, &[b"ECM-IMS-KS", rand]);
+    let mut res = [0u8; RES_LEN];
+    res.copy_from_slice(&r[..RES_LEN]);
+    SimResponse { res, ks }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimIdentity {
     pub carrier: String,
@@ -77,6 +92,10 @@ pub enum SimError {
 pub trait Sim {
     fn identity(&self) -> Result<SimIdentity, SimError>;
     fn respond(&mut self, rand: &[u8; RAND_LEN]) -> Result<SimResponse, SimError>;
+    /// IMS AKA ([`ims_aka`]): the SIM peripheral's `respond_ims`.
+    fn respond_ims(&mut self, _rand: &[u8; RAND_LEN]) -> Result<SimResponse, SimError> {
+        Err(SimError::Failed)
+    }
 }
 
 /// A SIM whose key is known to this program: tests and the simulator. Real
@@ -99,6 +118,9 @@ impl Sim for SoftSim {
     }
     fn respond(&mut self, rand: &[u8; RAND_LEN]) -> Result<SimResponse, SimError> {
         Ok(simauth_v1(&self.key, rand))
+    }
+    fn respond_ims(&mut self, rand: &[u8; RAND_LEN]) -> Result<SimResponse, SimError> {
+        Ok(ims_aka(&self.key, rand))
     }
 }
 

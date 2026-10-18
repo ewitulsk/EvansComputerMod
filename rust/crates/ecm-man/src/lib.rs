@@ -26,6 +26,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Voice and Bluetooth", &["voice", "arecord", "bluetooth", "bluetoothctl"]),
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
+    ("Calls and texts", &["telephony", "dialer", "messages", "contacts", "tel", "sms", "telephonyd", "imsd", "smscd", "mmscd", "mrfd"]),
     ("Cards", &["cards", "cardtool"]),
     ("Games, sound and video", &["gba", "gba-app", "controllertest", "mousetest", "gfxtest", "beep", "aplay", "mixer", "player", "video", "videoplayer", "gfx"]),
 ];

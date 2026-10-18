@@ -1,0 +1,8 @@
+id          = "dev.ecm.messages"
+name        = "Messages"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Texts, pictures, voice notes and group chats"
+publisher   = "ECM"
+permissions = ["sms", "contacts", "files:documents", "microphone", "notifications"]
+icon        = "icon.png"

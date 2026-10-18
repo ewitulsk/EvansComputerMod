@@ -1,0 +1,131 @@
+NAME
+    mmscd - the carrier's picture message centre (MMSC)
+
+SYNOPSIS
+    mmscd start [--wait]
+
+    mmscd stop | status | stored | log [n]
+
+    mmscd config | config keys | config set <key> <value>...
+
+    mmscd enable | disable
+
+DESCRIPTION
+    Stores and forwards picture messages, voice notes, contact cards
+    and group texts (MMS). It runs on the carrier's IMS computer
+    beside imsd and cored. It listens on HTTP (TCP 8002) for the
+    phones, SIP (UDP 5063) for imsd's registration notices, and SMTP
+    (TCP 25) for MM4 from other carriers.
+
+    A phone POSTs the message to http://<mmsc>:8002/mms over its data
+    connection. mmscd asks cored's HSS who is at that address (IPD),
+    so the sender can't be faked; a message over max_kb is refused.
+    The message is stored and the sender sees Sent. Every recipient
+    gets a notice as a WAP push (a binary text through smscd, which
+    wakes an idle phone and waits for an off one). The recipient's
+    phone fetches the message (GET /mms/<id>) and confirms; the
+    sender then gets Delivered. With several recipients each phone
+    gets the whole list, so replies go to the whole group.
+
+    A recipient whose phone doesn't fetch MMS (a Terminal, or
+    telephonyd --no-mms) gets a text with a link instead: a web page
+    (/v/<id>) to open in the Browser. Content waits expiry minutes to
+    be fetched. One CDR line per MMS.
+
+    At start mmscd asks the HSS (NUM) for the carrier, the domain and
+    its address. With --wait it keeps asking until cored answers (for
+    boot); without it, it gives up after 5 seconds.
+
+COMMANDS
+    start [--wait]
+        Run mmscd (background it: mmscd start &).
+
+    stop, status, stored, log [n]
+        Ask the running mmscd over its admin socket (127.0.0.1, TCP
+        7723). status: the domain, the URL, whether the HSS is up, the
+        stored count and the peers. stored: one line per message (mms
+        id from to size, and each recipient waiting, notified, fetched
+        or delivered). log: the last n lines (default 50).
+
+    config, config keys, config set <key> <value>...
+        Show /etc/mmscd.toml with defaults filled in, explain the keys,
+        or change some. Restart mmscd to apply.
+
+    enable, disable
+        Start (or stop starting) mmscd at boot: the line
+        "mmscd start --wait &" in /services.cfg.
+
+OTHER CARRIERS
+    A recipient on another carrier is found by ENUM (its SIP domain),
+    then that domain's MX record (else its own address). mmscd sends
+    the message there by SMTP, port 25 (MM4_forward.REQ), and the
+    delivery report comes back the same way. Each MM4 message carries
+    an X-ECM-Peer proof made with the secret in peers, the same
+    secret both carriers use for imsd's peering. MM4 from a carrier
+    that is not listed is refused unless public_peering is true.
+
+CONFIG
+    /etc/mmscd.toml, key = value lines.
+
+    hss = 127.0.0.1:3868
+        cored's HSS port.
+
+    hss_secret = ""
+        cored's hss_secret, when cored runs on another computer.
+
+    ip = ""
+        This computer's address. Default: the MMSC the HSS names
+        (cored ims mmsc=), else its P-CSCF.
+
+    http_port = 8002
+        Where phones send and fetch MMS.
+
+    smsc = ""
+        smscd, for the notices (default: the P-CSCF's port 5062).
+
+    max_kb = 600
+        The largest MMS accepted, KB.
+
+    expiry = 140
+        Minutes content waits to be fetched (140 = 7 in-game days).
+
+    peers = ""
+        Other carriers' MMSCs: domain/secret, ...
+
+    public_peering = false
+        true: also MM4 from carriers that are not listed.
+
+    mm4_port = 25
+        The SMTP port MM4 arrives on.
+
+    admin_port = 7723
+        The admin socket (127.0.0.1).
+
+FILES
+    /etc/mmscd.toml
+        The settings.
+
+    /var/spool/mms/
+        Stored message content.
+
+    /var/log/mmscd.log
+        The log (rotated at 64 KB).
+
+    /var/log/cdr/mmscd.cdr
+        One line per MMS.
+
+EXAMPLES
+      mmscd start &
+      mmscd enable
+      mmscd status
+      mmscd config set peers lakeline.ecm/s3cret max_kb 1000
+
+NOTES
+    Phones learn the MMSC's URL when they register with imsd: if you
+    change http_port, set imsd's mmsc_http to the same port. Other
+    carriers always send MM4 to port 25: keep mm4_port at 25 unless
+    testing. The key of the Browser links (/v/<id>) is made once and
+    kept in /var/mmscd/link.key, so links in old texts keep working.
+
+SEE ALSO
+    telephony, imsd, smscd, mrfd, cored, sms, messages

@@ -64,10 +64,17 @@ public class UiGoldenTest {
             // #general, then medium and wide with the rail, channels, voice talkers and members.
             "discord_compact", "discord_medium", "discord_wide",
             // Cellular v2 operator apps (record_cell_sessions in ecm-cell-ui): Cell Site and Carrier Console at three sizes.
-            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide",
+            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide", "carrier_numbers",
             // The Browser (dev.ecm.browser, record_browser_sessions in browser): the styled sample site on a phone and
             // at medium (flexbox, @media), a Tech Village site unstyled in the theme colours at wide.
-            "browser_compact", "browser_medium", "browser_wide", "browser_forms"};
+            "browser_compact", "browser_medium", "browser_wide", "browser_forms",
+            // Telephony (ecm-tel-ui; record_dialer_sessions, record_messages_sessions, record_contacts_sessions):
+            // Phone's keypad, recents and favourites, an incoming call and a call in progress; Messages' list,
+            // a 1:1 thread with its statuses, list and thread side by side, a group thread with a picture and
+            // compose with the part counter; Contacts' list with My card, a contact page, both side by side, the edit form.
+            "dialer_compact", "dialer_medium", "dialer_wide", "dialer_incoming", "dialer_in_call",
+            "messages_compact", "messages_medium", "messages_wide", "messages_group", "messages_compose",
+            "contacts_compact", "contacts_medium", "contacts_wide", "contacts_edit"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

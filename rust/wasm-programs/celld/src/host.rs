@@ -69,8 +69,13 @@ pub struct HostIo {
     slot_base: u64,
     slot_at: Instant,
     tun_fd: Option<i32>,
+    /// `ims0`, the IMS bearer's tun (docs/TELEPHONY.md).
+    ims_fd: Option<i32>,
     phone: bool,
     log: Logger,
+    /// The phone's state, read from `/dev/uictl phone` now and then.
+    asleep: bool,
+    asleep_at: Option<Instant>,
 }
 
 impl HostIo {
@@ -210,6 +215,91 @@ impl Io for HostIo {
 
     fn log(&mut self, line: &str) {
         self.log.line(line);
+    }
+
+    fn ims_open(&mut self, mac: [u8; 6], ip: [u8; 4], prefix: u8) -> Result<(), String> {
+        self.ims_close();
+        let fd = tun::open("ims0", mac, ip, prefix);
+        if fd < 0 {
+            return Err(format!("error {fd}"));
+        }
+        self.ims_fd = Some(fd);
+        Ok(())
+    }
+
+    fn ims_close(&mut self) {
+        if let Some(fd) = self.ims_fd.take() {
+            socket::close(fd);
+        }
+    }
+
+    fn ims_read(&mut self) -> Option<Vec<u8>> {
+        let fd = self.ims_fd?;
+        let mut buf = vec![0u8; 2048];
+        let n = tun::read(fd, &mut buf);
+        if n <= 0 {
+            return None;
+        }
+        buf.truncate(n as usize);
+        Some(buf)
+    }
+
+    fn ims_write(&mut self, frame: &[u8]) {
+        if let Some(fd) = self.ims_fd {
+            tun::write(fd, frame);
+        }
+    }
+
+    fn ims_route(&mut self, pcscf: [u8; 4]) -> Result<(), String> {
+        let n = ecm_host_abi::net_config::iface_count();
+        let idx = (0..n).find(|i| ecm_host_abi::net_config::iface_info(*i).is_some_and(|j| j.contains("\"name\":\"ims0\""))).ok_or("ims0 not found")?;
+        match ecm_host_abi::net_config::route_add(&fmt_ip(pcscf), 32, "0.0.0.0", idx) {
+            0 => Ok(()),
+            e => Err(e.to_string()),
+        }
+    }
+
+    fn sleeping(&mut self) -> bool {
+        if !self.phone {
+            return false;
+        }
+        if self.asleep_at.is_none_or(|t| t.elapsed() >= Duration::from_millis(250)) {
+            self.asleep_at = Some(Instant::now());
+            let mut st = String::new();
+            if let Ok(mut f) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uictl") {
+                if f.write_all(b"phone").is_ok() {
+                    let _ = f.read_to_string(&mut st);
+                }
+            }
+            self.asleep = st.lines().any(|l| l.trim() == "state asleep" || l.trim() == "sleep_pending 1");
+        }
+        self.asleep
+    }
+
+    fn wakelock(&mut self, ms: u64) {
+        if !self.phone {
+            return;
+        }
+        // the platform's wake lock (PLATFORM_API.md): per pid, capped at apps.wakelockMaxMs
+        if let Ok(mut f) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uictl") {
+            if f.write_all(format!("wakelock {ms}").as_bytes()).is_ok() {
+                let mut answer = String::new();
+                let _ = f.read_to_string(&mut answer);
+                if answer.trim() != "ok" {
+                    self.log.line(&format!("wakelock {ms}: {}", answer.trim()));
+                }
+            }
+        }
+    }
+
+    fn wake_filter(&mut self, tmsi: Option<u32>) {
+        let line = match tmsi {
+            Some(t) => format!("wake tmsi {t}"),
+            None => "wake off".to_string(),
+        };
+        if let Err(e) = self.framed.control(&line) {
+            self.log.line(&format!("modem: {line}: {e}"));
+        }
     }
 
     fn report(&mut self, bars: u8, carrier: &str) {
@@ -383,6 +473,9 @@ pub fn main() {
         slot_base: 0,
         slot_at: t0,
         tun_fd: None,
+        ims_fd: None,
+        asleep: false,
+        asleep_at: None,
         phone: args.phone,
         log: Logger { t0, last: String::new(), quiet: args.quiet },
     };

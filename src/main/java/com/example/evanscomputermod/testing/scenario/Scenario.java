@@ -208,7 +208,9 @@ public final class Scenario {
         for (Step s : steps) {
             switch (s) {
                 case Note n -> { out.add("-- " + n.text()); last = null; }
-                case Mutation m -> out.add("-- " + m.what());
+                case Mutation m -> {
+                    if (!m.what().equals("-")) out.add("-- " + m.what()); // "-": bookkeeping, not a player step
+                }
                 case Await a -> { out.add("-- wait (up to " + (a.timeoutMs() / 1000) + " s) until " + a.what()); last = null; }
                 case Send c -> {
                     if (!c.node().equals(last)) out.add("[" + c.node() + "]");

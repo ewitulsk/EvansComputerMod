@@ -104,6 +104,9 @@ public interface CompositorHost {
     /** Keyboard focus moved between programs' windows (-1 = none); called under the compositor's lock. */
     default void focusChanged(int oldPid, int newPid) {}
 
+    /** Bring a running app to the front (a tapped notification for it); the phone shows it, a desktop leaves its windows. */
+    default void raise(String appId) {}
+
     /** P4: the file picker answered program {@code pid}: grant its app that one file. */
     default void filePicked(int pid, String path, boolean write) {}
 

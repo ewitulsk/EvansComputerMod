@@ -29,7 +29,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::air::Cause;
+use crate::air::{Bearer, Cause, ImsInfo};
 use crate::codec::{DResult, DecodeError, R, W};
 
 pub const CONTROL_PORT: u16 = 7700;
@@ -105,7 +105,9 @@ pub enum Ctl {
     /// 0x13 site -> core.
     UeAuthResponse { ue: u32, res: [u8; 16] },
     /// 0x14 core -> site: authenticated; protect the air with `ctx` after the SMC.
-    UeAccept { ue: u32, session: u32, ip: IpConfig, tmsi: u32, ctx: AsContext, smc_mac: [u8; 16] },
+    /// `ims`: the IMS bearer, when the carrier offers calls and the SIM has a number
+    /// (a flag byte, then the fields when 1).
+    UeAccept { ue: u32, session: u32, ip: IpConfig, tmsi: u32, ctx: AsContext, smc_mac: [u8; 16], ims: Option<ImsInfo> },
     /// 0x15 core -> site.
     UeReject { ue: u32, cause: Cause },
     /// 0x16 site -> core: attach complete, the phone is up.
@@ -118,7 +120,8 @@ pub enum Ctl {
     /// 0x20 source site -> core.
     HoRequired { session: u32, target_cell: u32 },
     /// 0x21 core -> target site.
-    HoRequest { ho: u32, session: u32, ue: u32, target_cell: u32, ip: IpConfig, tmsi: u32, ctx: AsContext },
+    /// `bearers`: the phone's dedicated bearers (a call's voice flow), restarted at the target.
+    HoRequest { ho: u32, session: u32, ue: u32, target_cell: u32, ip: IpConfig, tmsi: u32, ctx: AsContext, bearers: Vec<Bearer> },
     /// 0x22 target -> core.
     HoRequestAck { ho: u32, ue_id: u16, grant: crate::air::Grant },
     /// 0x23 target -> core or core -> source.
@@ -135,6 +138,13 @@ pub enum Ctl {
     Usage { session: u32, used: u64, quota: u64 },
     /// 0x32 core -> site: refuse this IMSI locally from now on.
     Revoked { imsi: String },
+    /// 0x40 core -> site: a dedicated bearer for a session (PCRF decision, e.g. a call's voice).
+    BearerSetup { session: u32, bearer: Bearer },
+    /// 0x41 core -> site.
+    BearerRelease { session: u32, id: u8 },
+    /// 0x42 site -> core: admitted (`ok`) or not (the cell's voice capacity is full:
+    /// the flow stays best effort on the default scheduling).
+    BearerResult { session: u32, id: u8, ok: bool },
 }
 
 const C_CORE_HELLO: u8 = 0x01;
@@ -161,6 +171,9 @@ const C_PATH_SWITCH_ACK: u8 = 0x26;
 const C_PAGE: u8 = 0x30;
 const C_USAGE: u8 = 0x31;
 const C_REVOKED: u8 = 0x32;
+const C_BEARER_SETUP: u8 = 0x40;
+const C_BEARER_RELEASE: u8 = 0x41;
+const C_BEARER_RESULT: u8 = 0x42;
 
 impl Ctl {
     /// The message with its `u32` length prefix.
@@ -202,10 +215,19 @@ impl Ctl {
             Ctl::UeAuthResponse { ue, res } => {
                 w.u8(C_UE_AUTH_RESP).u32(*ue).raw(res);
             }
-            Ctl::UeAccept { ue, session, ip, tmsi, ctx, smc_mac } => {
+            Ctl::UeAccept { ue, session, ip, tmsi, ctx, smc_mac, ims } => {
                 w.u8(C_UE_ACCEPT).u32(*ue).u32(*session);
                 ip.write(&mut w);
                 w.u32(*tmsi).u32(ctx.epoch).raw(&ctx.k_as).raw(smc_mac);
+                match ims {
+                    Some(i) => {
+                        w.u8(1);
+                        i.write(&mut w);
+                    }
+                    None => {
+                        w.u8(0);
+                    }
+                }
             }
             Ctl::UeReject { ue, cause } => {
                 w.u8(C_UE_REJECT).u32(*ue).u8(*cause as u8);
@@ -222,10 +244,14 @@ impl Ctl {
             Ctl::HoRequired { session, target_cell } => {
                 w.u8(C_HO_REQUIRED).u32(*session).u32(*target_cell);
             }
-            Ctl::HoRequest { ho, session, ue, target_cell, ip, tmsi, ctx } => {
+            Ctl::HoRequest { ho, session, ue, target_cell, ip, tmsi, ctx, bearers } => {
                 w.u8(C_HO_REQUEST).u32(*ho).u32(*session).u32(*ue).u32(*target_cell);
                 ip.write(&mut w);
                 w.u32(*tmsi).u32(ctx.epoch).raw(&ctx.k_as);
+                w.u8(bearers.len().min(8) as u8);
+                for b in bearers.iter().take(8) {
+                    b.write(&mut w);
+                }
             }
             Ctl::HoRequestAck { ho, ue_id, grant } => {
                 w.u8(C_HO_ACK).u32(*ho).u16(*ue_id);
@@ -252,6 +278,16 @@ impl Ctl {
             }
             Ctl::Revoked { imsi } => {
                 w.u8(C_REVOKED).str8(imsi);
+            }
+            Ctl::BearerSetup { session, bearer } => {
+                w.u8(C_BEARER_SETUP).u32(*session);
+                bearer.write(&mut w);
+            }
+            Ctl::BearerRelease { session, id } => {
+                w.u8(C_BEARER_RELEASE).u32(*session).u8(*id);
+            }
+            Ctl::BearerResult { session, id, ok } => {
+                w.u8(C_BEARER_RESULT).u32(*session).u8(*id).u8(*ok as u8);
             }
         }
         let mut v = w.into_vec();
@@ -300,21 +336,29 @@ impl Ctl {
                 tmsi: r.u32()?,
                 ctx: ctx(&mut r)?,
                 smc_mac: r.arr()?,
+                ims: match r.u8()? {
+                    0 => None,
+                    1 => Some(ImsInfo::read(&mut r)?),
+                    _ => return Err(DecodeError::Value("ims flag")),
+                },
             },
             C_UE_REJECT => Ctl::UeReject { ue: r.u32()?, cause: Cause::from_code(r.u8()?)? },
             C_UE_ACTIVE => Ctl::UeActive { session: r.u32()? },
             C_UE_RELEASE => Ctl::UeRelease { session: r.u32()?, cause: Cause::from_code(r.u8()?)? },
             C_UE_IDLE => Ctl::UeIdle { session: r.u32()? },
             C_HO_REQUIRED => Ctl::HoRequired { session: r.u32()?, target_cell: r.u32()? },
-            C_HO_REQUEST => Ctl::HoRequest {
-                ho: r.u32()?,
-                session: r.u32()?,
-                ue: r.u32()?,
-                target_cell: r.u32()?,
-                ip: IpConfig::read(&mut r)?,
-                tmsi: r.u32()?,
-                ctx: ctx(&mut r)?,
-            },
+            C_HO_REQUEST => {
+                let (ho, session, ue, target_cell) = (r.u32()?, r.u32()?, r.u32()?, r.u32()?);
+                let ip = IpConfig::read(&mut r)?;
+                let tmsi = r.u32()?;
+                let ctx = ctx(&mut r)?;
+                let n = r.count8(10)?;
+                let mut bearers = Vec::with_capacity(n);
+                for _ in 0..n {
+                    bearers.push(Bearer::read(&mut r)?);
+                }
+                Ctl::HoRequest { ho, session, ue, target_cell, ip, tmsi, ctx, bearers }
+            }
             C_HO_ACK => Ctl::HoRequestAck { ho: r.u32()?, ue_id: r.u16()?, grant: Grant::read(&mut r)? },
             C_HO_FAILURE => Ctl::HoFailure { ho: r.u32()?, session: r.u32()?, cause: Cause::from_code(r.u8()?)? },
             C_HO_COMMAND => Ctl::HoCommand {
@@ -333,6 +377,17 @@ impl Ctl {
             C_PAGE => Ctl::Page { tmsi: r.u32()? },
             C_USAGE => Ctl::Usage { session: r.u32()?, used: r.u64()?, quota: r.u64()? },
             C_REVOKED => Ctl::Revoked { imsi: r.str8()? },
+            C_BEARER_SETUP => Ctl::BearerSetup { session: r.u32()?, bearer: Bearer::read(&mut r)? },
+            C_BEARER_RELEASE => Ctl::BearerRelease { session: r.u32()?, id: r.u8()? },
+            C_BEARER_RESULT => Ctl::BearerResult {
+                session: r.u32()?,
+                id: r.u8()?,
+                ok: match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::Value("bearer result")),
+                },
+            },
             other => return Err(DecodeError::Type(other)),
         };
         r.end()?;
@@ -365,6 +420,9 @@ impl Ctl {
             Ctl::Page { .. } => "Page",
             Ctl::Usage { .. } => "Usage",
             Ctl::Revoked { .. } => "Revoked",
+            Ctl::BearerSetup { .. } => "BearerSetup",
+            Ctl::BearerRelease { .. } => "BearerRelease",
+            Ctl::BearerResult { .. } => "BearerResult",
         }
     }
 }
@@ -521,6 +579,7 @@ mod tests {
         let ip = IpConfig { ip: [100, 65, 2, 10], prefix: 24, gateway: [100, 65, 2, 1], dns: [1, 1, 1, 1], mtu: 1500 };
         let ctx = AsContext { epoch: 3, k_as: [5; 32] };
         let g = Grant { from_slot: 1, to_slot: 9, period: 1, offset: 0, len: 1, subchannel: 1, cqi: 4 };
+        let bearer = Bearer { id: 1, qci: crate::air::QCI_VOICE, ue_port: 40000, remote: [100, 65, 2, 1], remote_port: 30000 };
         vec![
             Ctl::CoreHello { version: 1, carrier: "cell-red".into(), nonce: [1; 16] },
             Ctl::SiteAuth {
@@ -538,13 +597,23 @@ mod tests {
             Ctl::UeService { ue: 0xB, cell_id: 1, tmsi: 9, count: 2, mac: [3; 16] },
             Ctl::UeChallenge { ue: 0xB, rand: [4; 16] },
             Ctl::UeAuthResponse { ue: 0xB, res: [5; 16] },
-            Ctl::UeAccept { ue: 0xB, session: 7, ip, tmsi: 8, ctx: ctx.clone(), smc_mac: [6; 16] },
+            Ctl::UeAccept { ue: 0xB, session: 7, ip, tmsi: 8, ctx: ctx.clone(), smc_mac: [6; 16], ims: None },
+            Ctl::UeAccept {
+                ue: 0xB,
+                session: 7,
+                ip,
+                tmsi: 8,
+                ctx: ctx.clone(),
+                smc_mac: [6; 16],
+                ims: Some(ImsInfo { ip: [10, 250, 0, 2], prefix: 16, pcscf: [100, 65, 2, 1], domain: "cell-red.ecm".into(), msisdn: "+12145550142".into() }),
+            },
             Ctl::UeReject { ue: 0xB, cause: Cause::Revoked },
             Ctl::UeActive { session: 7 },
             Ctl::UeRelease { session: 7, cause: Cause::QuotaExhausted },
             Ctl::UeIdle { session: 7 },
             Ctl::HoRequired { session: 7, target_cell: 2 },
-            Ctl::HoRequest { ho: 1, session: 7, ue: 0xB, target_cell: 2, ip, tmsi: 8, ctx },
+            Ctl::HoRequest { ho: 1, session: 7, ue: 0xB, target_cell: 2, ip, tmsi: 8, ctx: ctx.clone(), bearers: vec![] },
+            Ctl::HoRequest { ho: 1, session: 7, ue: 0xB, target_cell: 2, ip, tmsi: 8, ctx, bearers: vec![bearer] },
             Ctl::HoRequestAck { ho: 1, ue_id: 3, grant: g },
             Ctl::HoFailure { ho: 1, session: 7, cause: Cause::Congestion },
             Ctl::HoCommand { ho: 1, session: 7, cell_id: 2, addr: 0xA2, profile: 1, channel: 3, epoch: 4, ue_id: 3, grant: g },
@@ -553,6 +622,9 @@ mod tests {
             Ctl::Page { tmsi: 8 },
             Ctl::Usage { session: 7, used: 100, quota: 1000 },
             Ctl::Revoked { imsi: "310150000000009".into() },
+            Ctl::BearerSetup { session: 7, bearer },
+            Ctl::BearerRelease { session: 7, id: 1 },
+            Ctl::BearerResult { session: 7, id: 1, ok: true },
         ]
     }
 

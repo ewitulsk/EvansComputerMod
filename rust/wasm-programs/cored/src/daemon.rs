@@ -11,7 +11,12 @@
 //! | `sites` | `site <id> <connected 0/1> <peer or -> <cells or -> <last heartbeat ms ago or -> <up s or -> <rejected>` per configured site |
 //! | `sessions` | `session <id> <imsi> <ip> <state> <site or -> <cell or -> <used> <quota>` |
 //! | `log [n]`, `handovers [n]` | the last n lines of the log / of the handover log |
-//! | `sim-new [label] [quota]` | write the blank SIM in the Card Reader/Writer: `imsi`, `label`, `ejected` lines |
+//! | `sim-new [label] [quota]` | write the blank SIM in the Card Reader/Writer (with the next free number when the carrier holds a block): `imsi`, `number`, `label`, `ejected` lines |
+//! | `blocks`, `block-add <NPA-NXX>`, `block-remove <NPA-NXX>` | number blocks (docs/TELEPHONY.md) |
+//! | `numbers`, `number <imsi\|label> [+number [ported]]`, `number-release <who>`, `number-move <+number> <who>` | who has which number: `num <number> <imsi> <label>` lines; `ported` for a number ported in from another carrier |
+//! | `enum-key <hex>` | the ENUM key IANA issued with the blocks (`domain enum apply`) |
+//! | `ims pool=<cidr> [pcscf=<ip>] [domain=<d>] [net=<cidr>] [mmsc=<ip>]`, `ims-off` | the IMS bearer (VoLTE, SMS over IMS, MMS) |
+//! | `feature <who> <cfu\|cfb\|cfnr\|cfnrc\|cw\|clir\|dnd\|vm\|block\|unblock> <value>`, `port-code <who> [code]` | the TAS profile in the HSS; `port-code <who>` makes a port-out code signed with the enum key |
 //! | `site-new <id>` | a new site with a random credential: `site`, `secret` lines |
 //! | `add <imsi> <key> [quota] [label]`, `revoke <imsi>`, `unrevoke <imsi>`, `quota <imsi> <bytes>`, `reset-usage <imsi>`, `remove <imsi>`, `label <imsi> <label>`, `release <imsi>`, `site-add <id> <secret>`, `site-remove <id>` | the database operations (`ecm_cell::core::Core::admin`) |
 //! | `stop` | `stopping` |
@@ -44,8 +49,9 @@ pub enum Card {
 /// The `card_reader` peripheral as provisioning needs it (a fake in tests).
 pub trait CardWriter {
     fn card(&mut self) -> Result<Card, String>;
-    /// Write the blank SIM in the reader; `Ok(true)` when Auto Eject Sim pushed it out.
-    fn write(&mut self, imsi: &str, carrier: &str, key_hex: &str) -> Result<bool, String>;
+    /// Write the blank SIM in the reader (`msisdn`: its number, may be empty);
+    /// `Ok(true)` when Auto Eject Sim pushed it out.
+    fn write(&mut self, imsi: &str, carrier: &str, key_hex: &str, msisdn: &str) -> Result<bool, String>;
 }
 
 /// No reader (offline commands that don't write cards).
@@ -54,7 +60,7 @@ impl CardWriter for NoCard {
     fn card(&mut self) -> Result<Card, String> {
         Err("no Card Reader/Writer next to this computer".into())
     }
-    fn write(&mut self, _: &str, _: &str, _: &str) -> Result<bool, String> {
+    fn write(&mut self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, String> {
         Err("no Card Reader/Writer next to this computer".into())
     }
 }
@@ -147,6 +153,23 @@ impl Daemon {
         kv("sites_connected", sites.len().to_string());
         kv("sessions", sessions.len().to_string());
         kv("tunnel_rejects", self.core.tunnel_rejects.to_string());
+        // telephony (docs/TELEPHONY.md)
+        kv("cc", db.cc.clone());
+        kv("blocks", if db.blocks.is_empty() { "-".into() } else { db.blocks.join(",") });
+        kv("enum_key", if db.enum_key.is_some() { "set" } else { "-" }.into());
+        kv("numbers", db.subs.values().filter(|x| !x.ims.msisdn.is_empty()).count().to_string());
+        match &db.ims {
+            Some(i) => {
+                kv("ims", "on".into());
+                kv("ims_pool", format!("{}/{}", fmt_ip(i.pool), i.prefix));
+                kv("pcscf", fmt_ip(i.pcscf));
+                kv("ims_domain", i.domain.clone());
+                kv("mmsc", i.mmsc.map(fmt_ip).unwrap_or_else(|| "-".into()));
+            }
+            None => kv("ims", "off".into()),
+        }
+        kv("hss_port", self.conf.get("hss_port"));
+        kv("ims_policy_drops", self.core.ims_policy_drops.to_string());
         for x in &sites {
             s.push_str(&format!(
                 "site {} {} {} {} {} {}\n",
@@ -259,11 +282,24 @@ impl Daemon {
         let key = hex(&k);
         let label_arg = label.map(|l| format!(" {l}")).unwrap_or_default();
         self.core.admin(&format!("add {imsi} {key} {quota}{label_arg}"), now_ms)?;
+        // the next free number of the carrier's blocks, when it holds one
+        let number = if self.core.db().blocks.is_empty() {
+            String::new()
+        } else {
+            match self.core.admin(&format!("number {imsi}"), now_ms) {
+                Ok(_) => self.core.db().subs[&imsi].ims.msisdn.clone(),
+                Err(e) => {
+                    let _ = self.core.admin(&format!("remove {imsi}"), now_ms);
+                    return Err(format!("no number for the new SIM: {e}"));
+                }
+            }
+        };
         let carrier = self.core.db().carrier.clone();
-        match card.write(&imsi, &carrier, &key) {
+        match card.write(&imsi, &carrier, &key, &number) {
             Ok(ejected) => {
-                self.log(now_ms, &format!("SIM {imsi} written{}", label.map(|l| format!(" ({l})")).unwrap_or_default()));
-                Ok(format!("imsi {imsi}\nlabel {}\nejected {}", label.unwrap_or("-"), ejected as u8))
+                let n = if number.is_empty() { String::new() } else { format!(", number {number}") };
+                self.log(now_ms, &format!("SIM {imsi} written{}{n}", label.map(|l| format!(" ({l})")).unwrap_or_default()));
+                Ok(format!("imsi {imsi}\nnumber {}\nlabel {}\nejected {}", if number.is_empty() { "-" } else { &number }, label.unwrap_or("-"), ejected as u8))
             }
             Err(e) => {
                 let _ = self.core.admin(&format!("remove {imsi}"), now_ms);
@@ -308,12 +344,18 @@ impl Daemon {
                     self.core.admin(&format!("site-add {id} {secret}"), now_ms).map(|_| format!("site {id}\nsecret {secret}"))
                 }
             }
-            [cmd, ..] if ["add", "revoke", "unrevoke", "quota", "reset-usage", "remove", "label", "release", "site-add", "site-remove"].contains(cmd) => {
+            [cmd, ..]
+                if [
+                    "add", "revoke", "unrevoke", "quota", "reset-usage", "remove", "label", "release", "site-add", "site-remove", "block-add", "block-remove", "blocks", "numbers", "number", "number-release",
+                    "number-move", "feature", "port-code", "enum-key", "ims", "ims-off",
+                ]
+                .contains(cmd) =>
+            {
                 self.core.admin(line, now_ms)
             }
             [] => Err("empty command".into()),
             _ => Err(format!(
-                "unknown command '{}' (status, subs, sites, sessions, log, handovers, sim-new, site-new, add, revoke, unrevoke, quota, reset-usage, remove, label, release, site-add, site-remove, stop)",
+                "unknown command '{}' (status, subs, sites, sessions, log, handovers, sim-new, site-new, add, revoke, unrevoke, quota, reset-usage, remove, label, release, site-add, site-remove, blocks, block-add, block-remove, numbers, number, number-release, number-move, ims, ims-off, feature, port-code, enum-key, stop)",
                 line.trim()
             )),
         };
@@ -436,7 +478,7 @@ mod tests {
         fn card(&mut self) -> Result<Card, String> {
             Ok(self.card.clone().unwrap_or(Card::Empty))
         }
-        fn write(&mut self, imsi: &str, carrier: &str, key: &str) -> Result<bool, String> {
+        fn write(&mut self, imsi: &str, carrier: &str, key: &str, _msisdn: &str) -> Result<bool, String> {
             if let Some(e) = &self.fail {
                 return Err(e.clone());
             }
@@ -523,5 +565,26 @@ mod tests {
         assert_eq!(d.handle("stop", 0, &mut r).1, Action::Stop);
         let log = d.handle("log", 0, &mut r).0.unwrap();
         assert!(log.contains("admin: 001010000000042 revoked"), "{log}");
+    }
+
+    #[test]
+    fn enum_key_and_port_codes() {
+        let mut d = daemon();
+        let mut r = FakeReader::default();
+        d.handle("block-add 214-555", 0, &mut r).0.unwrap();
+        d.handle("add 001010000000042 00112233445566778899aabbccddeeff", 0, &mut r).0.unwrap();
+        d.handle("number 001010000000042", 0, &mut r).0.unwrap();
+        assert!(d.handle("port-code +12145550100", 0, &mut r).0.unwrap_err().contains("no enum key"));
+        d.handle("enum-key 000102030405060708090a0b0c0d0e0f", 0, &mut r).0.unwrap();
+        let st = lines(&d.handle("status", 0, &mut r).0.unwrap());
+        assert_eq!(value(&st, "enum_key"), Some("set"));
+        let code = d.handle("port-code +12145550100", 0, &mut r).0.unwrap();
+        let code = code.rsplit(' ').next().unwrap();
+        assert_eq!(code.len(), 15, "{code}");
+        assert_eq!(*code, ecm_cell::db::port_code(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "+12145550100", &code[..6]));
+        d.handle("add 001010000000043 00112233445566778899aabbccddeeff", 0, &mut r).0.unwrap();
+        assert!(d.handle("number 001010000000043 +19725550123 ported", 0, &mut r).0.is_ok());
+        let saved = d.take_out(0).into_iter().filter_map(|o| if let CoreOut::SaveDb(t) = o { Some(t) } else { None }).last().unwrap();
+        assert!(saved.contains("enum key=000102030405060708090a0b0c0d0e0f") && saved.contains("ported=1"), "{saved}");
     }
 }

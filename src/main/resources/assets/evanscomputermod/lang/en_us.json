@@ -177,6 +177,8 @@
   "item.evanscomputermod.modem.sim": "SIM: %s, IMSI %s (sneak-use to take it out)",
   "item.evanscomputermod.sim_card.blank": "Blank. A carrier writes it in a Card Reader/Writer (cored sim new).",
   "item.evanscomputermod.sim_card.carrier": "Carrier: %s",
+  "item.evanscomputermod.sim_card.number": "Number %s",
+  "message.evanscomputermod.ephone.incoming_call": "Incoming call: %s",
   "item.evanscomputermod.sim_card.imsi": "IMSI %s",
   "item.evanscomputermod.sim_card.use": "Right-click an installed LTE / mmWave modem's bay to insert",
   "message.evanscomputermod.modem.blank_sim": "That SIM card is blank: a carrier writes it in a Card Reader/Writer first",

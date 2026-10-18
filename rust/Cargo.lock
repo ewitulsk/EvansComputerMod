@@ -712,6 +712,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "contacts"
+version = "0.1.0"
+dependencies = [
+ "ecm-tel",
+ "ecm-tel-ui",
+ "ecm-ui",
+]
+
+[[package]]
 name = "controllertest"
 version = "0.1.0"
 dependencies = [
@@ -1110,6 +1119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dialer"
+version = "0.1.0"
+dependencies = [
+ "ecm-tel",
+ "ecm-tel-ui",
+ "ecm-ui",
+]
+
+[[package]]
 name = "dig"
 version = "0.1.0"
 dependencies = [
@@ -1203,6 +1221,7 @@ dependencies = [
  "ecm-apps-ui",
  "ecm-audio",
  "ecm-host-abi",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
  "ecm-vte",
@@ -1308,6 +1327,7 @@ dependencies = [
  "ecm-audio",
  "ecm-auth",
  "ecm-chat",
+ "ecm-rtp",
 ]
 
 [[package]]
@@ -1315,6 +1335,7 @@ name = "ecm-dns"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "hmac",
  "sha2",
 ]
 
@@ -1377,6 +1398,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-rtp"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "ecm-ssh-crypto"
 version = "0.1.0"
 dependencies = [
@@ -1395,6 +1423,37 @@ version = "0.1.0"
 dependencies = [
  "ecm-ssh-crypto",
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "ecm-tel"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-rtp",
+ "hmac",
+ "sha2",
+]
+
+[[package]]
+name = "ecm-tel-net"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-dns",
+ "ecm-host-abi",
+ "ecm-tel",
+]
+
+[[package]]
+name = "ecm-tel-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-ui",
+ "ecm-ui-proto",
 ]
 
 [[package]]
@@ -1937,6 +1996,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "imsd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2214,6 +2283,7 @@ dependencies = [
  "ecm-host-abi",
  "ecm-lineedit",
  "ecm-radio",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
  "mlua",
@@ -2370,6 +2440,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "messages"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-tel",
+ "ecm-tel-ui",
+ "ecm-ui",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2432,10 +2512,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmscd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
+]
+
+[[package]]
 name = "mousetest"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "mrfd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
 ]
 
 [[package]]
@@ -2823,6 +2923,7 @@ version = "0.1.0"
 dependencies = [
  "ecm-audio",
  "ecm-host-abi",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
 ]
@@ -3012,6 +3113,7 @@ dependencies = [
  "ecm-host-abi",
  "ecm-lineedit",
  "ecm-radio",
+ "ecm-tel",
  "ecm-ui",
  "ecm-ui-proto",
  "getrandom 0.2.17",
@@ -3967,6 +4069,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sms"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-tel",
+]
+
+[[package]]
+name = "smscd"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-tel",
+ "ecm-tel-net",
+]
+
+[[package]]
 name = "spki"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4174,6 +4295,28 @@ version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
  "ecm-wifi",
+]
+
+[[package]]
+name = "tel"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell-net",
+ "ecm-tel",
+]
+
+[[package]]
+name = "telephonyd"
+version = "0.1.0"
+dependencies = [
+ "celld",
+ "ecm-audio",
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-rtp",
+ "ecm-tel",
+ "ecm-tel-net",
 ]
 
 [[package]]

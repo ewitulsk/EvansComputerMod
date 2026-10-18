@@ -49,6 +49,12 @@ public interface IModuleHost {
 
     /** Wireless controllers connected to the computer (receiver modules feed them), or null if it takes none. */
     @Nullable
+    /**
+     * A cellular modem in this host heard a page for its idle identity: wake the
+     * host's computer if it sleeps (an ePhone in the hotbar or pocket). Any thread.
+     */
+    default void wakeForPage() {}
+
     default com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
         return null;
     }

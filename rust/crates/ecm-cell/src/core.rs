@@ -14,12 +14,12 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::air::{Cause, Grant};
+use crate::air::{Bearer, Cause, Grant, ImsInfo, QCI_VOICE};
 use crate::backhaul::{tunnel_split, AsContext, CellInfo, Ctl, Framer, IpConfig, TunnelJoin, TunnelPacket};
 use crate::codec::{fmt_ip, hex};
 use crate::crypto::{as_key, ct_eq, site_proof, smc_mac, sr_mac, Backhaul, ReplayWindow};
 use crate::db::{Db, Subscriber};
-use crate::ip::{ipv4_dst, ipv4_src};
+use crate::ip::{in_subnet, ipv4_dst, ipv4_src};
 use crate::simauth::{simauth_v1, SimResponse};
 
 pub type ConnId = u32;
@@ -118,6 +118,11 @@ struct Session {
     id: u32,
     imsi: String,
     ip: [u8; 4],
+    /// The IMS bearer's address (calls and texts), when the carrier offers them.
+    ims_ip: Option<[u8; 4]>,
+    /// Dedicated bearers (a call's voice flow) and whether the serving site admitted each.
+    bearers: Vec<(Bearer, bool)>,
+    next_bearer: u8,
     tmsi: u32,
     rand: [u8; 16],
     resp: SimResponse,
@@ -146,6 +151,21 @@ pub struct SessionInfo {
     pub state: &'static str,
     pub used: u64,
     pub quota: u64,
+    pub msisdn: String,
+    pub ims_ip: Option<[u8; 4]>,
+    /// Voice bearers (admitted by the site or best effort).
+    pub bearers: Vec<(Bearer, bool)>,
+}
+
+/// Where a subscriber can be reached (the HSS answer for routing a call or a text).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reach {
+    pub imsi: String,
+    pub msisdn: String,
+    /// The IMS address, when the phone has a session (attached or idle).
+    pub ims_ip: Option<[u8; 4]>,
+    /// The session is idle (a page wakes it).
+    pub idle: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,6 +197,10 @@ pub struct Core {
     last_save_ms: u64,
     /// Tunnel datagrams that matched no site's keys (forged, tampered, replayed, or from no site).
     pub tunnel_rejects: u64,
+    /// IMS-bearer packets dropped for leaving the IMS core network.
+    pub ims_policy_drops: u64,
+    /// IMS registrations the HSS holds: IMSI -> serving CSCF (from `SAR`).
+    pub(crate) ims_regs: BTreeMap<String, String>,
     last_reject_log_ms: Option<u64>,
     out: Vec<CoreOut>,
     entropy: alloc::boxed::Box<dyn Entropy + Send>,
@@ -189,7 +213,10 @@ impl Core {
         let mut b = [0u8; 4];
         entropy.fill(&mut b);
         let first = (u32::from_be_bytes(b) & 0x7fff_ffff).max(1);
-        Core {
+        let mut db = db;
+        // Subscribers without a number get one as soon as the carrier holds a block.
+        let filled = db.fill_numbers();
+        let mut core = Core {
             cfg,
             db,
             conns: BTreeMap::new(),
@@ -203,10 +230,17 @@ impl Core {
             dirty: false,
             last_save_ms: 0,
             tunnel_rejects: 0,
+            ims_policy_drops: 0,
+            ims_regs: BTreeMap::new(),
             last_reject_log_ms: None,
             out: Vec::new(),
             entropy,
+        };
+        if filled > 0 {
+            core.log(format!("gave {} subscriber(s) a number", filled));
+            core.save(0);
         }
+        core
     }
 
     pub fn db(&self) -> &Db {
@@ -229,6 +263,14 @@ impl Core {
             None => m.encode(),
         };
         self.out.push(CoreOut::Send(c, bytes));
+    }
+
+    pub(crate) fn random16(&mut self) -> [u8; 16] {
+        self.random::<16>()
+    }
+
+    pub(crate) fn log_line(&mut self, s: String) {
+        self.log(s);
     }
 
     fn random<const N: usize>(&mut self) -> [u8; N] {
@@ -369,6 +411,7 @@ impl Core {
                         s.active = false;
                         s.idle = true;
                         s.ho = None;
+                        s.bearers.clear();
                         let imsi = s.imsi.clone();
                         self.log(format!("{} idle", imsi));
                     }
@@ -390,6 +433,17 @@ impl Core {
                 }
             }
             Ctl::PathSwitch { ho, session } => self.path_switch(c, ho, session),
+            Ctl::BearerResult { session, id, ok } => {
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    if let Some(e) = s.bearers.iter_mut().find(|(b, _)| b.id == id) {
+                        e.1 = ok;
+                    }
+                    if !ok {
+                        let imsi = s.imsi.clone();
+                        self.log(format!("{}: voice bearer {} not admitted, the call runs best effort", imsi, id));
+                    }
+                }
+            }
             other => self.log(format!("conn {}: unexpected {}", c, other.name())),
         }
     }
@@ -484,6 +538,9 @@ impl Core {
         let Some(ip) = self.db.address_for(&p.imsi) else {
             return self.reject(c, ue, &p.imsi, Cause::Congestion);
         };
+        // The IMS bearer: only for a carrier with IMS and a SIM with a number.
+        let has_number = self.db.subs.get(&p.imsi).is_some_and(|s| !s.ims.msisdn.is_empty());
+        let ims_ip = if has_number { self.db.ims_address_for(&p.imsi) } else { None };
         let id = self.next_session;
         self.next_session = self.next_session.wrapping_add(1).max(1);
         let tmsi = self.new_tmsi();
@@ -492,6 +549,9 @@ impl Core {
             id,
             imsi: p.imsi.clone(),
             ip,
+            ims_ip,
+            bearers: Vec::new(),
+            next_bearer: 1,
             tmsi,
             rand: p.rand,
             resp: p.resp,
@@ -508,10 +568,14 @@ impl Core {
             last_usage_ms: now,
         };
         self.by_ip.insert(ip, id);
+        if let Some(i) = ims_ip {
+            self.by_ip.insert(i, id);
+        }
         self.by_tmsi.insert(tmsi, id);
         self.sessions.insert(id, s);
         let site = self.site_of(c).map(|s| s.id.clone()).unwrap_or_default();
-        self.log(format!("attach {} at {} cell {}: ip {} session {}", p.imsi, site, p.cell, fmt_ip(ip), id));
+        let ims = ims_ip.map(|i| format!(" ims {}", fmt_ip(i))).unwrap_or_default();
+        self.log(format!("attach {} at {} cell {}: ip {}{} session {}", p.imsi, site, p.cell, fmt_ip(ip), ims, id));
         self.save(now);
         self.send_accept(id, c, ue, p.cell);
     }
@@ -525,6 +589,13 @@ impl Core {
         }
     }
 
+    fn ims_info(&self, s: &Session) -> Option<ImsInfo> {
+        let conf = self.db.ims.as_ref()?;
+        let ip = s.ims_ip?;
+        let msisdn = self.db.subs.get(&s.imsi).map(|u| u.ims.msisdn.clone()).unwrap_or_default();
+        Some(ImsInfo { ip, prefix: conf.prefix, pcscf: conf.pcscf, domain: conf.domain.clone(), msisdn })
+    }
+
     fn ip_config(&self, ip: [u8; 4]) -> IpConfig {
         IpConfig { ip, prefix: self.db.prefix, gateway: self.db.gateway, dns: self.db.dns, mtu: self.db.mtu }
     }
@@ -535,7 +606,8 @@ impl Core {
         let s = &self.sessions[&id];
         let ctx = AsContext { epoch: s.epoch, k_as: as_key(&s.resp.ks_enc(), cell, s.epoch) };
         let mac = smc_mac(&s.resp.ks_int(), &s.rand, cell, s.epoch, ue);
-        let m = Ctl::UeAccept { ue, session: id, ip: self.ip_config(s.ip), tmsi: s.tmsi, ctx, smc_mac: mac };
+        let ims = self.ims_info(s);
+        let m = Ctl::UeAccept { ue, session: id, ip: self.ip_config(s.ip), tmsi: s.tmsi, ctx, smc_mac: mac, ims };
         self.send(c, m);
     }
 
@@ -557,6 +629,7 @@ impl Core {
         s.serving = Some(Serving { conn: c, ue, cell });
         s.active = false;
         s.idle = false;
+        s.bearers.clear();
         let imsi = s.imsi.clone();
         self.log(format!("{} resumed at cell {}", imsi, cell));
         self.send_accept(id, c, ue, cell);
@@ -566,6 +639,9 @@ impl Core {
     fn end_session(&mut self, id: u32, cause: Cause, notify_site: bool, now: u64) {
         let Some(s) = self.sessions.remove(&id) else { return };
         self.by_ip.remove(&s.ip);
+        if let Some(i) = s.ims_ip {
+            self.by_ip.remove(&i);
+        }
         self.by_tmsi.remove(&s.tmsi);
         self.join.forget(id);
         if notify_site {
@@ -613,7 +689,8 @@ impl Core {
         s.ho = Some(Ho { id: ho, target: Serving { conn: tconn, ue, cell: target_cell }, acked: false, started_ms: now });
         s.ul_seen.remove(&tconn);
         let tmsi = s.tmsi;
-        self.send(tconn, Ctl::HoRequest { ho, session, ue, target_cell, ip: ipc, tmsi, ctx });
+        let bearers = s.bearers.iter().map(|(b, _)| *b).collect();
+        self.send(tconn, Ctl::HoRequest { ho, session, ue, target_cell, ip: ipc, tmsi, ctx, bearers });
     }
 
     fn ho_ack(&mut self, c: ConnId, ho: u32, ue_id: u16, grant: Grant) {
@@ -687,10 +764,22 @@ impl Core {
             return;
         }
         w.accept(seq as u64);
-        if ipv4_src(&pkt) != Some(s.ip) {
+        let src = ipv4_src(&pkt);
+        if src.is_some() && src == s.ims_ip {
+            // The IMS bearer reaches only the IMS core (P-CSCF, media), never the internet; not counted.
+            let dst = ipv4_dst(&pkt).unwrap_or_default();
+            let ok = self.db.ims.as_ref().is_some_and(|c| in_subnet(dst, c.net, c.net_prefix) || dst == c.pcscf);
+            if !ok {
+                self.ims_policy_drops += 1;
+                return;
+            }
+            self.out.push(CoreOut::ToLan(pkt));
+            return;
+        }
+        if src != Some(s.ip) {
             return; // spoofed source
         }
-        if !self.account(id, pkt.len(), now) {
+        if !self.zero_rated(&pkt) && !self.account(id, pkt.len(), now) {
             return;
         }
         self.out.push(CoreOut::ToLan(pkt));
@@ -714,6 +803,12 @@ impl Core {
             return false;
         }
         true
+    }
+
+    /// MMS traffic to or from the MMSC is not counted against the quota.
+    fn zero_rated(&self, pkt: &[u8]) -> bool {
+        let Some(m) = self.db.ims.as_ref().and_then(|c| c.mmsc) else { return false };
+        ipv4_src(pkt) == Some(m) || ipv4_dst(pkt) == Some(m)
     }
 
     /// An IP packet from the LAN (the tun) for a phone.
@@ -742,7 +837,8 @@ impl Core {
         if !s.active && s.ho.is_none() {
             return;
         }
-        if !self.account(id, pkt.len(), now) {
+        let free = s.ims_ip.is_some() && ipv4_dst(&pkt) == s.ims_ip;
+        if !free && !self.zero_rated(&pkt) && !self.account(id, pkt.len(), now) {
             return;
         }
         let s = self.sessions.get_mut(&id).expect("still live");
@@ -833,7 +929,10 @@ impl Core {
     /// `list`, `sites`, `sessions`, `add <imsi> <key-hex> [quota]`, `revoke <imsi>`,
     /// `unrevoke <imsi>`, `quota <imsi> <bytes>`, `reset-usage <imsi>`,
     /// `site-add <id> <secret-hex>`, `site-remove <id>`, `release <imsi>`, `remove <imsi>`,
-    /// `label <imsi> <label>`; `add` takes an optional label after the quota.
+    /// `label <imsi> <label>`; `add` takes an optional label after the quota. Telephony:
+    /// `block-add`, `block-remove`, `blocks`, `numbers`, `number <who> [+number [ported]]`,
+    /// `number-release`, `number-move`, `feature`, `enum-key <hex>`, `port-code <who> [code]`
+    /// (no code: one signed with the enum key, which the subscriber takes to the new carrier).
     pub fn admin(&mut self, line: &str, now: u64) -> Result<String, String> {
         let w: Vec<&str> = line.split_whitespace().collect();
         let need_sub = |db: &Db, imsi: &str| -> Result<(), String> {
@@ -962,11 +1061,251 @@ impl Core {
                 }
                 format!("{} released", imsi)
             }
+            ["block-add", b] => {
+                if !crate::db::valid_block(b) {
+                    return Err(format!("bad number block '{}' (NPA-NXX, e.g. 214-555)", b));
+                }
+                if self.db.blocks.iter().any(|x| x == b) {
+                    return Err(format!("block {} is already held", b));
+                }
+                self.db.blocks.push((*b).into());
+                let n = self.db.fill_numbers();
+                format!("block {} added ({} subscriber(s) given a number)", b, n)
+            }
+            ["block-remove", b] => {
+                let used = self.db.subs.values().filter(|s| self.db.block_of(&s.ims.msisdn) == Some(*b)).count();
+                if used > 0 {
+                    return Err(format!("{} numbers of {} are in use: release or move them first", used, b));
+                }
+                let had = self.db.blocks.len();
+                self.db.blocks.retain(|x| x != b);
+                if had == self.db.blocks.len() {
+                    return Err(format!("no block {}", b));
+                }
+                format!("block {} removed", b)
+            }
+            ["blocks"] => {
+                let mut s = String::new();
+                for b in &self.db.blocks {
+                    let used = self.db.subs.values().filter(|x| self.db.block_of(&x.ims.msisdn) == Some(b.as_str())).count();
+                    s.push_str(&format!("block {} {} used {} free\n", b, used, 9999 + 1 - crate::db::FIRST_LINE as usize - used));
+                }
+                return Ok(s);
+            }
+            ["numbers"] => {
+                let mut s = String::new();
+                for (imsi, u) in &self.db.subs {
+                    if !u.ims.msisdn.is_empty() {
+                        s.push_str(&format!("num {} {} {}\n", u.ims.msisdn, imsi, if u.label.is_empty() { "-" } else { &u.label }));
+                    }
+                }
+                return Ok(s);
+            }
+            ["number", who] | ["number", who, _] | ["number", who, _, "ported"] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                let ported = w.len() == 4;
+                let n = self.db.assign_number(&imsi, w.get(2).copied(), ported)?;
+                format!("{} number {}{}", imsi, n, if ported { " (ported in)" } else { "" })
+            }
+            ["number-release", who] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                let u = self.db.subs.get_mut(&imsi).expect("found");
+                let old = core::mem::take(&mut u.ims.msisdn);
+                u.ims.ported = false;
+                if old.is_empty() {
+                    return Err(format!("{} has no number", imsi));
+                }
+                format!("{} released {}", imsi, old)
+            }
+            ["number-move", num, to] => {
+                let from = self.db.by_number(num).map(String::from).ok_or_else(|| format!("nobody has {}", num))?;
+                let to = self.imsi_of(to).ok_or_else(|| format!("no subscriber {}", to))?;
+                if !self.db.subs[&to].ims.msisdn.is_empty() {
+                    return Err(format!("{} already has {}", to, self.db.subs[&to].ims.msisdn));
+                }
+                let f = &mut self.db.subs.get_mut(&from).expect("found").ims;
+                f.msisdn.clear();
+                let ported = core::mem::take(&mut f.ported);
+                let t = &mut self.db.subs.get_mut(&to).expect("found").ims;
+                t.msisdn = (*num).into();
+                t.ported = ported;
+                format!("{} moved from {} to {}", num, from, to)
+            }
+            ["feature", who, key, value] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                let p = &mut self.db.subs.get_mut(&imsi).expect("found").ims;
+                match *key {
+                    "cfu" | "cfb" | "cfnr" | "cfnrc" => {
+                        let v = if *value == "off" || *value == "-" { "" } else { *value };
+                        if !v.is_empty() && !crate::db::valid_e164(v) {
+                            return Err(format!("bad number '{}'", v));
+                        }
+                        let slot = match *key {
+                            "cfu" => &mut p.cfu,
+                            "cfb" => &mut p.cfb,
+                            "cfnr" => &mut p.cfnr,
+                            _ => &mut p.cfnrc,
+                        };
+                        *slot = v.into();
+                    }
+                    "cw" | "clir" | "dnd" | "vm" => {
+                        let b = match *value {
+                            "on" | "1" => true,
+                            "off" | "0" => false,
+                            _ => return Err("value must be on or off".into()),
+                        };
+                        match *key {
+                            "cw" => p.cw = b,
+                            "clir" => p.clir = b,
+                            "dnd" => p.dnd = b,
+                            _ => p.vm = b,
+                        }
+                    }
+                    "block" | "unblock" => {
+                        if !crate::db::valid_e164(value) {
+                            return Err(format!("bad number '{}'", value));
+                        }
+                        p.blocked.retain(|n| n != value);
+                        if *key == "block" {
+                            p.blocked.push((*value).into());
+                        }
+                    }
+                    _ => return Err(format!("unknown feature '{}' (cfu cfb cfnr cfnrc cw clir dnd vm block unblock)", key)),
+                }
+                format!("{} {} {}", imsi, key, value)
+            }
+            ["ims", rest @ ..] if !rest.is_empty() => {
+                // validated by the database parser: rebuild the file with the new `ims` line
+                let text: String = self.db.to_text().lines().filter(|l| !l.starts_with("ims ")).map(|l| format!("{}\n", l)).collect();
+                let text = format!("{}ims {}\n", text, rest.join(" "));
+                let db = Db::parse(&text).map_err(|e| e.msg)?;
+                self.db.ims = db.ims;
+                let i = self.db.ims.as_ref().expect("parsed");
+                format!("ims pool {}/{} pcscf {} domain {}", fmt_ip(i.pool), i.prefix, fmt_ip(i.pcscf), i.domain)
+            }
+            ["ims-off"] => {
+                self.db.ims = None;
+                "ims off (phones get no IMS bearer)".to_string()
+            }
+            ["port-code", who, code] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                if !crate::db::valid_port_code(code) {
+                    return Err("a port-out code is 4-16 letters, digits and '-'".into());
+                }
+                self.db.subs.get_mut(&imsi).expect("found").ims.port = (*code).into();
+                format!("{} port-out code set", imsi)
+            }
+            ["port-code", who] => {
+                let imsi = self.imsi_of(who).ok_or_else(|| format!("no subscriber {}", who))?;
+                let key = self.db.enum_key.ok_or("no enum key (cored enum-key <hex>, the key IANA issued with the block)")?;
+                let p = &self.db.subs[&imsi].ims;
+                if p.msisdn.is_empty() {
+                    return Err(format!("{} has no number", imsi));
+                }
+                if p.ported || self.db.block_of(&p.msisdn).is_none() {
+                    return Err(format!("{} is not in this carrier's blocks: its block's holder issues its port-out codes", p.msisdn));
+                }
+                let number = p.msisdn.clone();
+                let nonce = hex(&self.random::<3>());
+                let code = crate::db::port_code(&key, &number, &nonce);
+                self.db.subs.get_mut(&imsi).expect("found").ims.port = code.clone();
+                format!("{} port-out code for {} is {}", imsi, number, code)
+            }
+            ["enum-key", k] => {
+                self.db.enum_key = Some(crate::codec::unhex::<16>(k).ok_or("the enum key is 32 hex digits")?);
+                "enum key set (port-out codes are signed with it)".to_string()
+            }
             _ => return Err(format!("unknown command '{}'", line.trim())),
         };
         self.log(format!("admin: {}", r));
         self.save(now);
         Ok(r)
+    }
+
+    // ------------------------------------------------------------ IMS (HSS + PCRF)
+
+    /// The subscriber behind an IMSI, a number (`+1...`) or a label only one subscriber has.
+    pub fn imsi_of(&self, who: &str) -> Option<String> {
+        if who.starts_with('+') {
+            self.db.by_number(who).map(|s| s.into())
+        } else if self.db.subs.contains_key(who) {
+            Some(who.into())
+        } else {
+            // a label, when exactly one subscriber has it
+            let mut it = self.db.subs.iter().filter(|(_, s)| !s.label.is_empty() && s.label == who);
+            match (it.next(), it.next()) {
+                (Some((imsi, _)), None) => Some(imsi.clone()),
+                _ => None,
+            }
+        }
+    }
+
+    /// HSS: where `who` (IMSI or number) is.
+    pub fn reach(&self, who: &str) -> Option<Reach> {
+        let imsi = self.imsi_of(who)?;
+        let sub = self.db.subs.get(&imsi)?;
+        let s = self.sessions.values().find(|s| s.imsi == imsi);
+        Some(Reach { imsi: imsi.clone(), msisdn: sub.ims.msisdn.clone(), ims_ip: s.and_then(|s| s.ims_ip), idle: s.is_some_and(|s| s.idle) })
+    }
+
+    /// The subscriber whose session holds IMS address `ip`.
+    pub fn imsi_at(&self, ip: [u8; 4]) -> Option<&str> {
+        let id = self.by_ip.get(&ip)?;
+        let s = self.sessions.get(id)?;
+        (s.ims_ip == Some(ip)).then_some(s.imsi.as_str())
+    }
+
+    /// The subscriber whose session holds default-bearer (internet) address `ip`.
+    pub fn imsi_at_data(&self, ip: [u8; 4]) -> Option<&str> {
+        let id = self.by_ip.get(&ip)?;
+        let s = self.sessions.get(id)?;
+        (s.ip == ip).then_some(s.imsi.as_str())
+    }
+
+    /// PCRF (Rx): a voice bearer for the phone at IMS address `ue_ip`, flow
+    /// `ue_port <-> remote:remote_port`. Returns the bearer id, and whether it
+    /// went to a serving site (an idle phone gets it on its next resume: no).
+    pub fn bearer_setup(&mut self, ue_ip: [u8; 4], ue_port: u16, remote: [u8; 4], remote_port: u16) -> Result<(u8, bool), String> {
+        let id = *self.by_ip.get(&ue_ip).ok_or("no session at that IMS address")?;
+        let s = self.sessions.get_mut(&id).expect("by_ip in sync");
+        if s.ims_ip != Some(ue_ip) {
+            return Err("not an IMS address".into());
+        }
+        if let Some((b, _)) = s.bearers.iter().find(|(b, _)| b.ue_port == ue_port && b.remote == remote && b.remote_port == remote_port) {
+            return Ok((b.id, true));
+        }
+        if s.bearers.len() >= 4 {
+            return Err("too many bearers".into());
+        }
+        let bid = s.next_bearer;
+        s.next_bearer = s.next_bearer.wrapping_add(1).max(1);
+        let b = Bearer { id: bid, qci: QCI_VOICE, ue_port, remote, remote_port };
+        s.bearers.push((b, false));
+        let serving = s.serving.map(|v| v.conn);
+        let imsi = s.imsi.clone();
+        self.log(format!("{}: voice bearer {} udp {} <-> {}:{}", imsi, bid, ue_port, fmt_ip(remote), remote_port));
+        if let Some(c) = serving {
+            self.send(c, Ctl::BearerSetup { session: id, bearer: b });
+            if let Some(h) = self.sessions.get(&id).and_then(|s| s.ho.as_ref()).map(|h| h.target.conn) {
+                self.send(h, Ctl::BearerSetup { session: id, bearer: b });
+            }
+        }
+        Ok((bid, serving.is_some()))
+    }
+
+    /// PCRF: the call ended; release its bearer.
+    pub fn bearer_release(&mut self, ue_ip: [u8; 4], bid: u8) -> Result<(), String> {
+        let id = *self.by_ip.get(&ue_ip).ok_or("no session at that IMS address")?;
+        let s = self.sessions.get_mut(&id).expect("by_ip in sync");
+        let had = s.bearers.len();
+        s.bearers.retain(|(b, _)| b.id != bid);
+        if s.bearers.len() == had {
+            return Err(format!("no bearer {}", bid));
+        }
+        if let Some(c) = s.serving.map(|v| v.conn) {
+            self.send(c, Ctl::BearerRelease { session: id, id: bid });
+        }
+        Ok(())
     }
 
     pub fn sites(&self) -> Vec<SiteInfo> {
@@ -1008,6 +1347,9 @@ impl Core {
                     },
                     used: sub.map(|u| u.used).unwrap_or(0),
                     quota: sub.map(|u| u.quota).unwrap_or(0),
+                    msisdn: sub.map(|u| u.ims.msisdn.clone()).unwrap_or_default(),
+                    ims_ip: s.ims_ip,
+                    bearers: s.bearers.clone(),
                 }
             })
             .collect()

@@ -37,6 +37,16 @@ public final class CellPlan {
     public static final int MAST = 10;
     public static final String POOL = "100.80.0.0/22", GATEWAY = "100.80.0.1", DNS = "1.1.1.1";
     public static final String POOL_NET = "100.80.0.0", POOL_LEN = "22";
+    /**
+     * Telephony (docs/TELEPHONY.md "Tech Villages"): the phones' IMS bearer pool (it reaches only
+     * the core, where imsd, smscd, mmscd and mrfd run beside cored), the exchange every village's
+     * block uses, and the first line handed out in a block (as cored's {@code FIRST_LINE}).
+     */
+    public static final String IMS_POOL = "10.250.0.0/22", EXCHANGE = "555";
+    public static final int FIRST_LINE = 100;
+    /** Area codes a village may get (valid NANP area codes, no N11): each village its own, picked by the seed. */
+    public static final List<String> AREA_CODES = List.of("214", "312", "415", "503", "617", "702", "808", "919", "248", "360",
+            "425", "512", "602", "713", "804", "971", "206", "305", "404", "720");
     /** Phones on display and SIM cards in the chest of every Phone Store. */
     public static final int PHONES = 4, SIMS = 27;
     /** MCC 001 MNC 01, the test network (cored's default {@code imsi_prefix}). */
@@ -78,7 +88,7 @@ public final class CellPlan {
     }
 
     /** A provisioned SIM: in a Phone Store's phone ({@code phone}) or its chest, {@code slot} from 1. */
-    public record Sim(String imsi, byte[] key, String label, int village, boolean phone, int slot) {
+    public record Sim(String imsi, byte[] key, String label, int village, boolean phone, int slot, String msisdn) {
         public String keyHex() {
             return hex(key);
         }
@@ -262,7 +272,34 @@ public final class CellPlan {
     public Sim sim(int village, boolean phone, int slot) {
         String imsi = imsi(seed, village, phone, slot);
         String label = "v" + village + (phone ? "-phone" : "-sim") + slot;
-        return new Sim(imsi, derive("ECM-TECHNET-SIM", imsi), label, village, phone, slot);
+        return new Sim(imsi, derive("ECM-TECHNET-SIM", imsi), label, village, phone, slot, number(village, phone, slot));
+    }
+
+    // ------------------------------------------------------------------ numbers
+
+    /** Village {@code v}'s area code: distinct per village (the list shuffled by the seed, then numbered past its end). */
+    public String areaCode(int village) {
+        List<String> codes = new ArrayList<>(AREA_CODES);
+        Collections.shuffle(codes, new Random(seed ^ 0x41524541434F4445L));
+        if (village - 1 < codes.size()) return codes.get(village - 1);
+        // more villages than listed codes: 2v0-style codes never in the list (2-9 first digit, not N11)
+        return String.valueOf(200 + 10 * (village - codes.size()) + 3);
+    }
+
+    /** Village {@code v}'s number block, as cored writes it ({@code block 214-555}). */
+    public String block(int village) {
+        return areaCode(village) + "-" + EXCHANGE;
+    }
+
+    /** The Phone Store SIM's number: the phones on display get lines 0100-0103, the chest's SIMs 0104 onwards. */
+    public String number(int village, boolean phone, int slot) {
+        int line = FIRST_LINE + (phone ? slot - 1 : PHONES + slot - 1);
+        return String.format("+1%s%s%04d", areaCode(village), EXCHANGE, line);
+    }
+
+    /** The carrier's SIP domain (cored's default for an {@code ims} line). */
+    public String imsDomain() {
+        return carrier + ".ecm";
     }
 
     /** Every SIM of every Phone Store, village by village: the phones on display, then the chest. */
@@ -285,6 +322,9 @@ public final class CellPlan {
         s.append("# ecm-cell subscriber database (owned by cored; edit with the Carrier Console or cored's admin commands)\n");
         s.append("version 1\ncarrier ").append(carrier).append("\npool ").append(POOL).append("\ngateway ").append(GATEWAY)
                 .append("\ndns ").append(dns).append("\nmtu 1500\n");
+        for (int v = 1; v <= villages; v++) s.append("block ").append(block(v)).append('\n');
+        s.append("ims pool=").append(IMS_POOL).append(" pcscf=").append(GATEWAY).append(" domain=").append(imsDomain())
+                .append(" net=").append(GATEWAY).append("/32\n");
         TreeMap<String, String> sites = new TreeMap<>();
         for (String id : siteIds()) sites.put(id, hex(siteSecret(id)));
         sites.forEach((id, secret) -> s.append("site ").append(id).append(' ').append(secret).append('\n'));
@@ -292,7 +332,7 @@ public final class CellPlan {
         for (Sim m : sims()) subs.put(m.imsi, m);
         for (Sim m : subs.values())
             s.append("sub ").append(m.imsi).append(" key=").append(m.keyHex()).append(" quota=0 used=0 revoked=0 label=")
-                    .append(m.label).append('\n');
+                    .append(m.label).append(" msisdn=").append(m.msisdn).append('\n');
         return s.toString();
     }
 

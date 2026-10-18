@@ -10,7 +10,7 @@ use ecm_dns::wire::*;
 use ecm_host_abi::socket;
 
 fn usage() {
-    eprintln!("Usage: nslookup [-type=A|NS|CNAME|SOA|MX|TXT|PTR|ANY] <name> [server]");
+    eprintln!("Usage: nslookup [-type=A|NS|CNAME|SOA|MX|TXT|PTR|SRV|NAPTR|ANY] <name> [server]");
 }
 
 fn main() {
@@ -104,6 +104,8 @@ fn main() {
                 RData::Mx(p, t) => println!("{}  mail exchanger = {} {}", r.name, p, fqdn(t)),
                 RData::Ptr(t) => println!("{}  name = {}", r.name, fqdn(t)),
                 RData::Txt(_) => println!("{}  text = {}", r.name, r.data.to_text()),
+                RData::Srv(_) => println!("{}  service = {}", r.name, r.data.to_text()),
+                RData::Naptr(_) => println!("{}  naptr = {}", r.name, r.data.to_text()),
                 RData::Soa(s) => {
                     println!("{}", r.name);
                     println!("  origin = {}", fqdn(&s.mname));

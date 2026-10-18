@@ -27,6 +27,11 @@ fn usage() -> ! {
     println!("       cored sim new [--label L] [--quota BYTES]");
     println!("       cored add <imsi> <key> [quota] | revoke <imsi> | unrevoke <imsi> | quota <imsi> <bytes>");
     println!("       cored remove <imsi> | label <imsi> <label> | release <imsi> | reset-usage <imsi>");
+    println!("       cored block add <NPA-NXX> | block remove <NPA-NXX> | blocks");
+    println!("       cored numbers | number <imsi|label> [+number [ported]] | number release <who> | number move <+number> <who>");
+    println!("       cored enum-key <hex> | port-code <who> [code]");
+    println!("       cored ims pool=<cidr> [pcscf=<ip>] [domain=<d>] [net=<cidr>] [mmsc=<ip>] | ims off");
+    println!("       cored feature <who> <cfu|cfb|cfnr|cfnrc|cw|clir|dnd|vm|block|unblock> <value>");
     println!("       cored config | config set <key> <value>... | config keys");
     println!("       cored enable | disable");
     std::process::exit(2);
@@ -119,9 +124,13 @@ impl CardWriter for Reader {
         })
     }
 
-    fn write(&mut self, imsi: &str, carrier: &str, key_hex: &str) -> Result<bool, String> {
+    fn write(&mut self, imsi: &str, carrier: &str, key_hex: &str, msisdn: &str) -> Result<bool, String> {
         let n = self.name()?;
-        let r = peripheral::call(&n, "write", &[Value::Str(imsi.into()), Value::Str(carrier.into()), Value::Str(key_hex.into())]).map_err(perr)?;
+        let mut args = vec![Value::Str(imsi.into()), Value::Str(carrier.into()), Value::Str(key_hex.into())];
+        if !msisdn.is_empty() {
+            args.push(Value::Str(msisdn.into()));
+        }
+        let r = peripheral::call(&n, "write", &args).map_err(perr)?;
         Ok(flag(&r, "ejected"))
     }
 }
@@ -203,6 +212,22 @@ pub fn main() {
         },
         ["site", "remove", id] => print_or_fail(command(&format!("site-remove {id}"))),
         ["sim", "new", rest @ ..] => sim_new(rest),
+        ["block", "add", b] => print_or_fail(command(&format!("block-add {b}"))),
+        ["block", "remove", b] => print_or_fail(command(&format!("block-remove {b}"))),
+        ["blocks"] => print_or_fail(command("blocks")),
+        ["numbers"] => print_or_fail(command("numbers")),
+        // `number-release` / `number-move` too: the admin protocol's names (docs/TELEPHONY.md)
+        ["number", "release", who] | ["number-release", who] => print_or_fail(command(&format!("number-release {}", who_imsi(who)))),
+        ["number", "move", num, who] | ["number-move", num, who] => print_or_fail(command(&format!("number-move {num} {}", who_imsi(who)))),
+        ["number", who] => print_or_fail(command(&format!("number {}", who_imsi(who)))),
+        ["number", who, num] => print_or_fail(command(&format!("number {} {num}", who_imsi(who)))),
+        ["number", who, num, "ported"] => print_or_fail(command(&format!("number {} {num} ported", who_imsi(who)))),
+        ["enum-key", k] => print_or_fail(command(&format!("enum-key {k}"))),
+        ["port-code", who] => print_or_fail(command(&format!("port-code {}", who_imsi(who)))),
+        ["ims", "off"] => print_or_fail(command("ims-off")),
+        ["ims", rest @ ..] if !rest.is_empty() => print_or_fail(command(&format!("ims {}", rest.join(" ")))),
+        ["feature", who, k, v] => print_or_fail(command(&format!("feature {} {k} {v}", who_imsi(who)))),
+        ["port-code", who, code] => print_or_fail(command(&format!("port-code {} {code}", who_imsi(who)))),
         [cmd, ..] if ["add", "revoke", "unrevoke", "quota", "reset-usage", "remove", "label", "release", "site-add"].contains(cmd) => print_or_fail(command(&a.join(" "))),
         ["config"] => print!("{}", load_conf().to_text()),
         ["config", "keys"] => {
@@ -290,7 +315,8 @@ fn sim_new(rest: &[&str]) {
         Ok(b) => {
             let imsi = value(&b, "imsi").unwrap_or("?");
             let l = value(&b, "label").filter(|l| *l != "-").map(|l| format!(" ({l})")).unwrap_or_default();
-            println!("cored: wrote SIM IMSI {imsi}{l}");
+            let n = value(&b, "number").filter(|n| *n != "-").map(|n| format!(", number {n}")).unwrap_or_default();
+            println!("cored: wrote SIM IMSI {imsi}{l}{n}");
             if value(&b, "ejected") == Some("1") {
                 println!("cored: the card was ejected into an adjacent inventory");
             } else {
@@ -299,6 +325,32 @@ fn sim_new(rest: &[&str]) {
         }
         Err(e) => fail(e),
     }
+}
+
+/// A label (`alice`) stands for its subscriber's IMSI; IMSIs and numbers pass through.
+fn who_imsi(who: &str) -> String {
+    if who.starts_with('+') || who.bytes().all(|b| b.is_ascii_digit()) {
+        return who.to_string();
+    }
+    let conf = load_conf();
+    match std::fs::read_to_string(conf.get("db")).ok().and_then(|t| Db::parse(&t).ok()) {
+        Some(db) => db.subs.iter().find(|(_, s)| s.label == who).map(|(i, _)| i.clone()).unwrap_or_else(|| who.to_string()),
+        None => who.to_string(),
+    }
+}
+
+/// The interface index of `name` (netlink), for the IMS pool's route.
+fn iface_index(name: &str) -> Option<i32> {
+    let n = ecm_host_abi::net_config::iface_count();
+    (0..n).find(|i| ecm_host_abi::net_config::iface_info(*i).is_some_and(|j| j.contains(&format!("\"name\":\"{name}\""))))
+}
+
+/// One HSS client connection (imsd, smscd, mmscd): line requests after `CER`.
+struct HssConn {
+    fd: i32,
+    lines: ecm_cell::admin::Lines,
+    peer: [u8; 4],
+    ok: bool,
 }
 
 // ------------------------------------------------------------ the daemon
@@ -329,6 +381,22 @@ fn run() {
         conf.get("listen"),
         conf.get("tunnel_port")
     );
+    // the IMS bearer's pool goes to the phones through the same tun
+    if let Some(ims) = db.ims.clone() {
+        match iface_index(&tun_name) {
+            Some(idx) => {
+                let r = ecm_host_abi::net_config::route_add(&fmt_ip(ims.pool), ims.prefix, "0.0.0.0", idx);
+                if r != 0 {
+                    println!("cored: route for the IMS pool failed ({r})");
+                }
+            }
+            None => println!("cored: {tun_name} not found for the IMS pool's route"),
+        }
+        println!("cored: IMS on: pool {}/{}, P-CSCF {}, domain {}", fmt_ip(ims.pool), ims.prefix, fmt_ip(ims.pcscf), ims.domain);
+    }
+    let hss = tcp_listen([0; 4], conf.port("hss_port")).unwrap_or_else(|e| fail(format!("HSS port: {e}")));
+    let hss_secret = conf.get("hss_secret");
+    let mut hss_conns: Vec<HssConn> = Vec::new();
     let reader = conf.get("reader");
     let mut d = Daemon::new(db, conf.clone(), Box::new(WasiEntropy), Box::new(WasiEntropy), ms());
     d.log(ms(), &format!("started: {} subscribers, {} sites configured", d.core.db().subs.len(), d.core.db().sites.len()));
@@ -338,10 +406,61 @@ fn run() {
     while !stop {
         let mut fds = vec![lis, udp];
         fds.extend(&conns);
+        let hss_base = fds.len();
+        fds.push(hss);
+        fds.extend(hss_conns.iter().map(|c| c.fd));
         let afds = admin.fds();
         fds.extend(&afds);
         let ready = readable(&fds, 5);
         let now = ms();
+        // HSS / PCRF requests (docs/TELEPHONY.md, ecm_cell::hss)
+        if ready[hss_base] {
+            let mut a = SockAddrIn::default();
+            let fd = socket::accept(hss, &mut a);
+            if fd >= 0 {
+                hss_conns.push(HssConn { fd, lines: Default::default(), peer: a.ip(), ok: false });
+            }
+        }
+        let mut gone = Vec::new();
+        for (i, c) in hss_conns.iter_mut().enumerate() {
+            if !ready[hss_base + 1 + i] {
+                continue;
+            }
+            match read_now(c.fd, &mut buf) {
+                Read::Data(b) => match c.lines.push(&b) {
+                    Ok(lines) => {
+                        for l in lines {
+                            let w: Vec<&str> = l.split_whitespace().collect();
+                            let r = match w.as_slice() {
+                                ["CER", origin, proof] => {
+                                    let local = c.peer == [127, 0, 0, 1] || d.core.db().ims.as_ref().is_some_and(|i| i.pcscf == c.peer) || c.peer == d.core.db().gateway;
+                                    let good = if hss_secret.is_empty() { local } else { *proof == ecm_cell::hss::peer_proof(hss_secret.as_bytes(), origin) };
+                                    c.ok = good;
+                                    if good {
+                                        Ok(format!("origin {}\n", d.core.db().carrier))
+                                    } else {
+                                        Err("not a peer of this HSS (hss_secret)".to_string())
+                                    }
+                                }
+                                _ if !c.ok => Err("CER first".to_string()),
+                                _ => d.core.hss(&l, now),
+                            };
+                            if !send_all(c.fd, ecm_cell::admin::reply(&r).as_bytes()) {
+                                gone.push(c.fd);
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => gone.push(c.fd),
+                },
+                Read::Nothing => {}
+                Read::Closed => gone.push(c.fd),
+            }
+        }
+        for fd in gone {
+            socket::close(fd);
+            hss_conns.retain(|c| c.fd != fd);
+        }
         if ready[0] {
             let mut a = SockAddrIn::default();
             let fd = socket::accept(lis, &mut a);
@@ -439,6 +558,10 @@ fn run() {
     for fd in conns {
         socket::close(fd);
     }
+    for c in hss_conns {
+        socket::close(c.fd);
+    }
+    socket::close(hss);
     socket::close(lis);
     socket::close(udp);
     socket::close(tfd);

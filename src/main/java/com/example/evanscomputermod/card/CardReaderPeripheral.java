@@ -398,11 +398,11 @@ public final class CardReaderPeripheral extends AnnotatedPeripheral {
         return sim().isBlank();
     }
 
-    @PeripheralMethod(description = "Write a blank SIM: write(imsi, carrier, key_hex) with a 6-15 digit IMSI, a carrier id and a 32-hex-digit key. Releases the card (Auto Eject pushes it out). Returns the identity")
-    public Map<String, Object> write(Object imsi, String carrier, String keyHex) throws PeripheralException {
+    @PeripheralMethod(description = "Write a blank SIM: write(imsi, carrier, key_hex[, number]) with a 6-15 digit IMSI, a carrier id, a 32-hex-digit key and optionally its phone number (E.164, like +12145550142). Releases the card (Auto Eject pushes it out). Returns the identity")
+    public Map<String, Object> write(Object imsi, String carrier, String keyHex, String msisdn) throws PeripheralException {
         SmartSim s = sim();
         try {
-            s.write(SimAuth.parseImsi(imsi == null ? null : imsi.toString()), SimAuth.parseCarrier(carrier), SimAuth.parseKey(keyHex));
+            s.write(SimAuth.parseImsi(imsi == null ? null : imsi.toString()), SimAuth.parseCarrier(carrier), SimAuth.parseKey(keyHex), SimAuth.parseMsisdn(msisdn));
         } catch (IllegalArgumentException | SmartSim.CardException e) {
             throw wrap(e);
         }

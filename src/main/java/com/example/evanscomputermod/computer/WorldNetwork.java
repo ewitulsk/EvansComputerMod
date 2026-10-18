@@ -790,10 +790,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * docs/MUSIC.md): the chat server runs {@code authd} with the seed's realm key and
      * {@code discordd}/{@code musicd} trusting it, with the village songs in {@code /srv/music};
      * the ISP answers for {@code auth} and {@code music}; every computer has the realm pinned
-     * for Discord and Music. The marker also records where the
-     * resolvers run ({@link DnsConfig}); a change of that re-provisions once as well.
+     * for Discord and Music. 8: chat on accounts (the realm pinned for chat too). 9: telephony
+     * (docs/TELEPHONY.md "Tech Villages"): the core's database gets every village's number block,
+     * the IMS pool and every Phone Store SIM's number, and the core runs imsd, smscd, mmscd and
+     * mrfd. The marker also records where the resolvers run ({@link DnsConfig}); a change of that
+     * re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 8;
+    public static final int PROVISION_VERSION = 9;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
@@ -1159,7 +1162,9 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * Files of the carrier network's computers. The core: its router service (its data center
      * address, forwarding between the LAN and the phones' tun), the database {@code cored init},
      * {@code cored site-add} for every site and {@code cored add} for every Phone Store SIM would
-     * write ({@link CellPlan#coreDb}), and {@code cored start &} (what {@code cored enable} adds).
+     * write ({@link CellPlan#coreDb}, with every village's number block, the IMS pool and every SIM's number),
+ * {@code cored start &} (what {@code cored enable} adds) and the IMS daemons ({@code imsd}, {@code smscd},
+ * {@code mmscd}, {@code mrfd} {@code start --wait &}, what their {@code enable} adds).
      * A cell site: its address (the Phone Store's on the data center LAN, a span site's in its
      * chord's link subnet), /etc/celld-site.toml and {@code celld-site start --wait &} (what
      * {@code celld-site enable} adds: the site waits for its SDR, which attaches when its chunk ticks).
@@ -1170,7 +1175,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put("router.cfg", "configure terminal\nip routing\ninterface eth1\nip address " + cells.coreAddress()
                     + "/24\nexit\nip route 0.0.0.0/0 100." + oct + ".0.1 eth1\nend\n");
             // Phones' searches reach the core (their gateway); it passes them on to its village's ISP.
-            files.put("services.cfg", "router on\ncored start &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            // Telephony (docs/TELEPHONY.md "Tech Villages"): the IMS core beside cored (calls, texts, MMS,
+            // voicemail and the 611 support line); each waits for cored's HSS at boot.
+            files.put("services.cfg", "router on\ncored start &\nimsd start --wait &\nsmscd start --wait &\nmmscd start --wait &\n"
+                    + "mrfd start --wait &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put(VillageDiscovery.CONF, VillageDiscovery.RELAY);
             files.put("etc/cored.db", cells.coreDb());
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-core"));

@@ -22,6 +22,9 @@ pub const AUDIO_PY: &str = include_str!("audio.py");
 /// Source of the Python-level `cards` module (card readers, NFC readers, printers, designs).
 pub const CARDS_PY: &str = include_str!("cards.py");
 
+/// Source of the Python-level `phone` module (number, calls, texts, contacts over telephonyd).
+pub const PHONE_PY: &str = include_str!("phone.py");
+
 const MAX_DEPTH: usize = 32;
 
 pub fn to_value(obj: &PyObjectRef, vm: &VirtualMachine, depth: usize) -> PyResult<Value> {
@@ -132,6 +135,12 @@ pub mod peripheral_native {
     #[pyattr]
     fn _cards_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(CARDS_PY).into()
+    }
+
+    /// Source of the `phone` module (see phone.py).
+    #[pyattr]
+    fn _phone_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(PHONE_PY).into()
     }
 
     /// Little-endian float32 values packed in `data` (lidar ranges, points) as a list of floats.

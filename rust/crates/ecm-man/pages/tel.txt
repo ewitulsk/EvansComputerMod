@@ -1,0 +1,104 @@
+NAME
+    tel - make and control phone calls from the shell
+
+SYNOPSIS
+    tel [status]
+
+    tel dial <number> [--hide]
+
+    tel answer [id] | hangup [id] | decline [id]
+
+    tel hold [id] on|off | mute [id] on|off | swap | merge
+
+    tel speaker on|off
+
+    tel dtmf <digits> [id]
+
+    tel play <wav> [id] | record <seconds> <wav> [id]
+
+    tel calls | log [n] | voicemail
+
+    tel forward <number> | forward off
+
+    tel watch
+
+DESCRIPTION
+    Talks to telephonyd, the phone's calling daemon, on 127.0.0.1 TCP
+    7720: the Phone app's buttons as commands. telephonyd must be
+    running (an ePhone starts it; on a Terminal with a modem run
+    telephonyd &) and registered with the carrier to make calls.
+
+    Where a command takes an optional call id, it means that call;
+    without one, the ringing call, else the active one, else the
+    first. Ids are the numbers tel calls shows.
+
+COMMANDS
+    status
+        The default. Registered or not (VoLTE when it is), the phone's
+        number, the network's domain, new voicemails, missed calls,
+        unread texts, and the calls going on.
+
+    dial <number> [--hide]
+        Call a number: +12145550142, 214-555-0142, a local 555-0142,
+        or a short code (611 support, *86 voicemail). --hide (or *67
+        before the number) withholds your number for this call.
+
+    answer, hangup, decline
+        Answer a ringing call, end a call, or turn a ringing call
+        away.
+
+    hold on|off, mute on|off
+        Put a call on hold or take it back; mute your microphone.
+
+    swap, merge
+        With two calls: swap which one is on hold, or merge both into
+        a three-way call.
+
+    speaker on|off
+        Loudspeaker, or the earpiece.
+
+    dtmf <digits>
+        Keypad tones into the call (0-9, * and #), e.g. for the
+        voicemail menu or the 611 support line.
+
+    play <wav>, record <seconds> <wav>
+        Send a WAV file to the far end instead of your microphone, or
+        record what the far end says for that many seconds (1 to 300).
+        The file must be under /home/ or /tmp/.
+
+    calls
+        The live calls: id, state, to or from, the time, HD, muted,
+        3-way.
+
+    log [n]
+        The last n calls (default 20): in, out or missed, the number,
+        how long and why it ended.
+
+    voicemail
+        The messages in your voicemail box, as visual voicemail lists
+        them: vm id from time length new|heard.
+
+    forward <number>, forward off
+        Forward all your calls to a number (dials *72<number>), or stop
+        (*73).
+
+    watch
+        Print calls as they happen (incoming, call states, keypad
+        tones, voicemail, registration). Ctrl+C stops.
+
+EXAMPLES
+      tel
+      tel dial 611
+      tel dtmf 1
+      tel hangup
+      tel dial 214-555-0143 --hide
+      tel answer
+      tel record 10 /home/call.wav
+      tel forward +12145550199
+
+NOTES
+    "telephonyd is not running": start it (telephonyd &) after celld.
+    "no call": there is no call for the command to act on.
+
+SEE ALSO
+    telephony, telephonyd, dialer, sms, contacts, cell

@@ -1181,7 +1181,11 @@ public class WasiFunctions {
         addEnv(sink, "sock_socket", I32_I32_I32, RET_I32, (inst, args) -> {
             // Every network path starts with a socket: TCP/UDP, DNS, netlink, packet sockets.
             // The radio tunnel (AF_ECM_TUN) is the radio0 SDR link.
-            if (!allowed(state, (int) args[0] == AF_ECM_TUN ? "radio" : "network")) return retI32(EACCES);
+            // Phone, Messages and Contacts reach telephonyd on loopback with only "phone" / "sms" (docs/TELEPHONY.md):
+            // without "network" the socket may only connect to telephonyd's control ports (sock_connect).
+            boolean loopbackOnly = (int) args[0] != AF_ECM_TUN && state.sandbox != null && !state.sandbox.peek(state.pid, "network")
+                    && (state.sandbox.peek(state.pid, "phone") || state.sandbox.peek(state.pid, "sms"));
+            if (!loopbackOnly && !allowed(state, (int) args[0] == AF_ECM_TUN ? "radio" : "network")) return retI32(EACCES);
             byte[] a = new byte[12];
             ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, (int) args[0]);
@@ -1189,11 +1193,14 @@ public class WasiFunctions {
             ab.putInt(8, (int) args[2]);
             NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_SOCKET, a);
             if (r.status < 0) return retI32(-1);
-            return retI32(fdTable.allocate(new SocketFd(r.status, sessionId, bridge)));
+            SocketFd made = new SocketFd(r.status, sessionId, bridge);
+            made.loopbackOnly = loopbackOnly;
+            return retI32(fdTable.allocate(made));
         });
 
         addEnv(sink, "sock_bind", I32_I32_I32, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            if (sock.loopbackOnly && !allowed(state, "network")) return retI32(EACCES);
             byte[] addr = state.mem().readBytes((int) args[1], Math.min((int) args[2], 16));
             return retI32(bridge.call(sessionId, SocketFd.SOCK_BIND, sockArgs(sock, addr)).status);
         });
@@ -1201,11 +1208,24 @@ public class WasiFunctions {
         addEnv(sink, "sock_connect", I32_I32_I32, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             byte[] addr = state.mem().readBytes((int) args[1], Math.min((int) args[2], 16));
+            // telephonyd's control sockets (docs/TELEPHONY.md): calls need "phone", texts "sms"
+            boolean toTelephony = false;
+            if (addr.length >= 8 && (addr[4] & 0xff) == 127 && (addr[5] & 0xff) == 0 && (addr[6] & 0xff) == 0 && (addr[7] & 0xff) == 1) {
+                int port = (addr[2] & 0xff) << 8 | addr[3] & 0xff;
+                String perm = ProcessSandbox.telephonyPermission(port);
+                if (perm != null) {
+                    if (!allowed(state, perm)) return retI32(EACCES);
+                    sock.telephony = true;
+                    toTelephony = true;
+                }
+            }
+            if (sock.loopbackOnly && !toTelephony && !allowed(state, "network")) return retI32(EACCES);
             return retI32(bridge.call(sessionId, SocketFd.SOCK_CONNECT, sockArgs(sock, addr)).status);
         });
 
         addEnv(sink, "sock_listen", I32_I32, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            if (sock.loopbackOnly && !allowed(state, "network")) return retI32(EACCES);
             byte[] a = new byte[8];
             ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());
@@ -1231,6 +1251,11 @@ public class WasiFunctions {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             int len = Math.max(0, Math.min((int) args[2], MAX_SEND));
             byte[] data = state.mem().readBytes((int) args[1], len);
+            // a call placed or a text sent through telephonyd by an app: the player confirms it
+            if (sock.telephony && state.sandbox != null) {
+                String what = telephonyAction(data);
+                if (what != null && !state.sandbox.confirm(state.pid, what)) return retI32(EACCES);
+            }
             return retI32(bridge.call(sessionId, SocketFd.SOCK_SEND, SocketFd.sendArgs(sock.getKernelSocketId(), data)).status);
         });
 
@@ -1248,6 +1273,7 @@ public class WasiFunctions {
 
         addEnv(sink, "sock_sendto", I32x6, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            if (sock.loopbackOnly && !allowed(state, "network")) return retI32(EACCES);
             WasmMemory mem = state.mem();
             int len = Math.max(0, Math.min((int) args[2], MAX_SEND));
             byte[] data = mem.readBytes((int) args[1], len);
@@ -1842,6 +1868,23 @@ public class WasiFunctions {
 
     /** Socket domain of the kernel's radio tunnel (ecm-host-abi tun.rs). */
     private static final int AF_ECM_TUN = 1024;
+
+    /** {@code call:<n>} / {@code sms:<n>} / {@code mms:<n,n>} for a telephonyd request that places a call or sends a message, else null. */
+    static String telephonyAction(byte[] data) {
+        String s = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+        for (String line : s.split("\n")) {
+            String[] w = line.trim().split("\\s+");
+            if (w.length < 2) continue;
+            String to = com.example.evanscomputermod.computer.ui.UiManager.pctDecode(w[1]);
+            switch (w[0]) {
+                case "dial" -> { return "call:" + to; }
+                case "sms" -> { return "sms:" + to; }
+                case "mms" -> { return "mms:" + to; }
+                default -> {}
+            }
+        }
+        return null;
+    }
 
     private static boolean allowed(WasiState state, String permission) {
         return state.sandbox == null || state.sandbox.check(state.pid, permission);

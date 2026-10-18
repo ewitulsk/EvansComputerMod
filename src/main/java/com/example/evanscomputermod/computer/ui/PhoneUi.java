@@ -71,7 +71,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     public static final String SHELL = "dev.ecm.phone";
     /** Apps that come with every phone: app id, the program in the server's wasm-bin that is its entry. */
     static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"},
-            {"dev.ecm.settings", "settings"}, {"dev.ecm.files", "files"}};
+            {"dev.ecm.settings", "settings"}, {"dev.ecm.files", "files"},
+            {"dev.ecm.dialer", "dialer"}, {"dev.ecm.messages", "messages"}, {"dev.ecm.contacts", "contacts"}};
     /** A celld report older than this no longer counts (the daemon reports every 5 s). */
     static final long CELL_REPORT_MS = 12_000;
     /** celld is not started again sooner than this after it exited. */
@@ -82,6 +83,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     static final long AUDIO_IDLE_MS = 2_000;
     /** Extra time past the save deadline the computer keeps running before it sleeps. */
     static final long SLEEP_GRACE_EXTRA_MS = 300;
+    /**
+     * With celld running, the computer stays up this long after the phone is pocketed: celld reads
+     * {@code state asleep} from {@code /dev/uictl phone} (every 250 ms) and goes idle on its cell, so
+     * the network pages the phone instead of sending to a computer that can't hear (docs/TELEPHONY.md).
+     */
+    static final long CELLD_IDLE_GRACE_MS = 800;
 
     /** What the phone hardware reports, for the status bar ({@code /dev/uictl phone}). */
     public interface Status {
@@ -130,6 +137,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     /** Cellular v2: whether celld should run (a framed modem and a SIM are in), its pid, its last report. */
     private volatile boolean celldWanted;
     private volatile int celldPid = -1;
+    private volatile int telephonydPid = -1;
+    private volatile long telephonydStartedAt;
+    private volatile boolean volte;
+    private volatile String msisdn = "";
+    @Nullable
+    private volatile String ringingWho;
     private volatile long celldStartedAt, celldCheckedAt;
     private volatile int cellBars = -1;
     private volatile String cellCarrier = "";
@@ -196,7 +209,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     int launch(String appId, List<String> args) {
         if (apps == null || apps.manifest(appId) == null) return -1;
         for (AppInstance i : apps.running()) {
-            if (i.appId().equals(appId) && i.pid() > 0) return i.pid();
+            if (i.appId().equals(appId) && i.pid() > 0) {
+                // one instance per app on a phone: a running one comes to the front
+                Compositor c = ui.compositor();
+                if (c != null) c.raiseApp(i.pid());
+                return i.pid();
+            }
         }
         try {
             AppInstance i = apps.launch(appId, args);
@@ -251,11 +269,15 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     }
 
     /**
-     * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps)
-     * and its Files (the documents folder).
+     * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps),
+     * its Files (the documents folder) and Phone, Messages and Contacts.
      */
     static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth", "mixer"),
-            "dev.ecm.files", List.of("files:documents"));
+            "dev.ecm.files", List.of("files:documents"),
+            // Phone, Messages and Contacts (docs/TELEPHONY.md): what they declare, so a call or a text never waits on a prompt.
+            "dev.ecm.dialer", List.of("phone", "contacts", "notifications"),
+            "dev.ecm.messages", List.of("sms", "contacts", "files:documents", "microphone", "notifications"),
+            "dev.ecm.contacts", List.of("contacts", "sms", "files:documents"));
 
     @Nullable
     private static byte[] resource(String path) throws IOException {
@@ -305,13 +327,14 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
      */
     public long willSleep() {
         awake = false;
-        if (apps == null) return 0;
+        long cell = celldPid > 0 ? CELLD_IDLE_GRACE_MS : 0;
+        if (apps == null) return cell;
         long n = apps.running().stream().filter(i -> i.state() == AppInstance.State.RUNNING).count();
-        if (n == 0) return 0;
+        if (n == 0) return cell;
         worker.execute(() -> {
             if (!awake) enforce(true);
         });
-        return Math.min(2_000, n * EcmConfig.appsSaveStateDeadlineMs() + SLEEP_GRACE_EXTRA_MS);
+        return Math.max(cell, Math.min(2_000, n * EcmConfig.appsSaveStateDeadlineMs() + SLEEP_GRACE_EXTRA_MS));
     }
 
     /** Back in hand: the foreground app runs again. */
@@ -516,11 +539,66 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
             cellCarrier = "";
             event("celld stop pid " + pid);
         }
+        // telephonyd (calls, texts) runs beside celld (it waits for the IMS bearer)
+        int tp = telephonydPid;
+        boolean talive = tp > 0 && pm != null && pm.isAlive(tp);
+        if (celldWanted && !talive) {
+            if (tp > 0) {
+                event("telephonyd exited (pid " + tp + ")");
+                telephonydPid = -1;
+                volte = false;
+                ringingWho = null;
+            }
+            if (System.currentTimeMillis() - telephonydStartedAt < CELLD_RESTART_MS) return;
+            telephonydStartedAt = System.currentTimeMillis();
+            int p = computer.spawnDetached("telephonyd", List.of("--phone"));
+            telephonydPid = p;
+            event(p > 0 ? "telephonyd start pid " + p : "telephonyd: no program");
+        } else if (!celldWanted && tp > 0) {
+            if (talive && pm != null) pm.kill(tp);
+            telephonydPid = -1;
+            volte = false;
+            msisdn = "";
+            ringingWho = null;
+            event("telephonyd stop pid " + tp);
+        }
     }
 
     /** The running celld's pid, or -1. */
     public int celldPid() {
         return celldPid;
+    }
+
+    /** The running telephonyd's pid (the IMS client, docs/TELEPHONY.md), or -1. */
+    public int telephonydPid() {
+        return telephonydPid;
+    }
+
+    /** {@code /dev/uictl volte <0|1> <number|->} from telephonyd. */
+    void volteReport(boolean on, String number) {
+        volte = on;
+        msisdn = number == null || number.equals("-") ? "" : number;
+    }
+
+    /** Registered for VoLTE (the status bar's {@code VoLTE}). */
+    public boolean volte() {
+        return volte && telephonydPid > 0;
+    }
+
+    /** The phone's number as telephonyd last said ("" before it registered). */
+    public String msisdn() {
+        return msisdn;
+    }
+
+    /** {@code /dev/uictl ring}: the caller's name while a call rings, null otherwise. */
+    void ringing(@Nullable String who) {
+        ringingWho = who;
+    }
+
+    /** The caller of the ringing call (for the holder's HUD message), or null. */
+    @Nullable
+    public String ringingWho() {
+        return telephonydPid > 0 ? ringingWho : null;
     }
 
     /** {@code /dev/uictl cell <bars> <carrier|->} from celld. */
@@ -569,6 +647,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         sb.append("cell ").append(s.cellBars()).append('\n');
         String carrier = celldCarrier();
         sb.append("carrier ").append(carrier.isEmpty() ? "-" : carrier).append('\n');
+        sb.append("volte ").append(volte() ? 1 : 0).append('\n');
+        sb.append("number ").append(msisdn.isEmpty() ? "-" : msisdn).append('\n');
         AppInstance fg = foreground;
         sb.append("foreground ").append(fg == null ? "-" : fg.appId()).append('\n');
         if (apps != null) {
@@ -593,6 +673,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         int pid = celldPid;
         var pm = computer.getProcessManager();
         if (pid > 0 && pm != null) pm.kill(pid);
+        int tp = telephonydPid;
+        if (tp > 0 && pm != null) pm.kill(tp);
         ScheduledFuture<?> f = sweeper;
         if (f != null) f.cancel(false);
         worker.shutdownNow();

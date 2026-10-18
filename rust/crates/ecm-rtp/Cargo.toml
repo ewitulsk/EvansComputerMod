@@ -1,0 +1,12 @@
+[package]
+name = "ecm-rtp"
+version = "0.1.0"
+edition = "2021"
+description = "Shared real-time voice for the mod's computers: RTP/RTCP packets and receive statistics, the IMA ADPCM voice codecs (wideband 16 kHz, narrowband 8 kHz), RFC 4733 DTMF and in-band DTMF tones with a Goertzel detector, an adaptive RTP jitter buffer and the multi-talker mixer, the voice-activity gate, the loudspeaker echo guard, call progress tones and WAV files. Used by Discord voice and by cellular VoLTE calls. Pure Rust, no host calls."
+
+[lib]
+name = "ecm_rtp"
+doctest = false
+
+[dependencies]
+ecm-audio = { workspace = true }

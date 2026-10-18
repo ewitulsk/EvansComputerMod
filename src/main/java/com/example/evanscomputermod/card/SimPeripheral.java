@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  * <pre>
  * import peripheral
  * s = peripheral.find("sim")
- * print(s.identity())                                   # {'carrier': 'cell-red', 'imsi': '310150000000001'}
+ * print(s.identity())                                   # {'carrier': 'cell-red', 'imsi': '310150000000001', 'number': '+12145550142'}
  * print(s.respond("000102030405060708090a0b0c0d0e0f"))  # {'res': '...', 'ks': '...'}
  * </pre>
  *
@@ -43,6 +43,12 @@ public final class SimPeripheral extends AnnotatedPeripheral {
         /** The card's answer to {@code challenge}, or null with no card (or no key on this side). */
         @Nullable
         SimAuth.Response respond(byte[] challenge);
+
+        /** The card's IMS AKA answer (docs/TELEPHONY.md), or null. */
+        @Nullable
+        default SimAuth.Response respondIms(byte[] challenge) {
+            return null;
+        }
     }
 
     /** A source over the v1 {@link SimCard} view of the inserted card (server side: it holds the key). */
@@ -51,13 +57,19 @@ public final class SimPeripheral extends AnnotatedPeripheral {
             @Override
             public SimIdentity identity() {
                 SimCard s = card.get();
-                return s == null ? null : new SimIdentity(s.carrier(), s.imsi());
+                return s == null ? null : new SimIdentity(s.carrier(), s.imsi(), s.msisdn());
             }
 
             @Override
             public SimAuth.Response respond(byte[] challenge) {
                 SimCard s = card.get();
                 return s == null ? null : SimAuth.respond(s.key(), challenge);
+            }
+
+            @Override
+            public SimAuth.Response respondIms(byte[] challenge) {
+                SimCard s = card.get();
+                return s == null ? null : SimAuth.respondIms(s.key(), challenge);
             }
         };
     }
@@ -83,13 +95,30 @@ public final class SimPeripheral extends AnnotatedPeripheral {
         return source.identity() != null;
     }
 
-    @PeripheralMethod(description = "The SIM's public identity: {carrier, imsi}, or nil with no card", mainThread = false)
+    @PeripheralMethod(description = "The SIM's public identity: {carrier, imsi, number} (number: E.164, empty when the card has none), or nil with no card", mainThread = false)
     public Map<String, Object> identity() {
         SimIdentity id = source.identity();
         if (id == null) return null;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("carrier", id.carrier());
         m.put("imsi", id.imsiText());
+        m.put("number", id.msisdn());
+        return m;
+    }
+
+    @PeripheralMethod(description = "IMS AKA (VoLTE registration): the SIM's answer to a 16-byte challenge (32 hex digits): {res, ks} in hex, with the IMS labels (docs/TELEPHONY.md)", mainThread = false)
+    public Map<String, Object> respond_ims(String randHex) throws PeripheralException {
+        byte[] rand;
+        try {
+            rand = SimAuth.parseChallenge(randHex);
+        } catch (IllegalArgumentException e) {
+            throw new PeripheralException(e.getMessage());
+        }
+        SimAuth.Response r = source.respondIms(rand);
+        if (r == null) throw new PeripheralException("no SIM card");
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("res", r.resHex());
+        m.put("ks", r.sessionKeyHex());
         return m;
     }
 

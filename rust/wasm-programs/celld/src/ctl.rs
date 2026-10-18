@@ -61,6 +61,16 @@ pub struct Status {
     pub tx_packets: u64,
     pub rx_packets: u64,
     pub roaming: bool,
+    /// The phone's number (from the network, docs/TELEPHONY.md).
+    pub msisdn: String,
+    /// The IMS bearer's address (`a.b.c.d/len`), its P-CSCF and the carrier's SIP domain.
+    pub ims_ip: String,
+    pub pcscf: String,
+    pub ims_domain: String,
+    /// Voice bearers up (a call).
+    pub bearers: u32,
+    /// The paging identity (0: none).
+    pub tmsi: u32,
     /// The last cause from the network (`authentication failed`, ...).
     pub cause: String,
     pub uptime_s: u64,
@@ -104,6 +114,12 @@ impl Status {
         let _ = writeln!(s, "tx_packets {}", self.tx_packets);
         let _ = writeln!(s, "rx_packets {}", self.rx_packets);
         let _ = writeln!(s, "roaming {}", if self.roaming { "on" } else { "off" });
+        let _ = writeln!(s, "msisdn {}", text(&self.msisdn));
+        let _ = writeln!(s, "ims_ip {}", text(&self.ims_ip));
+        let _ = writeln!(s, "pcscf {}", text(&self.pcscf));
+        let _ = writeln!(s, "ims_domain {}", text(&self.ims_domain));
+        let _ = writeln!(s, "bearers {}", self.bearers);
+        let _ = writeln!(s, "tmsi {}", self.tmsi);
         let _ = writeln!(s, "cause {}", text(&self.cause));
         let _ = writeln!(s, "uptime {}", self.uptime_s);
         s
@@ -140,6 +156,12 @@ impl Status {
                 "rx_packets" => s.rx_packets = v.parse().unwrap_or(0),
                 "roaming" => s.roaming = v == "on",
                 "cause" => s.cause = st(),
+                "msisdn" => s.msisdn = st(),
+                "ims_ip" => s.ims_ip = st(),
+                "pcscf" => s.pcscf = st(),
+                "ims_domain" => s.ims_domain = st(),
+                "bearers" => s.bearers = v.parse().unwrap_or(0),
+                "tmsi" => s.tmsi = v.parse().unwrap_or(0),
                 "uptime" => s.uptime_s = v.parse().unwrap_or(0),
                 _ => {}
             }
@@ -249,6 +271,13 @@ pub fn render_status(s: &Status) -> String {
     if !s.ip.is_empty() {
         let _ = writeln!(o, "  address   {} via {}, dns {}", s.ip, text(&s.gateway), text(&s.dns));
     }
+    if !s.msisdn.is_empty() {
+        let _ = writeln!(o, "  number    {}", s.msisdn);
+    }
+    if !s.ims_ip.is_empty() {
+        let calls = if s.bearers > 0 { format!(", {} voice bearer(s)", s.bearers) } else { String::new() };
+        let _ = writeln!(o, "  IMS       {} to P-CSCF {} ({}){}", s.ims_ip, text(&s.pcscf), text(&s.ims_domain), calls);
+    }
     let _ = writeln!(
         o,
         "  traffic   tx {} ({} packets), rx {} ({} packets), handovers {}",
@@ -318,6 +347,12 @@ mod tests {
             tx_packets: 3,
             rx_packets: 2,
             roaming: false,
+            msisdn: "+12145550142".into(),
+            ims_ip: "10.250.0.2/16".into(),
+            pcscf: "100.65.2.1".into(),
+            ims_domain: "cell-red.ecm".into(),
+            bearers: 1,
+            tmsi: 77,
             cause: String::new(),
             uptime_s: 12,
         };

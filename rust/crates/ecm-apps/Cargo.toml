@@ -8,6 +8,7 @@ description = "The core GUI apps of ROADMAP P3 as libraries: the desktop shell (
 name = "ecm_apps"
 
 [dependencies]
+ecm-tel = { workspace = true }
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 ecm-vte = { workspace = true }

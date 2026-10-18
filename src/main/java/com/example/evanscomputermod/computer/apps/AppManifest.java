@@ -47,7 +47,7 @@ public record AppManifest(
     /** Plain permission names (besides {@code peripherals:<type>} and {@code background:<mode>}). */
     public static final List<String> PERMISSIONS = List.of(
             "network", "radio", "cellular", "controller", "microphone", "location", "notifications",
-            "files:documents", "files:all", "packages", "mixer");
+            "files:documents", "files:all", "packages", "mixer", "contacts", "phone", "sms");
     private static final Set<String> KNOWN_KEYS = Set.of(
             "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background",
             "open_with", "hotkeys", "icon");

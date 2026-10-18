@@ -69,7 +69,7 @@ impl CardWriter for FakeReader {
     fn card(&mut self) -> Result<Card, String> {
         Ok(self.card.clone().unwrap_or(Card::Empty))
     }
-    fn write(&mut self, imsi: &str, carrier: &str, key: &str) -> Result<bool, String> {
+    fn write(&mut self, imsi: &str, carrier: &str, key: &str, _msisdn: &str) -> Result<bool, String> {
         if self.card != Some(Card::Blank) {
             return Err("the card is not blank".into());
         }
@@ -169,7 +169,7 @@ pub fn busy_core() -> Scripted {
     let mut s = Scripted::default();
     s.on(
         "status",
-        "carrier cell-red\npool 100.65.2.0/24\ngateway 100.65.2.1\ndb /etc/cored.db\nlisten 7700\ntunnel_port 7701\ntun cell0\nuptime_s 1834\nsubscribers 3\nsites_configured 2\nsites_connected 1\nsessions 2\ntunnel_rejects 0\n\
+        "carrier cell-red\npool 100.65.2.0/24\ngateway 100.65.2.1\ndb /etc/cored.db\nlisten 7700\ntunnel_port 7701\ntun cell0\nuptime_s 1834\nsubscribers 3\nsites_configured 2\nsites_connected 1\nsessions 2\ntunnel_rejects 0\ncc 1\nblocks 214-555\nnumbers 2\nims on\nims_pool 10.250.0.0/22\npcscf 100.65.2.1\nims_domain cell-red.ecm\nmmsc -\nhss_port 3868\nims_policy_drops 0\n\
 site site-a 10.0.1.21 1 1830 412 0\n\
 session 291 001010000000417 100.65.2.2 active site-a 1 48213 0\n\
 session 292 001010000000932 100.65.2.3 active site-a 1 1022 5000000",
@@ -180,6 +180,8 @@ session 292 001010000000932 100.65.2.3 active site-a 1 1022 5000000",
     );
     s.on("sites", "site site-a 1 10.0.1.21 1 412 1830 0\nsite site-b 0 - - - - 0");
     s.on("handovers", "[   912.3] handover 001010000000417 cell 2 -> 1 (ip 100.65.2.2 kept)");
+    s.on("blocks", "block 214-555 2 used 9898 free");
+    s.on("numbers", "num +12145550100 001010000000417 alice\nnum +12145550101 001010000000932 bob");
     s
 }
 
