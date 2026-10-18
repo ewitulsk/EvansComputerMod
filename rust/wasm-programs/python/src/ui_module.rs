@@ -185,11 +185,44 @@ fn event_tuple(ev: AppEvent, vm: &VirtualMachine) -> PyObjectRef {
         AppEvent::Hotkey { slot, down } => vec![s("hotkey"), i(slot as i64), vm.ctx.new_bool(down).into()],
         AppEvent::Suspend { deadline_ms } => vec![s("suspend"), i(deadline_ms as i64)],
         AppEvent::Frame { window, time_ms } => vec![s("frame"), i(window as i64), i(time_ms as i64)],
+        AppEvent::Media { action, position_ms } => vec![s("media"), s(&action), i(position_ms as i64)],
+        AppEvent::BackgroundModeResult { mode, granted } => vec![s("background"), s(&mode), vm.ctx.new_bool(granted).into()],
         AppEvent::CloseRequested { window } => vec![s("close"), i(window as i64)],
         AppEvent::ThemeChanged => vec![s("theme")],
         AppEvent::Message(m) => vec![s("message"), s(m.name()), s(&m.to_json())],
     };
     vm.ctx.new_tuple(items).into()
+}
+
+/// The background modes an app can declare (app.toml `background.modes`).
+pub const BACKGROUND_MODES: &[&str] = &["audio", "call", "radio", "transfer", "navigation"];
+
+/// A media session from its fields (`title`, `artist`, `album`, `state` playing |
+/// paused | buffering | none, `position_ms`, `duration_ms`, `actions`).
+pub fn media_session_of(f: &Json) -> Result<ecm_ui::MediaSession, String> {
+    use ecm_ui::MediaState;
+    let s = |k: &str| f.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let ms = |k: &str| f.get(k).and_then(Json::as_i64).unwrap_or(0).clamp(0, u32::MAX as i64) as u32;
+    let state = match f.get("state").and_then(Json::as_str).unwrap_or("playing") {
+        "playing" => MediaState::Playing,
+        "paused" => MediaState::Paused,
+        "buffering" => MediaState::Buffering,
+        "none" | "ended" | "stopped" | "" => MediaState::None,
+        other => return Err(format!("media state is playing, paused, buffering or none, not {other:?}")),
+    };
+    if state == MediaState::None {
+        return Ok(ecm_ui::MediaSession::ended());
+    }
+    let mut actions = Vec::new();
+    if let Some(a) = f.get("actions").and_then(Json::as_array) {
+        for x in a {
+            match x.as_str() {
+                Some(n @ ("play" | "pause" | "next" | "previous" | "seek")) => actions.push(n.to_string()),
+                _ => return Err(format!("media actions are play, pause, next, previous and seek, not {}", x.to_string())),
+            }
+        }
+    }
+    Ok(ecm_ui::MediaSession { title: s("title"), artist: s("artist"), album: s("album"), art: None, state, position_ms: ms("position_ms"), duration_ms: ms("duration_ms"), actions })
 }
 
 /// The `_ui` native module for the interpreter's module table.
@@ -336,6 +369,26 @@ pub mod ui_native {
     #[pyfunction]
     fn request_frame(h: i64, win: u32, vm: &VirtualMachine) -> PyResult<()> {
         with_app(h, vm, |c| c.send(proto::Message::RequestFrame(proto::RequestFrame { surface: win })))
+    }
+
+    /// Start (`on`) or stop a background mode the app declared (audio, call, radio,
+    /// transfer, navigation); the answer comes as a ("background", mode, granted) event.
+    #[pyfunction]
+    fn background_mode(h: i64, mode: PyObjectRef, on: bool, vm: &VirtualMachine) -> PyResult<()> {
+        let mode = mode.str(vm)?.as_str().to_owned();
+        if !BACKGROUND_MODES.contains(&mode.as_str()) {
+            return Err(vm.new_value_error(format!("background modes are {}, not {mode:?}", BACKGROUND_MODES.join(", "))));
+        }
+        with_app(h, vm, |c| c.background_mode(&mode, on))
+    }
+
+    /// The Now Playing card: a dict {title, artist, album, state, position_ms,
+    /// duration_ms, actions}; state "none" ends the session.
+    #[pyfunction]
+    fn media_session(h: i64, fields: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
+        let f = to_json(&fields, vm, 0)?;
+        let session = super::media_session_of(&f).map_err(|e| vm.new_value_error(e))?;
+        with_app(h, vm, |c| c.media_session(&session))
     }
 
     /// Send a protocol message given as (name, JSON fields) — the services

@@ -1,0 +1,21 @@
+[package]
+name = "ecm-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Accounts for ECM backends (docs/AUTH.md): password-derived ed25519 keys, the mutually authenticated encrypted handshake, tokens bound to an audience and a session key, realm pinning."
+
+[lib]
+name = "ecm_auth"
+
+[features]
+# `ecm_auth::host`: a socket stream and the computer's files for programs that run
+# on a computer (wasm32 only). The rest of the crate is plain logic either way.
+host = ["dep:ecm-host-abi"]
+
+[dependencies]
+ecm-ssh-crypto = { workspace = true }
+# Direct, for PBKDF2: the keyed HMAC state is computed once and cloned per round.
+hmac = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
+ecm-host-abi = { workspace = true, optional = true }

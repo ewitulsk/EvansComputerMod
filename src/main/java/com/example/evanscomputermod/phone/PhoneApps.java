@@ -135,5 +135,17 @@ public final class PhoneApps {
         PhoneUi ui = ui(phone);
         if (ui != null) ui.audioActivity(ProcessManager.currentPid());
     }
+
+    /** The phone's microphone was read: a hidden reader lights the MIC pill. */
+    static void micRead(PhoneHost phone) {
+        PhoneUi ui = ui(phone);
+        if (ui != null) ui.micActivity(ProcessManager.currentPid());
+    }
+
+    /** A double-tap on the AirPods connected to this phone: play/pause the media session. */
+    public static String mediaToggle(PhoneHost phone) {
+        PhoneUi ui = ui(phone);
+        return ui == null ? null : ui.mediaToggle();
+    }
 }
 //?}

@@ -81,6 +81,18 @@ public class NetIpcBridge {
         this.wakeListener = r != null ? r : () -> {};
     }
 
+    private volatile java.util.function.BiConsumer<Integer, Boolean> wakeSocketListener = (pid, on) -> {};
+
+    /** Told when a session sets SO_ECM_WAKE on a socket (the computer then wakes on network frames while asleep). */
+    public void setWakeSocketListener(java.util.function.BiConsumer<Integer, Boolean> l) {
+        wakeSocketListener = l != null ? l : (pid, on) -> {};
+    }
+
+    /** Session {@code pid} set or cleared SO_ECM_WAKE (the option still goes to the kernel). */
+    public void wakeSocketSet(int pid, boolean on) {
+        wakeSocketListener.accept(pid, on);
+    }
+
     /**
      * Child thread: perform a socket syscall and wait for the kernel's answer.
      *

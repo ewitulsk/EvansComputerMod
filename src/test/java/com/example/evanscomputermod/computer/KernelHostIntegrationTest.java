@@ -243,7 +243,7 @@ public class KernelHostIntegrationTest {
         Thread.sleep(50);
         for (short v : audio.drain()) got.add(v);
         assertTrue(count(screen(), "/ > ") > prompts, "beep didn't finish. Screen:\n" + screen());
-        assertEquals(48000, audio.rate());
+        assertEquals(48000, audio.outputRate());
         assertEquals(4800, got.size(), "100 ms at 48 kHz");
         assertTrue(got.stream().anyMatch(v -> Math.abs(v) > 5000), "a loud tone");
     }
@@ -405,7 +405,7 @@ public class KernelHostIntegrationTest {
             samples += audio.drain().length;
             Thread.sleep(20);
         }
-        assertEquals(32768, audio.rate());
+        assertEquals(32768, audio.outputRate());
         assertTrue(samples > 32768 * 3 / 2, "audio keeps flowing: " + samples + " samples in 3 s");
 
         pad.update(new com.example.evanscomputermod.controller.ControllerState(

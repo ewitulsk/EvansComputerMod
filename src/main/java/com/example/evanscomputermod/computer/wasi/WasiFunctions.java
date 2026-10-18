@@ -1341,6 +1341,11 @@ public class WasiFunctions {
         addEnv(sink, "sock_setsockopt", I32x5, RET_I32, (inst, args) -> {
             if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             byte[] optval = state.mem().readBytes((int) args[3], Math.max(0, Math.min((int) args[4], 64)));
+            if ((int) args[1] == 1 && (int) args[2] == SocketFd.SO_ECM_WAKE) {
+                // Wake sockets wake a suspended app: background:refresh decides whether it may run then.
+                boolean on = optval.length > 0 && optval[0] != 0;
+                bridge.wakeSocketSet(sessionId, on);
+            }
             byte[] a = new byte[12 + optval.length];
             ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());

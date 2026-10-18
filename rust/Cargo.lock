@@ -176,6 +176,7 @@ name = "apptest"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-ui",
 ]
 
 [[package]]
@@ -254,6 +255,15 @@ dependencies = [
  "hermit-abi 0.1.19",
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "authd"
+version = "0.1.0"
+dependencies = [
+ "ecm-auth",
+ "ecm-disco",
+ "ecm-host-abi",
 ]
 
 [[package]]
@@ -350,6 +360,12 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
@@ -414,6 +430,12 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 dependencies = [
  "allocator-api2",
 ]
+
+[[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
 name = "byteorder"
@@ -566,8 +588,10 @@ dependencies = [
 name = "chat"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-chat",
  "ecm-disco",
+ "ecm-discord",
  "ecm-host-abi",
 ]
 
@@ -909,7 +933,7 @@ version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "crossterm_winapi",
  "mio",
  "parking_lot",
@@ -1136,13 +1160,16 @@ dependencies = [
 name = "discord"
 version = "0.1.0"
 dependencies = [
+ "ecm-apps-ui",
  "ecm-audio",
+ "ecm-auth",
  "ecm-chat",
  "ecm-disco",
  "ecm-discord",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
+ "music",
  "pkg",
 ]
 
@@ -1150,6 +1177,7 @@ dependencies = [
 name = "discordd"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-disco",
  "ecm-discord",
  "ecm-host-abi",
@@ -1185,6 +1213,7 @@ dependencies = [
 name = "ecm-apps-ui"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-disco",
  "ecm-host-abi",
  "ecm-ui",
@@ -1197,6 +1226,17 @@ dependencies = [
 [[package]]
 name = "ecm-audio"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-auth"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ssh-crypto",
+ "getrandom 0.2.17",
+ "hmac",
+ "sha2",
+]
 
 [[package]]
 name = "ecm-bgp"
@@ -1266,6 +1306,7 @@ name = "ecm-discord"
 version = "0.1.0"
 dependencies = [
  "ecm-audio",
+ "ecm-auth",
  "ecm-chat",
 ]
 
@@ -1303,6 +1344,17 @@ dependencies = [
 [[package]]
 name = "ecm-man"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-music"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "jpeg-decoder",
+ "miniz_oxide",
+ "symphonia-bundle-mp3",
+ "symphonia-core",
+]
 
 [[package]]
 name = "ecm-net"
@@ -1579,7 +1631,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27d12c0aed7f1e24276a241aadc4cb8ea9f83000f34bc062b7cc2d51e3b0fabd"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "debugid",
  "fxhash",
  "serde",
@@ -1612,7 +1664,7 @@ version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5bafc7e33650ab9f05dcc16325f05d56b8d10393114e31a19a353b86fa60cfe7"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "log",
  "managed",
@@ -2018,6 +2070,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpeg-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+
+[[package]]
 name = "js-sys"
 version = "0.3.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,6 +2208,7 @@ version = "0.1.0"
 name = "lua"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
@@ -2333,6 +2392,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mixer"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "mkdir"
 version = "0.1.0"
 
@@ -2373,6 +2439,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "music"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-audio",
+ "ecm-auth",
+ "ecm-disco",
+ "ecm-host-abi",
+ "ecm-music",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "musicd",
+ "pkg",
+]
+
+[[package]]
+name = "musicd"
+version = "0.1.0"
+dependencies = [
+ "ecm-auth",
+ "ecm-disco",
+ "ecm-host-abi",
+ "ecm-music",
+]
+
+[[package]]
 name = "mv"
 version = "0.1.0"
 
@@ -2399,7 +2491,7 @@ version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "libc",
  "memoffset",
@@ -2411,7 +2503,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "cfg_aliases 0.1.1",
  "libc",
@@ -2423,7 +2515,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "cfg_aliases 0.2.2",
  "libc",
@@ -2729,6 +2821,7 @@ dependencies = [
 name = "phone"
 version = "0.1.0"
 dependencies = [
+ "ecm-audio",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
@@ -2738,6 +2831,7 @@ dependencies = [
 name = "phonetest"
 version = "0.1.0"
 dependencies = [
+ "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
 ]
@@ -2912,6 +3006,7 @@ name = "python"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "ecm-auth",
  "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
@@ -3035,7 +3130,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
 ]
 
 [[package]]
@@ -3204,7 +3299,7 @@ dependencies = [
  "bit-set",
  "bit_reverse",
  "bitfield",
- "bitflags",
+ "bitflags 2.11.0",
  "byteorder",
  "bytesize",
  "cfg-if",
@@ -3279,7 +3374,7 @@ version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
@@ -3292,7 +3387,7 @@ version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
@@ -3319,7 +3414,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964cbc9d7870b4d092eecd66049ab0cd93fb5f3f40a408f78bf4415a5d25d3a3"
 dependencies = [
  "ahash",
- "bitflags",
+ "bitflags 2.11.0",
  "indexmap",
  "itertools 0.11.0",
  "log",
@@ -3337,7 +3432,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5b1bae2d3bd9c18a74a835a496b2f7dedcea692e66d47ff56a1dd100ed35c9"
 dependencies = [
  "ascii",
- "bitflags",
+ "bitflags 2.11.0",
  "bstr 0.2.17",
  "cfg-if",
  "itertools 0.11.0",
@@ -3374,7 +3469,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9bf4f4dabec9dec0250c2544bab9229428c7a6af04dba34508476e975fbbc3a1"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "itertools 0.11.0",
  "lz4_flex",
  "malachite-bigint",
@@ -3427,7 +3522,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba07bbc520a3884d6c7c91bdcc2d49b6645b8d8ea6d13c4bf8300a7ddea3ad72"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "itertools 0.11.0",
  "malachite-bigint",
  "num-traits",
@@ -3498,7 +3593,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbf3bb085265414a74cc9c6e90316ea6e423f582c3ca86c34430a39b9f150d93"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "num_enum",
  "optional",
 ]
@@ -3510,7 +3605,7 @@ dependencies = [
  "ahash",
  "ascii",
  "atty",
- "bitflags",
+ "bitflags 2.11.0",
  "bstr 0.2.17",
  "caseless",
  "cfg-if",
@@ -3587,7 +3682,7 @@ version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7803e8936da37efd9b6d4478277f4b2b9bb5cdb37a113e8d63222e58da647e63"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "clipboard-win",
  "fd-lock",
@@ -3609,7 +3704,7 @@ version = "17.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e902948a25149d50edc1a8e0141aad50f54e22ba83ff988cf8f7c9ef07f50564"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "cfg-if",
  "clipboard-win",
  "fd-lock",
@@ -3967,6 +4062,43 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "symphonia-bundle-mp3"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4872dd6bb56bf5eac799e3e957aa1981086c3e613b27e0ac23b176054f7c57ed"
+dependencies = [
+ "lazy_static",
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-core"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea00cc4f79b7f6bb7ff87eddc065a1066f3a43fe1875979056672c9ef948c2af"
+dependencies = [
+ "arrayvec",
+ "bitflags 1.3.2",
+ "bytemuck",
+ "lazy_static",
+ "log",
+]
+
+[[package]]
+name = "symphonia-metadata"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36306ff42b9ffe6e5afc99d49e121e0bd62fe79b9db7b9681d48e29fa19e6b16"
+dependencies = [
+ "encoding_rs",
+ "lazy_static",
+ "log",
+ "symphonia-core",
+]
 
 [[package]]
 name = "syn"
@@ -4661,7 +4793,7 @@ version = "0.221.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d06bfa36ab3ac2be0dee563380147a5b81ba10dd8885d7fbbc9eb574be67d185"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
@@ -4674,7 +4806,7 @@ version = "0.245.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f08c9adee0428b7bddf3890fc27e015ac4b761cc608c822667102b8bfd6995e"
 dependencies = [
- "bitflags",
+ "bitflags 2.11.0",
  "indexmap",
  "semver",
 ]
@@ -4699,7 +4831,7 @@ dependencies = [
  "addr2line",
  "anyhow",
  "async-trait",
- "bitflags",
+ "bitflags 2.11.0",
  "bumpalo",
  "cc",
  "cfg-if",

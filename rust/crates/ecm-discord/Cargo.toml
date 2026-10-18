@@ -11,3 +11,4 @@ doctest = false
 [dependencies]
 ecm-chat = { workspace = true }
 ecm-audio = { workspace = true }
+ecm-auth = { workspace = true }

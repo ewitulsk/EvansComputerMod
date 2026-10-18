@@ -1,14 +1,23 @@
 //! Everything Discord shows, as plain state: the backends it talks to (one
 //! connection each), their servers, channels, members and messages, the voice
-//! channel it is in, and which page is open. Fed `ecm_discord::proto::Event`s,
-//! read by the view. No I/O, so every rule is tested with `cargo test -p discord`.
+//! channel it is in, the sign-in state of each backend, and which page is open. Fed
+//! `ecm_discord::proto::Event`s, read by the view. No I/O, so every rule is tested
+//! with `cargo test -p discord`.
 //!
 //! Seamless backends: the server rail lists the servers the player joined on every
 //! backend at once, so which computer hosts a server only matters when making one
 //! (and is shown in its details).
+//!
+//! Accounts (DISCORD/2): each backend greets with the realm it trusts; the driver
+//! (app.rs) signs in there with the app's own saved logins, or shows the shared
+//! sign-in screen ([`ecm_apps_ui::signin`]) for that backend, and sends `HELLO` with
+//! a token. People are user ids; [`Backend::name_of`] is what to show.
 
-use ecm_discord::proto::{self, Cmd, Event, Kind, Presence, VoiceEvent, DEFAULT_PORT};
+use ecm_apps_ui::signin::SignInScreen;
+use ecm_discord::proto::{self, Cmd, Event, Greeting, Kind, Presence, VoiceEvent, DEFAULT_PORT};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Messages kept per channel.
 pub const MAX_MESSAGES: usize = 200;
@@ -37,10 +46,27 @@ pub enum Link {
     Down(String),
 }
 
+/// Signing in to one backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Auth {
+    /// Connected, waiting for the greeting (`AUTH`, `BACKEND`).
+    Greeting,
+    /// The greeting arrived: the driver signs in (a saved login, or the sign-in screen).
+    Ready,
+    /// The driver is talking to the realm.
+    Working,
+    /// Waiting for the player on the sign-in screen (also: a changed key, refused).
+    NeedsSignIn,
+    /// `HELLO` sent, waiting for `READY`.
+    Hello,
+    SignedIn,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Guild {
     pub name: String,
-    pub owner: String,
+    /// The owner's user id (0: nobody, the home server).
+    pub owner: u64,
     pub joined: bool,
     pub members: u32,
 }
@@ -49,7 +75,7 @@ pub struct Guild {
 pub struct Message {
     pub id: u32,
     pub time: String,
-    pub nick: String,
+    pub uid: u64,
     pub text: String,
     pub mine: bool,
     /// From the history (sent before we looked).
@@ -71,8 +97,17 @@ pub struct Channel {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InVoice {
     pub channel: u32,
-    pub nick: String,
+    pub uid: u64,
     pub speaking: bool,
+}
+
+/// The account we use on a backend (from the app's saved login).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Account {
+    pub realm: String,
+    pub realm_fp: String,
+    pub username: String,
+    pub display: String,
 }
 
 /// One Discord backend (a computer running `discordd`).
@@ -80,22 +115,35 @@ pub struct InVoice {
 pub struct Backend {
     pub host: String,
     pub port: u16,
-    /// Its name (from discovery, then from `READY`).
+    /// Its name (from discovery, then from its greeting).
     pub name: String,
     pub origin: Origin,
     pub link: Link,
-    /// Our nickname there.
-    pub me: String,
+    pub auth: Auth,
+    /// The greeting: the realm it trusts, its key fingerprint, this connection's nonce.
+    pub greeting: Greeting,
+    /// The sign-in screen for this backend (no login yet, expired, or a changed key).
+    pub screen: Option<Rc<RefCell<SignInScreen>>>,
+    /// Signed in as.
+    pub account: Option<Account>,
+    /// Our user id there.
+    pub me: u64,
+    /// Names by user id (`READY`, `MEMBER`, `USER`, `RENAME`).
+    pub names: BTreeMap<u64, String>,
     pub guilds: BTreeMap<u32, Guild>,
     pub channels: BTreeMap<u32, Channel>,
-    /// Members of the servers we joined: (nick, presence), online first.
-    pub members: BTreeMap<u32, Vec<(String, Presence)>>,
+    /// Members of the servers we joined: (user id, presence), online first.
+    pub members: BTreeMap<u32, Vec<(u64, Presence)>>,
     /// Voice sessions by sid.
     pub voice: BTreeMap<u32, InVoice>,
     /// Lines for the backend (the driver sends them).
     pub outbox: Vec<String>,
     /// When the driver last tried to connect (ms), for retries.
     pub tried_ms: u64,
+    /// Settings: the nickname field.
+    pub nick_draft: String,
+    /// The backend refused our `HELLO` (why): the driver shows the sign-in screen.
+    pub refused: Option<String>,
 }
 
 impl Backend {
@@ -106,13 +154,20 @@ impl Backend {
             name: if name.is_empty() { host.to_string() } else { name.to_string() },
             origin,
             link: Link::Idle,
-            me: String::new(),
+            auth: Auth::Greeting,
+            greeting: Greeting::default(),
+            screen: None,
+            account: None,
+            me: 0,
+            names: BTreeMap::new(),
             guilds: BTreeMap::new(),
             channels: BTreeMap::new(),
             members: BTreeMap::new(),
             voice: BTreeMap::new(),
             outbox: Vec::new(),
             tried_ms: 0,
+            nick_draft: String::new(),
+            refused: None,
         }
     }
 
@@ -127,6 +182,35 @@ impl Backend {
 
     pub fn up(&self) -> bool {
         matches!(self.link, Link::Up { .. })
+    }
+
+    /// Connected and signed in: requests can go.
+    pub fn ready(&self) -> bool {
+        self.up() && self.auth == Auth::SignedIn
+    }
+
+    /// The player has to sign in here (the rail shows it).
+    pub fn needs_sign_in(&self) -> bool {
+        self.up() && self.auth == Auth::NeedsSignIn
+    }
+
+    /// What to show for user `uid`.
+    pub fn name_of(&self, uid: u64) -> String {
+        self.names.get(&uid).cloned().unwrap_or_else(|| format!("user {uid}"))
+    }
+
+    /// Our name there.
+    pub fn my_name(&self) -> String {
+        if self.me == 0 {
+            String::new()
+        } else {
+            self.name_of(self.me)
+        }
+    }
+
+    /// The realm this backend trusts (from its greeting).
+    pub fn realm_fp(&self) -> Option<String> {
+        self.greeting.realm.as_ref().map(|r| r.fp.clone())
     }
 
     /// Channels of a server of one kind, by id.
@@ -145,6 +229,8 @@ impl Backend {
         self.members.clear();
         self.voice.clear();
         self.outbox.clear();
+        self.greeting = Greeting::default();
+        self.auth = Auth::Greeting;
     }
 }
 
@@ -166,8 +252,10 @@ pub enum Page {
     Join,
     /// Make a channel in the open server (its owner).
     NewChannel,
-    /// Your settings: the username.
+    /// Your accounts and nicknames, per backend.
     Settings,
+    /// The sign-in screen of a backend.
+    SignIn(usize),
 }
 
 /// The voice channel we are in.
@@ -187,10 +275,17 @@ pub struct Note {
     pub body: String,
 }
 
+/// Something in Settings that the driver does with the saved logins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccountRequest {
+    /// Sign out of a realm (revoke the refresh token, forget the login).
+    SignOut(String),
+    /// Remove a realm's pin by hand (and its login): the only way past a changed key.
+    ForgetRealm(String),
+}
+
 #[derive(Clone, Debug)]
 pub struct Model {
-    /// The nickname we use everywhere.
-    pub nick: String,
     pub backends: Vec<Backend>,
     /// The server open on the rail.
     pub guild: Option<GuildRef>,
@@ -224,8 +319,8 @@ pub struct Model {
     pub new_channel: String,
     pub new_channel_kind: Kind,
     pub add_address: String,
-    /// The Settings page's username field.
-    pub name_draft: String,
+    /// Settings' sign out / forget, for the driver.
+    pub account_requests: Vec<AccountRequest>,
     /// A server we made or joined, to open as soon as the backend shows it ours: (backend, name).
     pub open_when_made: Option<(usize, String)>,
     /// The saved settings' open server, opened once its backend shows it.
@@ -238,7 +333,6 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Model {
-            nick: String::new(),
             backends: Vec::new(),
             guild: None,
             channel: None,
@@ -261,7 +355,7 @@ impl Default for Model {
             new_channel: String::new(),
             new_channel_kind: Kind::Text,
             add_address: String::new(),
-            name_draft: String::new(),
+            account_requests: Vec::new(),
             open_when_made: None,
             reopen: None,
             logo: 0,
@@ -270,7 +364,7 @@ impl Default for Model {
     }
 }
 
-/// `/etc/chat.conf` (Tech Village computers): the village's backend and a nickname.
+/// `/etc/chat.conf` (Tech Village computers): the village's backend.
 pub const CHAT_CONF: &str = "/etc/chat.conf";
 
 impl Model {
@@ -305,9 +399,10 @@ impl Model {
         Ok(i)
     }
 
-    /// Settings saved between sessions: the nickname, the backends we reached, the open server.
+    /// Settings saved between sessions: the backends we reached, the open server. (The
+    /// logins are the app's accounts folder, not here.)
     pub fn settings_text(&self) -> String {
-        let mut s = format!("nick {}\n", self.nick);
+        let mut s = String::new();
         for b in &self.backends {
             if matches!(b.origin, Origin::Typed | Origin::Saved) || b.up() {
                 s.push_str(&format!("backend {}:{} {}\n", b.host, b.port, b.name));
@@ -321,21 +416,17 @@ impl Model {
         s
     }
 
-    /// Load saved settings and `/etc/chat.conf` (its backend and, unless saved, its nickname).
+    /// Load saved settings and `/etc/chat.conf` (its backend).
     pub fn load(&mut self, saved: Option<&str>, chat_conf: Option<&str>) {
         if let Some(conf) = chat_conf {
             let c = ecm_chat::client::parse_config(conf);
             if let Some(server) = c.server {
                 self.add_backend(&server, c.port.unwrap_or(DEFAULT_PORT), "", Origin::Config);
             }
-            if let Some(n) = c.nick {
-                self.nick = n;
-            }
         }
         for line in saved.unwrap_or("").lines() {
             let mut it = line.splitn(2, ' ');
             match (it.next(), it.next()) {
-                (Some("nick"), Some(n)) if ecm_chat::proto::valid_nick(n.trim()) => self.nick = n.trim().to_string(),
                 (Some("backend"), Some(rest)) => {
                     let (addr, name) = rest.split_once(' ').unwrap_or((rest, ""));
                     if let Ok((host, Some(port))) = ecm_chat::client::split_host_port(addr) {
@@ -379,13 +470,11 @@ impl Model {
         }
     }
 
-    /// Backend `i` is connected: say hello.
+    /// Backend `i` is connected: wait for its greeting.
     pub fn on_connected(&mut self, i: usize) {
-        let nick = self.nick.clone();
         if let Some(b) = self.backends.get_mut(i) {
             b.forget_connection();
             b.link = Link::Up { synced: false };
-            b.outbox.push(Cmd::Hello(nick).line());
         }
     }
 
@@ -399,6 +488,9 @@ impl Model {
             b.forget_connection();
             b.link = Link::Down(why.to_string());
         }
+        if self.page == Page::SignIn(i) {
+            self.page = Page::Servers;
+        }
         if self.guild.is_some_and(|(b, _)| b == i) {
             self.guild = None;
             self.channel = None;
@@ -407,6 +499,38 @@ impl Model {
             }
             self.pick_default();
         }
+    }
+
+    // ------------------------------------------------------------------ signing in
+
+    /// The driver made a sign-in screen for backend `i` (no login, expired, changed key).
+    pub fn show_sign_in(&mut self, i: usize, screen: SignInScreen) {
+        if let Some(b) = self.backends.get_mut(i) {
+            b.auth = Auth::NeedsSignIn;
+            b.screen = Some(Rc::new(RefCell::new(screen)));
+        }
+    }
+
+    /// Open backend `i`'s sign-in screen (the rail's Sign in).
+    pub fn open_sign_in(&mut self, i: usize) {
+        if self.backends.get(i).is_some_and(|b| b.screen.is_some()) {
+            self.page = Page::SignIn(i);
+            self.notice = None;
+        }
+    }
+
+    /// The driver has a token for backend `i`: say hello.
+    pub fn hello(&mut self, i: usize, line: String, account: Account) {
+        if let Some(b) = self.backends.get_mut(i) {
+            b.outbox.push(line);
+            b.auth = Auth::Hello;
+            b.account = Some(account);
+        }
+    }
+
+    /// Backends that need the player (the rail's Sign in buttons).
+    pub fn sign_ins(&self) -> Vec<usize> {
+        (0..self.backends.len()).filter(|&i| self.backends[i].needs_sign_in()).collect()
     }
 
     // ------------------------------------------------------------------ the rail
@@ -456,7 +580,7 @@ impl Model {
 
     /// We own the open server.
     pub fn owns_current(&self) -> bool {
-        self.current().is_some_and(|(b, g)| g.owner.eq_ignore_ascii_case(&b.me))
+        self.current().is_some_and(|(b, g)| g.owner != 0 && g.owner == b.me)
     }
 
     /// Open a server from the rail and its first text channel (the page stays on the server).
@@ -535,18 +659,25 @@ impl Model {
         if !b.up() {
             return Err(format!("Not connected to {}", b.name));
         }
+        if b.auth != Auth::SignedIn {
+            return Err(format!("Sign in to {} first", b.name));
+        }
         b.outbox.push(cmd.line());
         Ok(())
     }
 
-    /// The composer: post in the open channel (`/nick NAME` changes nickname).
+    /// The composer: post in the open channel (`/nick NAME` sets your nickname on its backend).
     pub fn compose(&mut self, text: &str) {
         let text = text.trim();
         if text.is_empty() {
             return;
         }
-        if let Some(n) = text.strip_prefix("/nick ") {
-            if let Err(e) = self.set_nick(n) {
+        if let Some(n) = text.strip_prefix("/nick").filter(|r| r.is_empty() || r.starts_with(' ')) {
+            let Some((bi, _)) = self.guild else {
+                self.notice = Some("Open a server first".into());
+                return;
+            };
+            if let Err(e) = self.set_nick(bi, n) {
                 self.notice = Some(e);
             }
             return;
@@ -561,38 +692,39 @@ impl Model {
         }
     }
 
-    /// Change our nickname everywhere.
-    pub fn set_nick(&mut self, n: &str) -> Result<(), String> {
-        let n = proto::nick(n)?;
-        self.nick = n.clone();
-        for b in self.backends.iter_mut().filter(|b| b.up()) {
-            b.outbox.push(Cmd::Nick(n.clone()).line());
-        }
+    /// Your nickname on backend `bi` (empty: back to your account's display name).
+    pub fn set_nick(&mut self, bi: usize, n: &str) -> Result<(), String> {
+        let n = n.trim();
+        let cmd = if n.is_empty() { Cmd::Nick(None) } else { Cmd::Nick(Some(proto::nick(n)?)) };
+        self.send(bi, cmd)?;
+        let name = self.backends[bi].name.clone();
+        self.notice = Some(if n.is_empty() { format!("{name}: your display name again") } else { format!("{name}: your nickname is now {n}") });
         Ok(())
     }
 
-    /// Open Settings with the username field filled in.
+    /// Open Settings with each backend's nickname field filled in.
     pub fn open_settings(&mut self) {
-        self.name_draft = self.nick.clone();
+        for b in &mut self.backends {
+            b.nick_draft = b.my_name();
+        }
         self.notice = None;
         self.page = Page::Settings;
     }
 
-    /// Settings' Save: the new username, everywhere (every connected backend is told; the
-    /// others hear it when they connect).
-    pub fn save_username(&mut self) -> Result<(), String> {
-        let wanted = self.name_draft.trim().to_string();
-        if wanted == self.nick {
+    /// Settings' Save beside a backend's nickname.
+    pub fn save_nick(&mut self, bi: usize) -> Result<(), String> {
+        let Some(b) = self.backends.get(bi) else { return Err("That backend is gone".into()) };
+        let draft = b.nick_draft.trim().to_string();
+        if draft == b.my_name() {
             return Ok(());
         }
-        self.set_nick(&wanted)?;
-        self.notice = Some(format!("Your username is now {wanted}"));
-        Ok(())
+        let display = b.account.as_ref().map(|a| a.display.clone()).unwrap_or_default();
+        self.set_nick(bi, if draft == display { "" } else { &draft })
     }
 
-    /// Backends a new server can go on: (index, name), connected ones.
+    /// Backends a new server can go on: (index, name), signed-in ones.
     pub fn hosts(&self) -> Vec<(usize, String)> {
-        self.backends.iter().enumerate().filter(|(_, b)| b.up()).map(|(i, b)| (i, b.name.clone())).collect()
+        self.backends.iter().enumerate().filter(|(_, b)| b.ready()).map(|(i, b)| (i, b.name.clone())).collect()
     }
 
     /// The Create page's Create.
@@ -688,16 +820,33 @@ impl Model {
         let open = self.guild;
         let open_channel = self.channel;
         let on_screen = self.on_screen;
+        let page = self.page;
         let b = self.backends.get_mut(bi)?;
         let mut note = None;
         match e {
-            Event::Ready { nick, backend } => {
-                b.me = nick.clone();
-                b.name = backend.clone();
+            Event::Auth(_) | Event::Backend { .. } => {
+                if b.greeting.feed(&e.line()) && b.auth == Auth::Greeting {
+                    b.auth = Auth::Ready;
+                    if let Event::Backend { name, .. } = e {
+                        b.name = name.clone();
+                    }
+                }
+            }
+            Event::Ready { uid, name } => {
+                b.me = *uid;
+                b.names.insert(*uid, name.clone());
+                b.auth = Auth::SignedIn;
+                b.screen = None;
+                if page == Page::SignIn(bi) {
+                    self.page = Page::Servers;
+                }
+            }
+            Event::User { uid, name, .. } | Event::Renamed { uid, name } => {
+                b.names.insert(*uid, name.clone());
             }
             Event::Guild { id, owner, joined, members, name } => {
                 let was_joined = b.guilds.get(id).is_some_and(|g| g.joined);
-                b.guilds.insert(*id, Guild { name: name.clone(), owner: owner.clone(), joined: *joined, members: *members });
+                b.guilds.insert(*id, Guild { name: name.clone(), owner: *owner, joined: *joined, members: *members });
                 if was_joined && !joined {
                     b.channels.retain(|_, c| c.guild != *id);
                     b.members.remove(id);
@@ -750,23 +899,28 @@ impl Model {
                     self.page = Page::Servers;
                 }
             }
-            Event::Member { guild, nick, presence } => {
+            Event::Member { guild, uid, presence, name } => {
+                b.names.insert(*uid, name.clone());
                 let list = b.members.entry(*guild).or_default();
-                list.retain(|(n, _)| n != nick);
+                list.retain(|(u, _)| u != uid);
                 if *presence != Presence::Left {
-                    list.push((nick.clone(), *presence));
-                    list.sort_by_key(|(n, p)| (*p != Presence::Online, n.to_lowercase()));
+                    list.push((*uid, *presence));
                 }
+                let names = b.names.clone();
+                let list = b.members.get_mut(guild).unwrap();
+                list.sort_by_key(|(u, p)| (*p != Presence::Online, names.get(u).map(|n| n.to_lowercase()).unwrap_or_default()));
             }
-            Event::Msg { channel, id, time, nick, text, earlier } => {
-                let me = b.me.clone();
+            Event::Msg { channel, id, time, uid, text, earlier } => {
+                let me = b.me;
                 let bname = b.name.clone();
+                let who = b.name_of(*uid);
+                let my_name = b.my_name();
                 let Some(ch) = b.channels.get_mut(channel) else { return None };
                 if ch.messages.iter().any(|m| m.id == *id) {
                     return None;
                 }
-                let mine = nick.eq_ignore_ascii_case(&me);
-                let msg = Message { id: *id, time: time.clone(), nick: nick.clone(), text: text.clone(), mine, earlier: *earlier };
+                let mine = *uid == me;
+                let msg = Message { id: *id, time: time.clone(), uid: *uid, text: text.clone(), mine, earlier: *earlier };
                 // Ids grow with time: history slots in before anything newer.
                 let at = ch.messages.iter().position(|m| m.id > *id).unwrap_or(ch.messages.len());
                 ch.messages.insert(at, msg);
@@ -775,6 +929,7 @@ impl Model {
                     ch.messages.drain(..n);
                 }
                 let looking = open.is_some_and(|(o, g)| o == bi && g == ch.guild) && open_channel == Some(*channel);
+                let _ = my_name;
                 if !*earlier && !mine {
                     if !looking || !on_screen {
                         ch.unread += 1;
@@ -783,7 +938,7 @@ impl Model {
                         self.unread += 1;
                         let gname = b.guilds.get(&ch.guild).map(|g| g.name.clone()).unwrap_or(bname);
                         let body = if self.unread > 1 { format!("{} (+{} more)", text, self.unread - 1) } else { text.clone() };
-                        note = Some(Note { title: format!("{} in #{} ({})", nick, ch.name, gname), body });
+                        note = Some(Note { title: format!("{} in #{} ({})", who, ch.name, gname), body });
                     }
                 }
                 if looking {
@@ -797,9 +952,9 @@ impl Model {
                     self.voice = Some(VoiceSession { backend: bi, channel: *channel, port: *port, token: *token, sid: *sid });
                 }
             }
-            Event::VoiceState { channel, sid, nick, event } => match event {
+            Event::VoiceState { channel, sid, uid, event } => match event {
                 VoiceEvent::Join => {
-                    b.voice.insert(*sid, InVoice { channel: *channel, nick: nick.clone(), speaking: false });
+                    b.voice.insert(*sid, InVoice { channel: *channel, uid: *uid, speaking: false });
                 }
                 VoiceEvent::Leave => {
                     b.voice.remove(sid);
@@ -813,28 +968,6 @@ impl Model {
                     }
                 }
             },
-            Event::Renamed { old, new } => {
-                if b.me.eq_ignore_ascii_case(old) {
-                    b.me = new.clone();
-                }
-                for list in b.members.values_mut() {
-                    for (n, _) in list.iter_mut() {
-                        if n == old {
-                            *n = new.clone();
-                        }
-                    }
-                }
-                for g in b.guilds.values_mut() {
-                    if g.owner == *old {
-                        g.owner = new.clone();
-                    }
-                }
-                for v in b.voice.values_mut() {
-                    if v.nick == *old {
-                        v.nick = new.clone();
-                    }
-                }
-            }
             Event::Synced => {
                 b.link = Link::Up { synced: true };
                 self.pick_default();
@@ -842,6 +975,12 @@ impl Model {
             Event::Pong => {}
             Event::Err(text) => {
                 let name = b.name.clone();
+                if b.auth == Auth::Hello {
+                    // The backend refused our token: sign in again.
+                    b.auth = Auth::Ready;
+                    b.account = None;
+                    b.refused = Some(text.clone());
+                }
                 self.notice = Some(format!("{name}: {text}"));
                 if self.voice_wanted.is_some_and(|(w, _)| w == bi) {
                     self.voice_wanted = None;

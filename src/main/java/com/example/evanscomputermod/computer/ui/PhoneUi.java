@@ -118,6 +118,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     private volatile AppInstance foreground;
     /** Process group -> wall time of its last write to the speaker. */
     private final Map<Integer, Long> audioAt = new ConcurrentHashMap<>();
+    /** Process group -> wall time of its last read of the microphone (the MIC pill). */
+    private final Map<Integer, Long> micAt = new ConcurrentHashMap<>();
+    /** A microphone read longer ago than this no longer lights the MIC pill. */
+    static final long MIC_IDLE_MS = 1_000;
+    /** Media sessions by app id (the Now Playing card; AirPods double-tap). */
+    private final Map<String, UiProto.MediaInfo> media = new ConcurrentHashMap<>();
     private final List<String> events = new CopyOnWriteArrayList<>();
     private volatile ScheduledFuture<?> sweeper;
     private volatile boolean closed;
@@ -146,6 +152,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         apps.setPolicy(LifecyclePolicy.PHONE);
         apps.setAppEvents(this);
         apps.setPrompter(this);
+        // The background limit never stops what is on screen.
+        apps.setForegroundProbe(i -> awake && i == foreground);
         provision();
         apps.reindex();
         apps.background().start();
@@ -246,7 +254,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
      * Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps)
      * and its Files (the documents folder).
      */
-    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth"),
+    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages", "peripherals:bluetooth", "mixer"),
             "dev.ecm.files", List.of("files:documents"));
 
     @Nullable
@@ -322,6 +330,54 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         return awake;
     }
 
+    /**
+     * A program read the phone's microphone: while its app is hidden (or the phone is away) the
+     * status bar shows MIC, so the player knows a background app hears them.
+     */
+    public void micActivity(int pid) {
+        if (apps == null || pid <= 0) return;
+        AppInstance i = apps.instanceOf(pid);
+        if (i != null) micAt.put(i.group(), System.currentTimeMillis());
+    }
+
+    /** Apps that read the microphone just now while not on screen (the MIC pill). */
+    public java.util.List<String> hiddenMicUsers() {
+        java.util.List<String> out = new ArrayList<>();
+        if (apps == null) return out;
+        long now = System.currentTimeMillis();
+        for (AppInstance i : apps.running()) {
+            Long at = micAt.get(i.group());
+            if (at == null || now - at > MIC_IDLE_MS) continue;
+            if (awake && i == foreground) continue;
+            if (!out.contains(i.appId())) out.add(i.appId());
+        }
+        return out;
+    }
+
+    /** The compositor saw an app's media session change (state none: it ended). */
+    void mediaChanged(int pid, String appId, UiProto.MediaInfo info) {
+        if (info.state() == UiProto.MediaState.NONE) media.remove(appId);
+        else media.put(appId, info);
+    }
+
+    /**
+     * Double-tap on the AirPods (or another button with no screen): pause what plays, or play
+     * what was paused last. Returns the app it went to, or null when nothing has a media session.
+     */
+    @Nullable
+    public String mediaToggle() {
+        Compositor c = ui.compositor();
+        Compositor.MediaEntry m = c == null ? null : c.activeMedia();
+        if (m == null) {
+            event("media toggle -> nobody");
+            return null;
+        }
+        String action = m.playing() ? "pause" : "play";
+        c.mediaAction(m.pid(), action, 0);
+        event("media " + action + " -> " + m.appId());
+        return m.appId();
+    }
+
     /** A program wrote to the phone's speaker: its app is playing audio (the {@code audio} exception mode). */
     public void audioActivity(int pid) {
         if (apps == null || pid <= 0) return;
@@ -344,7 +400,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         long now = System.currentTimeMillis();
         for (AppInstance i : apps.running()) {
             Long at = audioAt.get(i.group());
-            if (i.activeModes().contains("audio") && (at == null || now - at > AUDIO_IDLE_MS)) {
+            if (i.activeModes().contains("audio") && !apps.background().isExplicit(i, "audio") && (at == null || now - at > AUDIO_IDLE_MS)) {
                 apps.background().stopMode(i, "audio");
                 audioAt.remove(i.group());
                 event("audio off " + i.appId());
@@ -393,6 +449,21 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     @Override
     public void backgroundModesChanged(AppInstance app, Set<String> activeModes) {
         event("modes " + app.appId() + " " + activeModes);
+        ui.deliverAppModes(app, activeModes);
+    }
+
+    @Override
+    public void backgroundModeResult(AppInstance app, String mode, boolean granted) {
+        event("background " + mode + " " + (granted ? "granted" : "refused") + " " + app.appId());
+        ui.deliverBackgroundModeResult(app, mode, granted);
+    }
+
+    /** The background limit stopped {@code stopped}: a notification names it ("Music was paused to let Discord run"). */
+    @Override
+    public void backgroundLimitReached(AppInstance stopped, AppInstance by) {
+        String a = stopped.manifest().name(), b = by.manifest().name();
+        event("limit " + stopped.appId() + " by " + by.appId());
+        ui.systemNotify(stopped.appId(), "background-limit", a + " was paused", a + " was paused to let " + b + " run");
     }
 
     // ------------------------------------------------------------ PermissionPrompter
@@ -505,6 +576,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
                 for (String m : modes) sb.append("mode ").append(id).append(' ').append(m).append('\n');
             });
         }
+        for (String id : hiddenMicUsers()) sb.append("mic ").append(id).append('\n');
+        media.forEach((id, m) -> sb.append("media ").append(id).append(' ').append(m.state().name().toLowerCase(java.util.Locale.ROOT)).append('\n'));
         Compositor c = ui.compositor();
         if (c != null) {
             for (Compositor.HotkeyClaimInfo h : c.hotkeyClaims()) {

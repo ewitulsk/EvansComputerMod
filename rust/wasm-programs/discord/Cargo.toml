@@ -25,6 +25,11 @@ ecm-discord = { workspace = true }
 ecm-audio = { workspace = true }
 ecm-host-abi = { workspace = true }
 ecm-disco = { workspace = true }
+# Accounts: the saved logins and pins (host: the accounts folder, realm sockets), and the shared sign-in screen.
+ecm-auth = { workspace = true, features = ["host"] }
+ecm-apps-ui = { path = "../../crates/ecm-apps-ui" }
 
 [dev-dependencies]
 pkg = { path = "../pkg" }
+# The village repository also carries Music (examples/village_repo.rs, --music).
+music = { path = "../music" }

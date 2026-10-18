@@ -24,9 +24,22 @@ public final class VillageDiscovery {
      * package repository ({@code repo}, or null for none).
      */
     public static String ispConf(String chatAddress, int chatPort, VillageRepo repo) {
+        return ispConf(chatAddress, chatPort, repo, false);
+    }
+
+    /**
+     * {@link #ispConf(String, int, VillageRepo)}, plus (with {@code accounts}) the ring's realm
+     * ({@code auth}, authd) and music server ({@code music}, musicd) on the chat server. Apps use
+     * these only to find an address: trust comes from the pinned realm key (docs/AUTH.md).
+     */
+    public static String ispConf(String chatAddress, int chatPort, VillageRepo repo, boolean accounts) {
         String c = "# Service discovery (docs/DISCOVERY.md): the ring's services, answered for the village\n"
                 + "record discord " + chatAddress + " " + chatPort + " " + DISCORD_NAME + "\n"
                 + "record chat " + chatAddress + " " + chatPort + " " + DISCORD_NAME + "\n";
+        if (accounts) {
+            c += "record auth " + chatAddress + " " + VillageAuth.AUTH_PORT + " " + VillageAuth.NAME + "\n"
+                    + "record music " + chatAddress + " " + VillageAuth.MUSIC_PORT + " " + VillageAuth.MUSIC_NAME + "\n";
+        }
         if (repo != null) c += "record pkg " + repo.address() + " " + VillageRepo.PORT + " " + VillageRepo.NAME + "\n";
         return c;
     }

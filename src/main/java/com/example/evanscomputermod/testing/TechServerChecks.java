@@ -373,7 +373,8 @@ public final class TechServerChecks {
         step = 3;
         nextProbe = 0;
       } else if (System.currentTimeMillis() > nextProbe) {
-        send(pc, "curl http://" + remote + "/");
+        // the page is longer than the screen: keep its heading (curl | grep), which would scroll away
+        send(pc, "curl http://" + remote + "/ | grep h1");
         nextProbe = System.currentTimeMillis() + 8000;
       }
     }
@@ -799,6 +800,24 @@ public final class TechServerChecks {
     return (TerminalBlockEntity) level.getBlockEntity(find(visits.get(n).network().terminals(), "house1.pc"));
   }
 
+  /** Passwords typed so far by each house PC's {@code chat --user ... --new} (twice: the password and again). */
+  private static final int[] chatPasswords = new int[2];
+
+  /** Answer chat's sign-up prompts on {@code pc}, as the player types them (trust, then the password twice). */
+  private static void answerChatSignUp(TerminalBlockEntity pc, String scr, int side) {
+    String last = scr.stripTrailing();
+    last = last.substring(last.lastIndexOf('\n') + 1);
+    if (last.endsWith("[y/N]")) {
+      send(pc, "y");
+    } else if (last.startsWith("Password for ") && chatPasswords[side] == 0) {
+      send(pc, com.example.evanscomputermod.testing.scenario.DiscordScenarios.PASSWORD);
+      chatPasswords[side] = 1;
+    } else if (last.startsWith("Password again:") && chatPasswords[side] == 1) {
+      send(pc, com.example.evanscomputermod.testing.scenario.DiscordScenarios.PASSWORD);
+      chatPasswords[side] = 2;
+    }
+  }
+
   private static void chat(ServerLevel level) {
     var pa = pcOf(level, a);
     var pb = pcOf(level, b);
@@ -862,10 +881,18 @@ public final class TechServerChecks {
         // A line typed while a program is still running is not seen by the shell.
         // Wait until both screens are cleared down to the prompt.
         if (sa.strip().equals("/ >") && sb.strip().equals("/ >")) {
-          send(pa, "chat");
-          send(pb, "chat");
-          step = 1;
+          // Accounts are required: each house makes one on the village Auth server (pinned
+          // on every village computer, so no trust question), password asked twice, not shown.
+          send(pa, "chat --user " + na + " --new");
+          send(pb, "chat --user " + nb + " --new");
+          chatPasswords[0] = chatPasswords[1] = 0;
+          step = 7;
         }
+      }
+      case 7 -> {
+        answerChatSignUp(pa, sa, 0);
+        answerChatSignUp(pb, sb, 1);
+        if (sa.contains("*** Joined") && sb.contains("*** Joined")) step = 1;
       }
       case 1 -> {
         if (sa.contains("*** Joined") && sb.contains("*** Joined")) {
@@ -1090,7 +1117,7 @@ public final class TechServerChecks {
       case 4 -> {
         // The list (compact: one app per row) has Discord with Install; its page shows the publisher badge.
         var t = storeTexts(server);
-        if (t == null || !(t.contains("Discord") && t.contains("Install") && t.contains("1 apps from 1 repository"))) return;
+        if (t == null || !(t.contains("Discord") && t.contains("Install") && t.stream().anyMatch(x -> x.matches("\\d+ apps from 1 repository")))) return;
         LOG.info("Store phone App Store list: {}", t);
         tapOnClient(player, phoneComp(server).findText("App Store", "Discord"));
         step = 40;

@@ -425,7 +425,8 @@ public final class CellPhoneScenarios {
      * and, on the core's LAN, a server that runs {@code discordd} (a Discord backend), packages the Discord app itself
      * ({@code discord --source}, {@code pkg build}) and serves it ({@code pkg serve}). An ePhone with an LTE Modem and a
      * SIM cored wrote attaches; in the phone's App Store the player adds the server's repository, installs Discord over LTE
-     * and opens it; it asks for the network (Allow); on its + page the player adds the backend by address, opens #general,
+     * and opens it; it asks for the network (Allow); on its + page the player adds the backend by address, signs up on its
+     * sign-in screen (pat; accounts are required), opens #general,
      * and messages go both ways with the server's {@code chat} command. Then Discord goes to the background (home): an
      * ePhone suspends it, so in the phone's Terminal the player allows Discord background refresh and notifications
      * ({@code pkg perm grant}); the server writes again and the next refresh wake posts the notification.
@@ -525,21 +526,33 @@ public final class CellPhoneScenarios {
                 : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "the phone asks to allow Discord the network", 20_000);
         PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
         b.await(r -> chatShows(r, "No Discord backend found"), "control: nothing found on the network", 20_000);
-        b.note("Discord: +, the backend's address, Add backend, Back; # general; /nick pat");
+        b.note("Discord: +, the backend's address, Add backend, Back; Sign in to Discord, Create one: pat; # general");
         b.await(r -> tapIn(r, "Discord", "+"), "tap +", 5_000);
         b.await(r -> tapIn(r, "Discord", "Backend address (10.0.8.1)"), "tap the address field", 5_000);
         typeOnPhone(b, CHAT_SERVER_IP);
         b.await(r -> tapIn(r, "Discord", "Add backend"), "tap Add backend", 5_000);
         b.await(r -> chatShows(r, "Discord · " + CHAT_SERVER_IP), "the backend is connected over LTE", 20_000);
         b.await(r -> tapIn(r, "Discord", "Back"), "tap Back", 5_000);
-        b.await(r -> tapIn(r, "Discord", "# general"), "tap # general", 10_000);
-        b.await(r -> tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
-        typeOnPhone(b, "/nick pat");
-        b.await(r -> tapIn(r, "Discord", "Send"), "tap Send", 5_000);
-        b.expect("server", " is now pat", "discordd: the phone is pat now");
+        b.await(r -> tapIn(r, "Discord", "Sign in to Discord"), "tap \"Sign in to Discord\" (accounts are required)", 15_000);
+        b.await(r -> tapIn(r, "Discord", "No account yet? Create one"), "tap \"No account yet? Create one\"", 15_000);
+        b.await(r -> chatShows(r, "Create an account"), "the form asks for a new account", 5_000);
+        b.await(r -> tapIn(r, "Discord", "Username"), "tap Username", 5_000);
+        typeOnPhone(b, "pat");
+        b.mutate(r -> {
+            PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB);
+            PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB);
+        }, "Tab, Tab (past the optional display name) to Password");
+        typeOnPhone(b, DiscordScenarios.PASSWORD);
+        b.mutate(r -> PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB), "Tab to Password again");
+        typeOnPhone(b, DiscordScenarios.PASSWORD);
+        b.mutate(r -> PhoneGuiScenarios.key(r, DiscordScenarios.HID_ENTER), "Enter (Create account)");
+        b.expect("server", "pat signed in from ", "discordd: the phone signed in as pat");
+        b.await(r -> tapIn(r, "Discord", "# general"), "tap # general", 15_000);
 
-        b.note("server: join with the chat command; messages both ways");
-        atServer(b, "chat " + CHAT_SERVER_IP + " --nick base");
+        b.note("server: join with chat --user base --new (an account of its own); messages both ways");
+        b.mutate(CellPhoneScenarios::phoneToOffHand, "the phone into the off hand");
+        DiscordScenarios.chatSignUp(b, "server", "chat --user base --new " + CHAT_SERVER_IP, "base");
+        b.mutate(CellPhoneScenarios::phoneToHand, "the phone back in the main hand");
         b.expect("server", "Joined Discord as base", "the server's chat command joins #general");
         b.await(r -> tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
         typeOnPhone(b, CHAT_HELLO);
@@ -585,7 +598,7 @@ public final class CellPhoneScenarios {
                         && n.title().equals("base in #general (Discord)")) ? null : "notifications " + PhoneGuiScenarios.comp(r).notifications(),
                 "a refresh wake: Discord posts \"base in #general (Discord): " + CHAT_LATER + "\"", 15_000);
         b.await(r -> PhoneGuiScenarios.onScreen(r, CHAT) == null ? null : "Discord is on screen", "Discord stayed in the background", 1_000);
-        b.timeLimit(60_000);
+        b.timeLimit(120_000);
         return b.build();
     }
 

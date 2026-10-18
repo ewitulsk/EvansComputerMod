@@ -36,6 +36,9 @@ Settings > Sound (/etc/sound.conf), else the first speaker / microphone.
 local M = {}
 M.TONE_RATE = 8000
 M.SOUND_CONF = "/etc/sound.conf"
+M.MIXER = "/dev/mixer"
+M.MAX_APP_PERCENT = 150
+M.ROLES = { "media", "voice", "phone" }
 local NOTES = { C = -9, D = -7, E = -5, F = -4, G = -2, A = 0, B = 2 }
 
 --- "A4" -> 440, "C#5", "Eb3" ...
@@ -169,6 +172,21 @@ function Speaker:set_volume(volume)
   self:control(string.format("volume %d", volume))
 end
 
+--- Who this stream is for: "media" (default), "voice" (a call) or "phone" (a cellular
+--- call, a ringtone). While a stream carries sound, every stream with a lower role is
+--- ducked (media < voice < phone).
+function Speaker:set_role(role)
+  local ok = false
+  for _, r in ipairs(M.ROLES) do if r == role then ok = true end end
+  if not ok then error("role is media, voice or phone, not " .. tostring(role), 2) end
+  self:control("role " .. role)
+end
+
+--- true while a louder, higher-role stream lowers this one.
+function Speaker:ducked()
+  return self:status().ducked == 1
+end
+
 --- Drop whatever is queued.
 function Speaker:flush() self:control("flush") end
 
@@ -230,6 +248,125 @@ end
 --- The speaker attached as `side` ("left", "top", ...), or the default / first one.
 function M.open(side)
   return new(side)
+end
+
+--- The same as open(): a speaker stream of its own.
+function M.open_speaker(side)
+  return new(side)
+end
+
+-- A peak (0-32767) as a meter fill 0-100 on a dB scale from -60 dBFS.
+local function meter(peak)
+  if peak <= 0 then return 0 end
+  local db = 20 * math.log(peak / 32767) / math.log(10)
+  return math.max(0, math.min(100, math.floor((db + 60) / 0.6 + 0.5)))
+end
+
+local function is_master(target)
+  return target == "master" or target:sub(1, 7) == "master."
+end
+
+--- /dev/mixer's text as a list of strip tables ({kind = "output"|"app"|"input", ...}).
+function M.parse_mixer(text)
+  local out = {}
+  for line in text:gmatch("[^\n]+") do
+    local words = {}
+    for w in line:gmatch("%S+") do words[#words + 1] = w end
+    local kind, name = words[1], words[2]
+    if name and (kind == "output" or kind == "app" or kind == "input") then
+      local kv = {}
+      for i = 3, #words do
+        local k, v = words[i]:match("^([^=]+)=(.*)$")
+        if k then kv[k] = v end
+      end
+      local function num(k, d) return math.floor(tonumber(kv[k]) or d or 0) end
+      local function side(k)
+        local v = kv[k]
+        if v == nil or v == "" or v == "-" then return nil end
+        return v
+      end
+      if kind == "output" then
+        local peak = num("peak")
+        out[#out + 1] = { kind = "output", side = name, target = "master." .. name, volume = num("volume"),
+          mute = num("mute") == 1, peak = peak, meter = meter(peak), label = (kv.label or ""):gsub("_", " ") }
+      elseif kind == "app" then
+        local peak = num("peak")
+        out[#out + 1] = { kind = "app", app = name, target = name, volume = num("volume"), mute = num("mute") == 1,
+          route = side("route"), on = side("on"), peak = peak, meter = meter(peak), ducked = num("ducked") == 1,
+          role = kv.role or "media", streams = num("streams") }
+      else
+        local level = num("level", -99)
+        out[#out + 1] = { kind = "input", side = name, target = name, gain = num("gain"), level = level,
+          meter = math.floor(math.max(0, math.min(60, level + 60)) * 100 / 60) }
+      end
+    end
+  end
+  return out
+end
+
+local Mixer = {}
+Mixer.__index = Mixer
+
+--- Every strip as a table with kind "output", "app" or "input".
+function Mixer:strips()
+  local f = open_unbuffered(self.device, "rb")
+  local text = f:read("*a") or ""
+  f:close()
+  return M.parse_mixer(text)
+end
+
+function Mixer:_send(cmd)
+  local f, e = io.open(self.device, "wb")
+  if not f then error(e, 3) end
+  f:setvbuf("no")
+  local ok, werr = f:write(cmd .. "\n")
+  f:close()
+  if not ok then
+    if tostring(werr):lower():find("permi") then
+      error("changing the Volume Mixer needs the mixer permission", 3)
+    end
+    error("the Volume Mixer refused '" .. cmd .. "' (" .. tostring(werr) .. ")", 3)
+  end
+end
+
+--- An app's volume 0-150 %, or a speaker's ("master", "master.left") 0-100 %.
+function Mixer:set(target, percent)
+  percent = math.floor(percent)
+  local top = is_master(target) and 100 or M.MAX_APP_PERCENT
+  if percent < 0 or percent > top then
+    error((top == 100 and "a speaker" or "an app") .. "'s volume is 0-" .. top, 2)
+  end
+  self:_send(string.format("set %s %d", target, percent))
+end
+
+--- Mute (or with on = false unmute) an app or a speaker.
+function Mixer:mute(target, on)
+  self:_send(string.format("mute %s %s", target, on == false and "off" or "on"))
+end
+
+--- Play an app on the speaker attached as `side`; nil (or "-") = the default speaker.
+function Mixer:route(app, side)
+  if is_master(app) then error("route moves an app; a speaker can't be routed", 2) end
+  if side == nil or side == "" or side == "default" then side = "-" end
+  self:_send(string.format("route %s %s", app, side))
+end
+
+--- A microphone's gain 0-100 by its side.
+function Mixer:gain(input, n)
+  n = math.floor(n)
+  if n < 0 or n > 100 then error("gain is 0-100", 2) end
+  self:_send(string.format("gain %s %d", input, n))
+end
+
+--- Forget an app's volume, mute and route.
+function Mixer:reset(app)
+  self:_send("reset " .. app)
+end
+
+--- The Volume Mixer: m:strips(), m:set(target, percent), m:mute(target, on),
+--- m:route(app, side), m:gain(input, n), m:reset(app).
+function M.mixer()
+  return setmetatable({ device = M.MIXER }, Mixer)
 end
 
 local Microphone = {}

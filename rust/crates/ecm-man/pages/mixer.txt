@@ -1,0 +1,91 @@
+NAME
+    mixer - the Volume Mixer: each app's volume, mute, speaker and meter
+
+SYNOPSIS
+    mixer
+    mixer set <app|master[.side]> <percent>
+    mixer mute <app|master[.side]> [on|off|toggle]
+    mixer unmute <app|master[.side]>
+    mixer route <app> <side|->
+    mixer gain <microphone> <0-100>
+    mixer reset <app>
+    mixer watch
+
+DESCRIPTION
+    Every program that plays sound gets its own strip in the Volume
+    Mixer, as on a real computer. Each Speaker (an ePhone's speaker,
+    AirPods) has a master strip, and each Microphone an input strip.
+    mixer with no arguments prints them all with a text level meter:
+
+      SPEAKERS
+        master.left    100%       ||||||||||||........  Speaker
+      APPS
+        dev.ecm.music   80%       ||||||||............  on left, ducked
+        aplay          100% muted ....................  idle
+      MICROPHONES
+        top         gain 50       ||||||..............  -42 dB
+
+    An app's volume goes from 0 to 150 percent (100 is as the app plays
+    it); a speaker's from 0 to 100. The meter shows the loudest sound
+    of the last moment on a -60 to 0 dB scale. "on left" is the speaker
+    the app plays on now, "-> right" a speaker it was routed to, "idle"
+    an app that is not playing. "ducked" means a call (a voice or phone
+    stream) is lowering the app right now; it comes back by itself when
+    the call goes quiet.
+
+    The settings are kept per app on the computer, so an app keeps its
+    volume the next time it plays. Settings > Mixer shows the same
+    strips with sliders.
+
+COMMANDS
+    set <target> <percent>
+        Set an app's volume (0-150) or a speaker's (master, or
+        master.left for the speaker on the left side; 0-100). A
+        trailing % is allowed.
+
+    mute <target> [on|off|toggle]
+        Silence an app or a speaker (on when nothing is given).
+
+    unmute <target>
+        Undo mute.
+
+    route <app> <side>
+        On a Terminal with several speakers, play the app on the
+        speaker attached on that side. - (or default) plays it on the
+        default speaker again (Settings > Sound).
+
+    gain <microphone> <0-100>
+        A microphone's input gain by its side (50 is the capsule's own
+        level, 0 mutes it).
+
+    reset <app>
+        Forget an app's volume, mute and route.
+
+    watch
+        Live meters, redrawn twice a second. q, Ctrl+C or Shift+Esc
+        quits (plain Esc closes the Terminal screen; Shift+Esc sends
+        Esc to the program).
+
+    -h
+        The list of commands.
+
+NOTES
+    Anyone may look at the mixer. Changing it from an app needs the
+    mixer permission (the app lists it in its app.toml); programs typed
+    in the shell may always change it. A refused change says why: no
+    such speaker or microphone, a value out of range, or no permission.
+
+    Python and Lua have the same commands: audio.mixer() (see
+    scripting).
+
+EXAMPLES
+      mixer
+      mixer set dev.ecm.music 60
+      mixer set master 80
+      mixer mute dev.ecm.discord
+      mixer route aplay right
+      mixer gain top 70
+      mixer watch
+
+SEE ALSO
+    settings, aplay, voice, scripting, discord

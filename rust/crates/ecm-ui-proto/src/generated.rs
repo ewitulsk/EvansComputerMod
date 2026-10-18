@@ -72,10 +72,17 @@ pub mod opcode {
     pub const FILE_PICKED: u16 = 0x0531;
     pub const OPEN: u16 = 0x0532;
     pub const OPEN_FILE: u16 = 0x0533;
+    pub const MEDIA_SESSION: u16 = 0x0540;
+    pub const MEDIA_ACTION: u16 = 0x0541;
+    pub const MEDIA_SESSION_CHANGED: u16 = 0x0542;
+    pub const MEDIA_CONTROL: u16 = 0x0543;
     pub const WILL_SUSPEND: u16 = 0x0600;
     pub const SAVE_STATE: u16 = 0x0601;
     pub const RESTORE: u16 = 0x0602;
     pub const BACKGROUND_DONE: u16 = 0x0603;
+    pub const BACKGROUND_MODE: u16 = 0x0604;
+    pub const BACKGROUND_MODE_RESULT: u16 = 0x0605;
+    pub const APP_MODES: u16 = 0x0606;
 }
 
 /// `Role` (u8).
@@ -698,6 +705,43 @@ impl PickMode {
     }
 }
 
+/// What a media session is doing; none = it ended (the Now Playing card goes away).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[repr(u8)]
+pub enum MediaState {
+    #[default]
+    None = 0,
+    Playing = 1,
+    Paused = 2,
+    Buffering = 3,
+}
+
+impl MediaState {
+    pub const ALL: &'static [MediaState] = &[MediaState::None, MediaState::Playing, MediaState::Paused, MediaState::Buffering];
+    pub fn code(self) -> u8 { self as u8 }
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(MediaState::None),
+            1 => Some(MediaState::Playing),
+            2 => Some(MediaState::Paused),
+            3 => Some(MediaState::Buffering),
+            _ => None,
+        }
+    }
+    /// The name used in the contract and in test vectors.
+    pub fn name(self) -> &'static str {
+        match self {
+            MediaState::None => "none",
+            MediaState::Playing => "playing",
+            MediaState::Paused => "paused",
+            MediaState::Buffering => "buffering",
+        }
+    }
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|v| v.name() == name)
+    }
+}
+
 /// Bits of `WindowStates` (u32).
 pub mod window_states {
     pub const ACTIVATED: u32 = 0x1;
@@ -926,6 +970,81 @@ impl Rect {
         json_i(o, *&self.w as i64);
         o.push_str(",\"h\":");
         json_i(o, *&self.h as i64);
+        o.push('}');
+    }
+}
+
+/// Now Playing (§12): art_w x art_h RGBA8888 cover art (0 x 0 and no bytes: none; at most 160 x 160). actions = what the player may ask for: play, pause, next, previous, seek.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaInfo {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub art_w: u16,
+    pub art_h: u16,
+    pub art_rgba: Vec<u8>,
+    pub state: MediaState,
+    pub position_ms: u32,
+    pub duration_ms: u32,
+    pub actions: Vec<String>,
+}
+
+impl MediaInfo {
+    pub fn enc(&self, w: &mut Writer) {
+        w.str(&self.title);
+        w.str(&self.artist);
+        w.str(&self.album);
+        w.u16(*&self.art_w);
+        w.u16(*&self.art_h);
+        w.bytes(&self.art_rgba);
+        w.u8((&self.state).code());
+        w.u32(*&self.position_ms);
+        w.u32(*&self.duration_ms);
+        w.u32((&self.actions).len() as u32);
+        for x0 in (&self.actions).iter() {
+            w.str(x0);
+        }
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let title = r.str(256, "MediaInfo.title")?;
+        let artist = r.str(256, "MediaInfo.artist")?;
+        let album = r.str(256, "MediaInfo.album")?;
+        let art_w = { let v = r.u16()?; if v < 0 || v > 160 { return Err(DecodeError::OutOfRange("MediaInfo.art_w")); } v };
+        let art_h = { let v = r.u16()?; if v < 0 || v > 160 { return Err(DecodeError::OutOfRange("MediaInfo.art_h")); } v };
+        let art_rgba = r.bytes(102400, "MediaInfo.art_rgba")?;
+        let state = MediaState::from_code(r.u8()?).ok_or(DecodeError::BadEnum("MediaInfo.state"))?;
+        let position_ms = r.u32()?;
+        let duration_ms = r.u32()?;
+        let actions = { let n0 = r.count(8, 4, "MediaInfo.actions")?; let mut v0 = Vec::with_capacity(n0); for _ in 0..n0 { v0.push(r.str(16, "MediaInfo.actions")?); } v0 };
+        Ok(MediaInfo { title, artist, album, art_w, art_h, art_rgba, state, position_ms, duration_ms, actions })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push('{');
+        o.push_str("\"title\":");
+        json_str(o, &self.title);
+        o.push_str(",\"artist\":");
+        json_str(o, &self.artist);
+        o.push_str(",\"album\":");
+        json_str(o, &self.album);
+        o.push_str(",\"art_w\":");
+        json_u(o, *&self.art_w as u64);
+        o.push_str(",\"art_h\":");
+        json_u(o, *&self.art_h as u64);
+        o.push_str(",\"art_rgba\":");
+        json_hex(o, &self.art_rgba);
+        o.push_str(",\"state\":");
+        json_str(o, (&self.state).name());
+        o.push_str(",\"position_ms\":");
+        json_u(o, *&self.position_ms as u64);
+        o.push_str(",\"duration_ms\":");
+        json_u(o, *&self.duration_ms as u64);
+        o.push_str(",\"actions\":");
+        o.push('[');
+        for (i0, x0) in (&self.actions).iter().enumerate() {
+            if i0 > 0 { o.push(','); }
+            json_str(o, x0);
+        }
+        o.push(']');
         o.push('}');
     }
 }
@@ -3991,6 +4110,143 @@ impl From<OpenFile> for Message {
     fn from(m: OpenFile) -> Message { Message::OpenFile(m) }
 }
 
+/// `MediaSession` · opcode 0x0540 · a>c
+/// 
+/// What the app is playing. Sent again on every change (state, position about once a second while playing); state none ends the session.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaSession {
+    pub info: MediaInfo,
+}
+
+impl MediaSession {
+    pub fn enc(&self, w: &mut Writer) {
+        (&self.info).enc(w);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let info = MediaInfo::dec(r)?;
+        Ok(MediaSession { info })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"MediaSession\"");
+        o.push_str(",\"info\":");
+        (&self.info).json(o);
+        o.push('}');
+    }
+}
+
+impl From<MediaSession> for Message {
+    fn from(m: MediaSession) -> Message { Message::MediaSession(m) }
+}
+
+/// `MediaAction` · opcode 0x0541 · c>a
+/// 
+/// The player pressed a Now Playing control (shell card, AirPods double-tap, lock screen): play, pause, next, previous, or seek to position_ms.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaAction {
+    pub action: String,
+    pub position_ms: u32,
+}
+
+impl MediaAction {
+    pub fn enc(&self, w: &mut Writer) {
+        w.str(&self.action);
+        w.u32(*&self.position_ms);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let action = r.str(16, "MediaAction.action")?;
+        let position_ms = r.u32()?;
+        Ok(MediaAction { action, position_ms })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"MediaAction\"");
+        o.push_str(",\"action\":");
+        json_str(o, &self.action);
+        o.push_str(",\"position_ms\":");
+        json_u(o, *&self.position_ms as u64);
+        o.push('}');
+    }
+}
+
+impl From<MediaAction> for Message {
+    fn from(m: MediaAction) -> Message { Message::MediaAction(m) }
+}
+
+/// `MediaSessionChanged` · opcode 0x0542 · c>s
+/// 
+/// An app's media session (the shell's Now Playing card); state none = it ended.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaSessionChanged {
+    pub pid: u32,
+    pub app_id: String,
+    pub info: MediaInfo,
+}
+
+impl MediaSessionChanged {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.pid);
+        w.str(&self.app_id);
+        (&self.info).enc(w);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let pid = r.u32()?;
+        let app_id = r.str(128, "MediaSessionChanged.app_id")?;
+        let info = MediaInfo::dec(r)?;
+        Ok(MediaSessionChanged { pid, app_id, info })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"MediaSessionChanged\"");
+        o.push_str(",\"pid\":");
+        json_u(o, *&self.pid as u64);
+        o.push_str(",\"app_id\":");
+        json_str(o, &self.app_id);
+        o.push_str(",\"info\":");
+        (&self.info).json(o);
+        o.push('}');
+    }
+}
+
+impl From<MediaSessionChanged> for Message {
+    fn from(m: MediaSessionChanged) -> Message { Message::MediaSessionChanged(m) }
+}
+
+/// `MediaControl` · opcode 0x0543 · s>c
+/// 
+/// The player pressed a Now Playing control for app pid: the compositor sends it MediaAction.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaControl {
+    pub pid: u32,
+    pub action: String,
+    pub position_ms: u32,
+}
+
+impl MediaControl {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.pid);
+        w.str(&self.action);
+        w.u32(*&self.position_ms);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let pid = r.u32()?;
+        let action = r.str(16, "MediaControl.action")?;
+        let position_ms = r.u32()?;
+        Ok(MediaControl { pid, action, position_ms })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"MediaControl\"");
+        o.push_str(",\"pid\":");
+        json_u(o, *&self.pid as u64);
+        o.push_str(",\"action\":");
+        json_str(o, &self.action);
+        o.push_str(",\"position_ms\":");
+        json_u(o, *&self.position_ms as u64);
+        o.push('}');
+    }
+}
+
+impl From<MediaControl> for Message {
+    fn from(m: MediaControl) -> Message { Message::MediaControl(m) }
+}
+
 /// `WillSuspend` · opcode 0x0600 · c>a
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WillSuspend {
@@ -4091,6 +4347,118 @@ impl From<BackgroundDone> for Message {
     fn from(m: BackgroundDone) -> Message { Message::BackgroundDone(m) }
 }
 
+/// `BackgroundMode` · opcode 0x0604 · a>c
+/// 
+/// The app starts (on) or stops a background mode: audio, call, radio, transfer, navigation (declared in app.toml).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct BackgroundMode {
+    pub mode: String,
+    pub on: bool,
+}
+
+impl BackgroundMode {
+    pub fn enc(&self, w: &mut Writer) {
+        w.str(&self.mode);
+        w.bool(*&self.on);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let mode = r.str(32, "BackgroundMode.mode")?;
+        let on = r.bool("BackgroundMode.on")?;
+        Ok(BackgroundMode { mode, on })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"BackgroundMode\"");
+        o.push_str(",\"mode\":");
+        json_str(o, &self.mode);
+        o.push_str(",\"on\":");
+        o.push_str(if *&self.on { "true" } else { "false" });
+        o.push('}');
+    }
+}
+
+impl From<BackgroundMode> for Message {
+    fn from(m: BackgroundMode) -> Message { Message::BackgroundMode(m) }
+}
+
+/// `BackgroundModeResult` · opcode 0x0605 · c>a
+/// 
+/// Whether the app may keep running for mode while hidden: at once when background:<mode> is decided, else once the player answered the first-time prompt.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct BackgroundModeResult {
+    pub mode: String,
+    pub granted: bool,
+}
+
+impl BackgroundModeResult {
+    pub fn enc(&self, w: &mut Writer) {
+        w.str(&self.mode);
+        w.bool(*&self.granted);
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let mode = r.str(32, "BackgroundModeResult.mode")?;
+        let granted = r.bool("BackgroundModeResult.granted")?;
+        Ok(BackgroundModeResult { mode, granted })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"BackgroundModeResult\"");
+        o.push_str(",\"mode\":");
+        json_str(o, &self.mode);
+        o.push_str(",\"granted\":");
+        o.push_str(if *&self.granted { "true" } else { "false" });
+        o.push('}');
+    }
+}
+
+impl From<BackgroundModeResult> for Message {
+    fn from(m: BackgroundModeResult) -> Message { Message::BackgroundModeResult(m) }
+}
+
+/// `AppModes` · opcode 0x0606 · c>s
+/// 
+/// An app's active background modes changed (the desktop's tray, the phone's pills); no modes = none.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct AppModes {
+    pub pid: u32,
+    pub app_id: String,
+    pub modes: Vec<String>,
+}
+
+impl AppModes {
+    pub fn enc(&self, w: &mut Writer) {
+        w.u32(*&self.pid);
+        w.str(&self.app_id);
+        w.u32((&self.modes).len() as u32);
+        for x0 in (&self.modes).iter() {
+            w.str(x0);
+        }
+    }
+    pub fn dec(r: &mut Reader) -> Result<Self, DecodeError> {
+        let pid = r.u32()?;
+        let app_id = r.str(128, "AppModes.app_id")?;
+        let modes = { let n0 = r.count(8, 4, "AppModes.modes")?; let mut v0 = Vec::with_capacity(n0); for _ in 0..n0 { v0.push(r.str(32, "AppModes.modes")?); } v0 };
+        Ok(AppModes { pid, app_id, modes })
+    }
+    pub fn json(&self, o: &mut String) {
+        o.push_str("{\"op\":\"AppModes\"");
+        o.push_str(",\"pid\":");
+        json_u(o, *&self.pid as u64);
+        o.push_str(",\"app_id\":");
+        json_str(o, &self.app_id);
+        o.push_str(",\"modes\":");
+        o.push('[');
+        for (i0, x0) in (&self.modes).iter().enumerate() {
+            if i0 > 0 { o.push(','); }
+            json_str(o, x0);
+        }
+        o.push(']');
+        o.push('}');
+    }
+}
+
+impl From<AppModes> for Message {
+    fn from(m: AppModes) -> Message { Message::AppModes(m) }
+}
+
 /// Every message of the protocol.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
@@ -4154,10 +4522,17 @@ pub enum Message {
     FilePicked(FilePicked),
     Open(Open),
     OpenFile(OpenFile),
+    MediaSession(MediaSession),
+    MediaAction(MediaAction),
+    MediaSessionChanged(MediaSessionChanged),
+    MediaControl(MediaControl),
     WillSuspend(WillSuspend),
     SaveState(SaveState),
     Restore(Restore),
     BackgroundDone(BackgroundDone),
+    BackgroundMode(BackgroundMode),
+    BackgroundModeResult(BackgroundModeResult),
+    AppModes(AppModes),
 }
 
 impl Message {
@@ -4223,10 +4598,17 @@ impl Message {
             Message::FilePicked(_) => 0x0531,
             Message::Open(_) => 0x0532,
             Message::OpenFile(_) => 0x0533,
+            Message::MediaSession(_) => 0x0540,
+            Message::MediaAction(_) => 0x0541,
+            Message::MediaSessionChanged(_) => 0x0542,
+            Message::MediaControl(_) => 0x0543,
             Message::WillSuspend(_) => 0x0600,
             Message::SaveState(_) => 0x0601,
             Message::Restore(_) => 0x0602,
             Message::BackgroundDone(_) => 0x0603,
+            Message::BackgroundMode(_) => 0x0604,
+            Message::BackgroundModeResult(_) => 0x0605,
+            Message::AppModes(_) => 0x0606,
         }
     }
     pub fn name(&self) -> &'static str {
@@ -4291,10 +4673,17 @@ impl Message {
             Message::FilePicked(_) => "FilePicked",
             Message::Open(_) => "Open",
             Message::OpenFile(_) => "OpenFile",
+            Message::MediaSession(_) => "MediaSession",
+            Message::MediaAction(_) => "MediaAction",
+            Message::MediaSessionChanged(_) => "MediaSessionChanged",
+            Message::MediaControl(_) => "MediaControl",
             Message::WillSuspend(_) => "WillSuspend",
             Message::SaveState(_) => "SaveState",
             Message::Restore(_) => "Restore",
             Message::BackgroundDone(_) => "BackgroundDone",
+            Message::BackgroundMode(_) => "BackgroundMode",
+            Message::BackgroundModeResult(_) => "BackgroundModeResult",
+            Message::AppModes(_) => "AppModes",
         }
     }
     pub(crate) fn enc_body(&self, w: &mut Writer) {
@@ -4359,10 +4748,17 @@ impl Message {
             Message::FilePicked(m) => m.enc(w),
             Message::Open(m) => m.enc(w),
             Message::OpenFile(m) => m.enc(w),
+            Message::MediaSession(m) => m.enc(w),
+            Message::MediaAction(m) => m.enc(w),
+            Message::MediaSessionChanged(m) => m.enc(w),
+            Message::MediaControl(m) => m.enc(w),
             Message::WillSuspend(m) => m.enc(w),
             Message::SaveState(m) => m.enc(w),
             Message::Restore(m) => m.enc(w),
             Message::BackgroundDone(m) => m.enc(w),
+            Message::BackgroundMode(m) => m.enc(w),
+            Message::BackgroundModeResult(m) => m.enc(w),
+            Message::AppModes(m) => m.enc(w),
         }
     }
     pub(crate) fn dec_body(opcode: u16, r: &mut Reader) -> Result<Message, DecodeError> {
@@ -4427,16 +4823,23 @@ impl Message {
             0x0531 => Message::FilePicked(FilePicked::dec(r)?),
             0x0532 => Message::Open(Open::dec(r)?),
             0x0533 => Message::OpenFile(OpenFile::dec(r)?),
+            0x0540 => Message::MediaSession(MediaSession::dec(r)?),
+            0x0541 => Message::MediaAction(MediaAction::dec(r)?),
+            0x0542 => Message::MediaSessionChanged(MediaSessionChanged::dec(r)?),
+            0x0543 => Message::MediaControl(MediaControl::dec(r)?),
             0x0600 => Message::WillSuspend(WillSuspend::dec(r)?),
             0x0601 => Message::SaveState(SaveState::dec(r)?),
             0x0602 => Message::Restore(Restore::dec(r)?),
             0x0603 => Message::BackgroundDone(BackgroundDone::dec(r)?),
+            0x0604 => Message::BackgroundMode(BackgroundMode::dec(r)?),
+            0x0605 => Message::BackgroundModeResult(BackgroundModeResult::dec(r)?),
+            0x0606 => Message::AppModes(AppModes::dec(r)?),
             _ => return Err(DecodeError::UnknownOpcode(opcode)),
         })
     }
     /// Whether `opcode` names a message of this protocol version.
     pub fn is_known(opcode: u16) -> bool {
-        matches!(opcode, 0x0001 | 0x0002 | 0x0003 | 0x0100 | 0x0101 | 0x0102 | 0x0103 | 0x0104 | 0x0105 | 0x0106 | 0x0107 | 0x0108 | 0x0109 | 0x010c | 0x010d | 0x010e | 0x010f | 0x010a | 0x010b | 0x0200 | 0x0210 | 0x0211 | 0x0300 | 0x0301 | 0x0302 | 0x0303 | 0x0304 | 0x0305 | 0x0310 | 0x0311 | 0x0313 | 0x0312 | 0x0400 | 0x0401 | 0x0402 | 0x0403 | 0x0404 | 0x0410 | 0x0411 | 0x0412 | 0x0413 | 0x0414 | 0x0415 | 0x0416 | 0x0417 | 0x0418 | 0x0419 | 0x0500 | 0x0501 | 0x0510 | 0x0511 | 0x0512 | 0x0520 | 0x0521 | 0x0522 | 0x0523 | 0x0530 | 0x0531 | 0x0532 | 0x0533 | 0x0600 | 0x0601 | 0x0602 | 0x0603)
+        matches!(opcode, 0x0001 | 0x0002 | 0x0003 | 0x0100 | 0x0101 | 0x0102 | 0x0103 | 0x0104 | 0x0105 | 0x0106 | 0x0107 | 0x0108 | 0x0109 | 0x010c | 0x010d | 0x010e | 0x010f | 0x010a | 0x010b | 0x0200 | 0x0210 | 0x0211 | 0x0300 | 0x0301 | 0x0302 | 0x0303 | 0x0304 | 0x0305 | 0x0310 | 0x0311 | 0x0313 | 0x0312 | 0x0400 | 0x0401 | 0x0402 | 0x0403 | 0x0404 | 0x0410 | 0x0411 | 0x0412 | 0x0413 | 0x0414 | 0x0415 | 0x0416 | 0x0417 | 0x0418 | 0x0419 | 0x0500 | 0x0501 | 0x0510 | 0x0511 | 0x0512 | 0x0520 | 0x0521 | 0x0522 | 0x0523 | 0x0530 | 0x0531 | 0x0532 | 0x0533 | 0x0540 | 0x0541 | 0x0542 | 0x0543 | 0x0600 | 0x0601 | 0x0602 | 0x0603 | 0x0604 | 0x0605 | 0x0606)
     }
     pub(crate) fn json_into(&self, o: &mut String) {
         match self {
@@ -4500,10 +4903,17 @@ impl Message {
             Message::FilePicked(m) => m.json(o),
             Message::Open(m) => m.json(o),
             Message::OpenFile(m) => m.json(o),
+            Message::MediaSession(m) => m.json(o),
+            Message::MediaAction(m) => m.json(o),
+            Message::MediaSessionChanged(m) => m.json(o),
+            Message::MediaControl(m) => m.json(o),
             Message::WillSuspend(m) => m.json(o),
             Message::SaveState(m) => m.json(o),
             Message::Restore(m) => m.json(o),
             Message::BackgroundDone(m) => m.json(o),
+            Message::BackgroundMode(m) => m.json(o),
+            Message::BackgroundModeResult(m) => m.json(o),
+            Message::AppModes(m) => m.json(o),
         }
     }
 }

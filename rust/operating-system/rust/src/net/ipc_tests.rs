@@ -651,3 +651,44 @@ fn multicast_options_join_a_group_and_share_the_port() {
     let (r, _, _) = call(&mut ib, &mut p.b, 2, SOCK_RECVFROM, &with_sock(listeners[0], &i32s(&[64, 0])), p.now);
     assert_eq!(r, IPC_PENDING, "left the group: nothing to read");
 }
+
+
+#[test]
+fn wake_socket_reports_its_session_when_data_arrives() {
+    let mut p = Pair::new();
+    let (mut ia, mut ib) = (SocketIpc::new(), SocketIpc::new());
+    // B listens for UDP on 9000 and asks to be woken by it.
+    let (_, u, _) = call(&mut ib, &mut p.b, 4, SOCK_SOCKET, &i32s(&[AF_INET, SOCK_DGRAM, 0]), 0);
+    assert_eq!(call(&mut ib, &mut p.b, 4, SOCK_BIND, &with_sock(u, &sockaddr([0, 0, 0, 0], 9000)), 0).1, 0);
+    assert!(!ib.has_wake_sockets());
+    let wake = with_sock(u, &i32s(&[SOL_SOCKET, SO_ECM_WAKE, 1]));
+    assert_eq!(call(&mut ib, &mut p.b, 4, SOCK_SETSOCKOPT, &wake, 0).1, 0);
+    assert!(ib.has_wake_sockets());
+    assert!(ib.wake_check(&p.b, 0).is_empty(), "nothing arrived yet");
+
+    let (_, a, _) = call(&mut ia, &mut p.a, 1, SOCK_SOCKET, &i32s(&[AF_INET, SOCK_DGRAM, 0]), 0);
+    let mut send = with_sock(a, &blob(&sockaddr([10, 0, 0, 2], 9000)));
+    send.extend_from_slice(&blob(b"ping"));
+    call(&mut ia, &mut p.a, 1, SOCK_SENDTO, &send, 0);
+    p.run(50);
+    let t = p.now;
+    assert_eq!(ib.wake_check(&p.b, t), vec![4], "the datagram wakes session 4");
+    assert!(ib.wake_check(&p.b, t + 100).is_empty(), "the same unread data doesn't ask again at once");
+    assert_eq!(ib.wake_check(&p.b, t + WAKE_REPEAT_MS), vec![4], "...but again after a while, while nobody reads it");
+
+    // Read it: no more asking; a second datagram wakes again.
+    let rf = with_sock(u, &i32s(&[256, MSG_DONTWAIT]));
+    assert_eq!(call(&mut ib, &mut p.b, 4, SOCK_RECVFROM, &rf, p.now).1, 4);
+    assert!(ib.wake_check(&p.b, t + 3 * WAKE_REPEAT_MS).is_empty(), "read: nothing to wake for");
+    call(&mut ia, &mut p.a, 1, SOCK_SENDTO, &send, p.now);
+    p.run(50);
+    assert_eq!(ib.wake_check(&p.b, t + 4 * WAKE_REPEAT_MS), vec![4]);
+
+    // Control: with the option off, data doesn't wake anyone.
+    let off = with_sock(u, &i32s(&[SOL_SOCKET, SO_ECM_WAKE, 0]));
+    assert_eq!(call(&mut ib, &mut p.b, 4, SOCK_SETSOCKOPT, &off, p.now).1, 0);
+    call(&mut ia, &mut p.a, 1, SOCK_SENDTO, &send, p.now);
+    p.run(50);
+    assert!(ib.wake_check(&p.b, t + 9 * WAKE_REPEAT_MS).is_empty());
+    assert!(!ib.has_wake_sockets());
+}

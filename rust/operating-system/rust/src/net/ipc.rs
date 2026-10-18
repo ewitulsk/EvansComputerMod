@@ -61,6 +61,11 @@ const IPPROTO_ICMP: i32 = 1;
 const SOL_SOCKET: i32 = 1;
 const SO_REUSEADDR: i32 = 2;
 const SO_RCVTIMEO: i32 = 20;
+/// ECM's own socket option (docs/gui/APPS.md "Wake sockets"): data arriving on the socket
+/// wakes its app while it is suspended. The value matches `ecm_host_abi::socket::SO_ECM_WAKE`.
+const SO_ECM_WAKE: i32 = 0x4543;
+/// A wake socket nobody reads asks again this often (ms).
+pub const WAKE_REPEAT_MS: i64 = 2_000;
 // IPPROTO_IP options (Linux numbering).
 const IP_MULTICAST_IF: i32 = 32;
 const IP_MULTICAST_TTL: i32 = 33;
@@ -104,6 +109,12 @@ struct Sock {
     kind: Kind,
     /// SO_RCVTIMEO; `None` = wait forever (or the kind's legacy default).
     rcvtimeo_ms: Option<i64>,
+    /// SO_ECM_WAKE: tell the host when this socket becomes readable.
+    wake: bool,
+    /// It was readable at the last [`SocketIpc::wake_check`].
+    wake_ready: bool,
+    /// When it last asked to wake its app (ms).
+    wake_fired_ms: i64,
 }
 
 /// The one in-flight blocking operation for a session.
@@ -275,6 +286,37 @@ impl SocketIpc {
         self.sessions.values().any(|s| s.pending.is_some())
     }
 
+    /// Sessions (pids) whose wake sockets (SO_ECM_WAKE) became readable: data, a connection
+    /// or a close arrived. A socket asks at once when it becomes readable, and again every
+    /// [`WAKE_REPEAT_MS`] while nobody reads it (its app may not have been allowed to run
+    /// the first time, and more data may have come since). Called after the stack ran.
+    pub fn wake_check(&mut self, stack: &Stack, now: i64) -> Vec<i32> {
+        let mut out = Vec::new();
+        for (&pid, sess) in self.sessions.iter_mut() {
+            let mut fire = false;
+            for sock in sess.sockets.iter_mut().flatten() {
+                if !sock.wake {
+                    continue;
+                }
+                let ready = readiness(stack, &sock.kind) & (POLLIN | POLLERR) != 0;
+                if ready && (!sock.wake_ready || now - sock.wake_fired_ms >= WAKE_REPEAT_MS) {
+                    fire = true;
+                    sock.wake_fired_ms = now;
+                }
+                sock.wake_ready = ready;
+            }
+            if fire {
+                out.push(pid);
+            }
+        }
+        out
+    }
+
+    /// Does any socket ask to wake its app (the host then lets network interrupts wake a sleeping computer)?
+    pub fn has_wake_sockets(&self) -> bool {
+        self.sessions.values().any(|s| s.sockets.iter().flatten().any(|k| k.wake))
+    }
+
     /// Release every socket of a session (process exited or was killed).
     pub fn destroy_session(&mut self, stack: &mut Stack, pid: i32) {
         if let Some(sess) = self.sessions.remove(&pid) {
@@ -428,6 +470,9 @@ fn op_socket(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i32 {
     match sess.alloc(Sock {
         kind,
         rcvtimeo_ms: None,
+        wake: false,
+        wake_ready: false,
+        wake_fired_ms: 0,
     }) {
         Some(slot) => out.status(slot as i32),
         None => out.status(-1),
@@ -512,6 +557,9 @@ fn op_connect(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i6
                     sess.sockets[id] = Some(Sock {
                         kind: Kind::TcpNew { bind: None },
                         rcvtimeo_ms: None,
+                        wake: false,
+                        wake_ready: false,
+        wake_fired_ms: 0,
                     });
                     out.status(-1)
                 }
@@ -558,6 +606,7 @@ fn op_accept(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64
     let Some(Sock {
         kind: Kind::Listener(l),
         rcvtimeo_ms,
+        ..
     }) = sess.sockets[id].as_ref()
     else {
         return out.status(-1);
@@ -576,6 +625,9 @@ fn op_accept(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64
             match sess.alloc(Sock {
                 kind: Kind::Tcp(h),
                 rcvtimeo_ms: None,
+                wake: false,
+                wake_ready: false,
+        wake_fired_ms: 0,
             }) {
                 Some(slot) => out.with(slot as i32, &sockaddr_bytes(&peer)),
                 None => {
@@ -638,6 +690,7 @@ fn op_recv(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, now: i
     if let Some(Sock {
         kind: Kind::Packet(h),
         rcvtimeo_ms,
+        ..
     }) = sess.sockets[id].as_ref()
     {
         let (h, timeout) = (*h, *rcvtimeo_ms);
@@ -658,6 +711,7 @@ fn op_recv(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, now: i
     let Some(Sock {
         kind: Kind::Tcp(h),
         rcvtimeo_ms,
+        ..
     }) = sess.sockets[id].as_ref()
     else {
         return out.status(-1);
@@ -719,6 +773,16 @@ fn op_setsockopt(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i
                 -1
             },
         );
+    }
+    if level == SOL_SOCKET && name == SO_ECM_WAKE {
+        let on = match val.len() {
+            1 => val[0] != 0,
+            n if n >= 4 => i32::from_le_bytes([val[0], val[1], val[2], val[3]]) != 0,
+            _ => return out.status(-1),
+        };
+        sock.wake = on;
+        sock.wake_ready = on && readiness(stack, &sock.kind) & (POLLIN | POLLERR) != 0;
+        return out.status(0);
     }
     if level == SOL_SOCKET && name == SO_RCVTIMEO {
         let ms: i64 = match val.len() {

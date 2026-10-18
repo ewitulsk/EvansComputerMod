@@ -16,6 +16,42 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 public final class AppTests {
     static final String NS = "ecm_apps";
 
+    /** The desktop tray: closing an app holding a call hides it; the icon shows it; Quit ends the call; Notes closes for real. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".desktop_tray")
+    public static void desktop_tray(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.DesktopTrayScenarios.ALL.get("desktop_tray"), true);
+    }
+
+    /** Music: musicd on a server; the app finds it, signs up, searches as typed and plays; musicd stopped: Buffering..., back. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".music_stream")
+    public static void music_stream(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL.get("music_stream"), true);
+    }
+
+    /** Music: a private playlist made, filled and reordered; another account can't see it; the same account plays it elsewhere. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".music_playlist")
+    public static void music_playlist(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL.get("music_playlist"), true);
+    }
+
+    /** Music ducked while a Discord call on the same computer carries a voice, back after; a quiet call doesn't duck it. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".music_duck")
+    public static void music_duck(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL.get("music_duck"), true);
+    }
+
+    /** A 160x160 image in an app window: the app keeps answering clicks for seconds. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gui_large_image")
+    public static void gui_large_image(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.UiImageScenarios.ALL.get("gui_large_image"), true);
+    }
+
+    /** The Volume Mixer: two programs on one Speaker, one turned down, one muted; master mute silences both. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".volume_mixer")
+    public static void volume_mixer(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MixerScenarios.ALL.get("volume_mixer"), true);
+    }
+
     /** A serves a repository; B installs the app over the cable with pkg; network denied until granted. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".app_repo")
     public static void app_repo(GameTestHelper h) {

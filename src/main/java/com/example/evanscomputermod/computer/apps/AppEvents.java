@@ -39,4 +39,18 @@ public interface AppEvents {
 
     /** Background exception modes changed (status-bar indicators). Any thread. */
     default void backgroundModesChanged(AppInstance app, java.util.Set<String> activeModes) {}
+
+    /**
+     * Send {@code BackgroundModeResult{mode, granted}}: whether {@code app} may keep running
+     * for {@code mode} while hidden (after its {@code BackgroundMode}, or once the player
+     * answered the first-time prompt). Any thread.
+     */
+    default void backgroundModeResult(AppInstance app, String mode, boolean granted) {}
+
+    /**
+     * {@code apps.maxBackgroundApps} was passed: {@code stopped}'s background modes were
+     * stopped (it is suspended) so {@code by} can run. The phone posts a notification that
+     * names it ("Music was paused to let Discord run"). Any thread.
+     */
+    default void backgroundLimitReached(AppInstance stopped, AppInstance by) {}
 }

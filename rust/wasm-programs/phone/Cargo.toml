@@ -16,3 +16,5 @@ test = false
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 ecm-host-abi = { workspace = true }
+# The notification sheet's volume slider and per-app strips (/dev/mixer).
+ecm-audio = { workspace = true }

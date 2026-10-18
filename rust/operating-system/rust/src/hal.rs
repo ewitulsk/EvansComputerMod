@@ -144,6 +144,9 @@ mod ffi {
         pub fn screen_fb_sync();
         pub fn screen_set_power(on: i32);
         pub fn screen_set_pixel_format(format: i32);
+
+        // background apps
+        pub fn socket_wake(pid: i32);
     }
 }
 
@@ -159,6 +162,7 @@ pub mod ffi {
         pub static FILES: RefCell<BTreeMap<String, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         pub static SPAWNED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
         pub static TX: RefCell<Vec<(i32, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+        pub static WAKES: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
         /// Children keep running (else they exit at once with 0).
         pub static CHILD_RUNNING: RefCell<bool> = const { RefCell::new(false) };
         /// What the children print next (process_read_output drains it).
@@ -259,6 +263,12 @@ pub mod ffi {
     pub unsafe fn screen_fb_sync() {}
     pub unsafe fn screen_set_power(_: i32) {}
     pub unsafe fn screen_set_pixel_format(_: i32) {}
+    pub unsafe fn socket_wake(pid: i32) { WAKES.with(|w| w.borrow_mut().push(pid)) }
+}
+
+/// A wake socket (SO_ECM_WAKE) of program `pid` became readable: the host may wake its suspended app.
+pub fn socket_wake(pid: i32) {
+    unsafe { ffi::socket_wake(pid) }
 }
 
 /// Pointer type crossing the host boundary: wasm32 imports take i32
