@@ -54,13 +54,14 @@ public class ModBlocks {
     public static final DeferredItem<BlockItem> NETWORK_CABLE_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("network_cable", NETWORK_CABLE);
 
-    // Internet Gateway - unbreakable block at (0,0,0) for TAP bridge access
+    // Internet Gateway - the uplink to the host's network. The one generated at (0,0,0) is
+    // unbreakable; player-placed ones (InternetGatewayBlock.CRAFTED) break with a pickaxe.
     public static final DeferredBlock<InternetGatewayBlock> INTERNET_GATEWAY =
             BLOCKS.registerBlock("internet_gateway", InternetGatewayBlock::new,
                     BlockBehaviour.Properties.of()
-                            .strength(-1.0f, 3600000.0f)
+                            .strength(5.0f, 3600000.0f)
+                            .requiresCorrectToolForDrops()
                             .sound(SoundType.METAL)
-                            .noLootTable()
                             .pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK)
             );
 

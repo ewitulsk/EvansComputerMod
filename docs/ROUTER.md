@@ -731,6 +731,10 @@ Server launch properties:
 -Devanscomputermod.techVillages=true
 ```
 
+`-Devanscomputermod.techVillages=false` only stops the village computers from
+booting. To stop the villages generating as well, set `techVillages.enabled = false`
+in `config/evanscomputermod-common.toml` ([TECH_VILLAGE_NETWORK.md](TECH_VILLAGE_NETWORK.md)).
+
 With the internet sidecar installed (below), also:
 
 ```text
@@ -763,7 +767,12 @@ With the sidecar, an unprivileged Java socket proxy supplies gateway `10.0.0.1`
 on every OS. It answers ARP (not DHCP: use a static address or a DHCP server a
 player runs) and bridges TCP/UDP over ordinary host sockets. Village 1's WAN
 connects to it through a logical gateway segment. A normal terminal can also use
-a cable segment reaching the Internet Gateway block at world origin. The host OS
+a cable segment reaching the Internet Gateway block at world origin, or a gateway
+a player crafted and placed: `internet.gatewayRecipe = true` in
+`config/evanscomputermod-common.toml` (off by default; `/reload` applies it) adds
+the recipe `iron ingot, Network Cable, iron ingot` / `comparator, ender pearl,
+comparator` / `iron ingot, block of redstone, iron ingot`. Every gateway is the
+same uplink. A placed one breaks with a pickaxe; the generated one can't be broken. The host OS
 supplies outbound connectivity and firewall policy. UDP allows DNS; TCP allows
 plain HTTP. Only public destinations are reached: loopback, link-local, multicast
 and `0.0.0.0/8` never, and private/LAN ranges (`10/8`, `172.16/12`,

@@ -121,5 +121,43 @@ public final class VillageRoadTests {
                 : missing.isEmpty() ? null : "buildings with doors but no entrance marker: " + missing;
         TestDriver.drive(h, NS, "tech_village_buildings_have_entrances", () -> true, () -> failure);
     }
+
+    /**
+     * {@code techVillages.enabled}: on, the ring's placement selects every village's chunk; off, it selects
+     * none and the fiber feature places nothing at a fiber end. Control: on again, the chunks are selected again.
+     */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".villages_toggle")
+    public static void tech_villages_config_toggle(GameTestHelper h) {
+        var level = h.getLevel();
+        var d = WorldNetwork.get(level);
+        d.plan(level);
+        var state = level.getChunkSource().getGeneratorState();
+        var placement = new com.example.evanscomputermod.worldgen.TechVillagePlacement();
+        java.util.function.IntSupplier selected = () -> (int) d.villages.stream()
+                .filter(v -> placement.isStructureChunk(state, v.x() >> 4, v.z() >> 4)).count();
+        String failure = null;
+        try {
+            int on = selected.getAsInt();
+            com.example.evanscomputermod.EcmConfig.overrideTechVillagesEnabled(false);
+            int off = selected.getAsInt();
+            var fiberEnd = d.villages.get(0).endpoint(true);
+            var feature = com.example.evanscomputermod.worldgen.TechWorldgen.FIBER_LINE.get();
+            boolean placed = feature.place(new net.minecraft.world.level.levelgen.feature.FeaturePlaceContext<>(
+                    Optional.empty(), level, level.getChunkSource().getGenerator(), RandomSource.create(1),
+                    fiberEnd, net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration.INSTANCE));
+            com.example.evanscomputermod.EcmConfig.overrideTechVillagesEnabled(null);
+            int again = selected.getAsInt();
+            EvansComputerMod.LOGGER.info("tech_villages_config_toggle: selected on={} off={} again={}, fiber placed off={}",
+                    on, off, again, placed);
+            if (on != d.villages.size()) failure = "enabled: " + on + " of " + d.villages.size() + " village chunks selected";
+            else if (off != 0) failure = "disabled: " + off + " village chunks still selected";
+            else if (placed) failure = "disabled: the fiber feature placed blocks";
+            else if (again != on) failure = "control: enabled again, " + again + " village chunks selected";
+        } finally {
+            com.example.evanscomputermod.EcmConfig.overrideTechVillagesEnabled(null);
+        }
+        String f = failure;
+        TestDriver.drive(h, NS, "tech_villages_config_toggle", () -> true, () -> f);
+    }
 }
 //?}

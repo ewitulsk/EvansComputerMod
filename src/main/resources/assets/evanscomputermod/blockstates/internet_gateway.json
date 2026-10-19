@@ -1,5 +1,6 @@
 {
   "variants": {
-    "": { "model": "evanscomputermod:block/internet_gateway" }
+    "crafted=false": { "model": "evanscomputermod:block/internet_gateway" },
+    "crafted=true": { "model": "evanscomputermod:block/internet_gateway" }
   }
 }

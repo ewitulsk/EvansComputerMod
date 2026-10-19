@@ -68,6 +68,10 @@ ROUTING
     Only public addresses are reached: the server's own LAN (10.x,
     172.16-31.x, 192.168.x, 100.64-127.x) is refused unless the server
     allows it.
+    One gateway is generated at the world's origin (0, 0, 0). If the
+    server turns on internet.gatewayRecipe (off by default), players
+    can craft more from iron ingots, a Network Cable, two comparators,
+    an ender pearl and a block of redstone, and place them anywhere.
 
 WI-FI
     Put a Wi-Fi Module in a bay, then wifi connect <network>
@@ -83,6 +87,9 @@ THE TECH VILLAGE RING
     run by its ISP router; neighbouring villages are joined by fiber
     and exchange routes with BGP, so traffic goes the other way round
     when a fiber is cut. Village 1 has the uplink to the internet.
+    A server can turn the villages off with techVillages.enabled =
+    false in its config: no villages, fiber or cell sites generate in
+    new chunks and the village computers don't run.
 
       100.(64+N).1.0/24   the village cable under the streets
       100.(64+N).0.0/24   the Data Center (web server .10, DNS .53)

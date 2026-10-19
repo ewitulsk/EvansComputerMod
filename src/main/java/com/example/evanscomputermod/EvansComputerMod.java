@@ -53,6 +53,7 @@ public class EvansComputerMod {
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
         //? if <=1.21.1 {
+        com.example.evanscomputermod.block.GatewayRecipeCondition.register(modEventBus);
         com.example.evanscomputermod.worldgen.TechWorldgen.register(modEventBus);
         if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.RadioServerChecks::tick);

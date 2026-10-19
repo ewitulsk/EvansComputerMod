@@ -53,6 +53,8 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue APPS_WAKE_MIN_INTERVAL_MS;
     private static final ModConfigSpec.IntValue APPS_WAKELOCK_MAX_MS;
     private static final ModConfigSpec.IntValue AUDIO_DUCK_LEVEL_PERCENT;
+    private static final ModConfigSpec.BooleanValue INTERNET_GATEWAY_RECIPE;
+    private static final ModConfigSpec.BooleanValue TECH_VILLAGES_ENABLED;
     /** Defaults of the per-mode CPU shares: a call mixes talkers and runs the microphone, so it gets more. */
     public static final java.util.Map<String, Integer> BACKGROUND_CPU_DEFAULTS = java.util.Map.of(
             "audio", 10, "call", 25, "radio", 10, "transfer", 10, "navigation", 10);
@@ -198,6 +200,22 @@ public final class EcmConfig {
         AUDIO_DUCK_LEVEL_PERCENT = b
                 .comment("While a voice or phone stream carries sound, lower-role streams (music) play at this volume, in percent.")
                 .defineInRange("duckLevelPercent", 25, 0, 100);
+        b.pop();
+
+        b.comment("The Internet Gateway block (the uplink to the real internet with the internet add-on).").push("internet");
+        INTERNET_GATEWAY_RECIPE = b
+                .comment("Let players craft Internet Gateways (iron, a Network Cable, comparators, an ender pearl and a",
+                        "block of redstone). Off: the recipe doesn't exist and the only gateway is the one generated at",
+                        "(0, 0, 0). Read when recipes load: after changing it, run /reload or restart.")
+                .define("gatewayRecipe", false);
+        b.pop();
+
+        b.comment("Tech Villages (docs/TECH_VILLAGE_NETWORK.md): the ring of ten villages, its fiber and cell sites.").push("techVillages");
+        TECH_VILLAGES_ENABLED = b
+                .comment("Generate Tech Villages, the fiber between them and the carrier's cell sites in new chunks, and",
+                        "run the villages' server-owned computers (ISP routers, web, chat and DNS servers). False: none",
+                        "of that; parts already generated stay in the world as blocks. Needs a restart.")
+                .define("enabled", true);
         b.pop();
 
         SPEC = b.build();
@@ -408,5 +426,41 @@ public final class EcmConfig {
 
     public static int audioDuckLevelPercent() {
         return get(AUDIO_DUCK_LEVEL_PERCENT, 25);
+    }
+
+    private static volatile Boolean gatewayRecipeOverride;
+
+    /** {@code internet.gatewayRecipe}: whether the Internet Gateway's recipe is loaded (off by default). */
+    public static boolean internetGatewayRecipe() {
+        Boolean o = gatewayRecipeOverride;
+        if (o != null) return o;
+        try {
+            return SPEC.isLoaded() && INTERNET_GATEWAY_RECIPE.get();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Test override of {@code internet.gatewayRecipe} (null = the config), seen by the next recipe load. */
+    public static void overrideInternetGatewayRecipe(Boolean on) {
+        gatewayRecipeOverride = on;
+    }
+
+    private static volatile Boolean techVillagesOverride;
+
+    /** {@code techVillages.enabled}: generate Tech Villages and run their computers (on by default). */
+    public static boolean techVillagesEnabled() {
+        Boolean o = techVillagesOverride;
+        if (o != null) return o;
+        try {
+            return !SPEC.isLoaded() || TECH_VILLAGES_ENABLED.get();
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /** Test override of {@code techVillages.enabled} (null = the config). */
+    public static void overrideTechVillagesEnabled(Boolean on) {
+        techVillagesOverride = on;
     }
 }

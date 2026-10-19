@@ -3,7 +3,10 @@
 This is the network architecture of all ten Tech Villages, written for players who want
 to check, join or extend it. The router CLI itself is described in [ROUTER.md](ROUTER.md);
 how it was tested is in [TECH_VILLAGE_VALIDATION.md](TECH_VILLAGE_VALIDATION.md).
-Tech Villages generate on Minecraft 1.21.1.
+Tech Villages generate on Minecraft 1.21.1. To turn them off, set `enabled = false` under
+`[techVillages]` in `config/evanscomputermod-common.toml` and restart: new chunks get no
+villages, fiber or cell sites, and the village computers (ISP routers, web, chat and DNS
+servers) don't run. Parts that already generated stay in the world as plain blocks.
 
 Commands in `code` blocks are typed **into a computer's terminal** unless they start
 with `/`, which go in **Minecraft chat** (operator).

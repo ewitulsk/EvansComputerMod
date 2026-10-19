@@ -695,7 +695,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         d.plan(level);
         d.applyLinks(level);
         if (System.getProperty("neoforge.enabledGameTestNamespaces") != null) return;
-        if (Boolean.parseBoolean(System.getProperty("evanscomputermod.techVillages", "true")))
+        if (com.example.evanscomputermod.EcmConfig.techVillagesEnabled()
+                && Boolean.parseBoolean(System.getProperty("evanscomputermod.techVillages", "true")))
             for (Village v : d.villages)
                 for (String role : d.infrastructure(v.number))
                     d.boot(level, v.number, role);
