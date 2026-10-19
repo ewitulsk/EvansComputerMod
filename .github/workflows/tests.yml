@@ -30,8 +30,8 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Unit and integration tests (stack, bridge, router, BGP, kernel)
-        run: cargo test -p ecm-net -p ecm-bridge -p ecm-router -p ecm-bgp -p terminal-os
+      - name: Unit and integration tests (stack, bridge, router, BGP, kernel, terminal, manual pages)
+        run: cargo test -p ecm-net -p ecm-bridge -p ecm-router -p ecm-bgp -p terminal-os -p ecm-man -p ecm-lineedit -p ecm-vte
 
       - name: Device drivers and the GBA emulator
         run: cargo test --release -p ecm-host-abi -p ecm-audio -p gba -p rustboyadvance-core
