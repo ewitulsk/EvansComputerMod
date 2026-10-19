@@ -13,6 +13,14 @@ DESCRIPTION
     installed with pkg are confined by the app manager.) Deleted files
     cannot be recovered.
 
+    Every computer and ePhone has the standard directories below.
+    Each boot makes any that are missing (on a new computer, or one
+    made before they existed): /bin, /home, /home/Downloads,
+    /home/Pictures, /etc, /tmp, /srv, /var, /var/lib, /var/log,
+    /var/spool and /usr/share/man. Boot never removes or changes
+    anything already there; if a file has a directory's name, the
+    file stays and that directory is not made.
+
     To bring a file in from your real computer, use upload. The Files
     app on the desktop (files) shows the same storage.
 
@@ -23,7 +31,7 @@ DIRECTORIES
     /bin
         Your own programs (.wasm files). The shell looks here before
         /server-bin, so a program here replaces a shipped one with the
-        same name. It may not exist until you make it (mkdir /bin).
+        same name. Empty until you put programs in it.
 
     /server-bin
         The programs that come with the server: ls, cat, python, ...
@@ -35,6 +43,10 @@ DIRECTORIES
         Player look for videos in /home and /home/videos, and sshd reads
         a user's keys from /home/<user>/.ssh/authorized_keys.
 
+    /home/Downloads, /home/Pictures
+        Where the browser saves downloads, and where Messages saves
+        pictures (Save to Files).
+
     /etc
         Configuration files (see below). Plain text: change them with
         edit.
@@ -42,8 +54,16 @@ DIRECTORIES
     /apps, /var/apps
         Apps installed with pkg, and each app's own data.
 
-    /var/lib, /var/log
-        Program state (the pkg cache, the app database) and logs.
+    /var/lib, /var/log, /var/spool
+        Program state (the pkg cache, the app database), logs, and
+        queued work (texts and voicemail waiting to be delivered).
+
+    /tmp
+        Scratch files. Nothing cleans it for you.
+
+    /srv
+        The usual place for files a server serves: /srv/music is
+        musicd's library, and httpd 80 /srv/www serves a web site.
 
     /dev
         Devices, not files on disk: /dev/audio is the speaker, /dev/sdr
@@ -129,7 +149,7 @@ EXAMPLES
       ls server-bin
       cat /etc/resolv.conf
       edit /services.cfg
-      mkdir -p /usr/share/man
+      ls /home
 
 SEE ALSO
     ls, cd, pwd, cp, mv, rm, mkdir, upload, files, shell, pkg

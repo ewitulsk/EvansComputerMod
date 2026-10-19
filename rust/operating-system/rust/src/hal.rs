@@ -133,6 +133,7 @@ mod ffi {
         pub fn file_exists(path_ptr: i32, path_len: i32) -> i32;
         pub fn file_is_dir(path_ptr: i32, path_len: i32) -> i32;
         pub fn file_list_dir(path_ptr: i32, path_len: i32, buf_ptr: i32, buf_len: i32) -> i32;
+        pub fn file_mkdir(path_ptr: i32, path_len: i32) -> i32;
         pub fn fd_open(path_ptr: i32, path_len: i32, flags: i32) -> i32;
         pub fn fd_close(fd: i32) -> i32;
         pub fn pipe_create(read_fd_ptr: i32, write_fd_ptr: i32) -> i32;
@@ -160,6 +161,8 @@ pub mod ffi {
     thread_local! {
         pub static NOW: RefCell<i64> = const { RefCell::new(0) };
         pub static FILES: RefCell<BTreeMap<String, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
+        /// Directories made with file_mkdir (others are implied by FILES).
+        pub static DIRS: RefCell<std::collections::BTreeSet<String>> = const { RefCell::new(std::collections::BTreeSet::new()) };
         pub static SPAWNED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
         pub static TX: RefCell<Vec<(i32, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
         pub static WAKES: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
@@ -231,7 +234,19 @@ pub mod ffi {
     pub unsafe fn file_exists(p: usize, l: i32) -> i32 { FILES.with(|f| f.borrow().contains_key(&key(p, l)) as i32) }
     pub unsafe fn file_is_dir(p: usize, l: i32) -> i32 {
         let pre = format!("{}/", key(p, l));
-        FILES.with(|f| f.borrow().keys().any(|k| k.starts_with(&pre)) as i32)
+        let made = DIRS.with(|d| d.borrow().contains(&key(p, l)));
+        (made || FILES.with(|f| f.borrow().keys().any(|k| k.starts_with(&pre)))) as i32
+    }
+    /// Makes the directory and its parents, like the hosts.
+    pub unsafe fn file_mkdir(p: usize, l: i32) -> i32 {
+        let path = key(p, l);
+        let mut at = String::new();
+        for seg in path.split('/').filter(|s| !s.is_empty()) {
+            if !at.is_empty() { at.push('/'); }
+            at.push_str(seg);
+            DIRS.with(|d| d.borrow_mut().insert(at.clone()));
+        }
+        0
     }
     /// Directories are implied by the files' paths.
     pub unsafe fn file_list_dir(p: usize, l: i32, b: usize, bl: i32) -> i32 {
@@ -534,6 +549,11 @@ pub mod file {
 
     pub fn is_dir(path: &str) -> bool {
         path.is_empty() || unsafe { ffi::file_is_dir(p(path.as_ptr()), path.len() as i32) == 1 }
+    }
+
+    /// Make a directory and any missing parents (no-op if it exists).
+    pub fn mkdir(path: &str) -> bool {
+        unsafe { ffi::file_mkdir(p(path.as_ptr()), path.len() as i32) == 0 }
     }
 
     /// Raw "d:name\nf:name\n" listing.

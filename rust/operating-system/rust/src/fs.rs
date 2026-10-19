@@ -48,6 +48,31 @@ pub fn is_dir(path: &str) -> bool {
     hal::file::is_dir(path)
 }
 
+/// The directories every computer and ePhone has, made at boot when
+/// missing (`man filesystem`). Programs take these as given: upload saves
+/// into /home, the browser into /home/Downloads, logs go to /var/log, and
+/// so on. Existing contents are never touched.
+pub const LAYOUT: &[&str] = &[
+    "bin",
+    "home",
+    "home/Downloads",
+    "home/Pictures",
+    "etc",
+    "tmp",
+    "srv",
+    "var",
+    "var/lib",
+    "var/log",
+    "var/spool",
+    "usr/share/man",
+];
+
+/// Make whichever [`LAYOUT`] directories are missing. Returns how many
+/// were made. A file in the way is left alone.
+pub fn ensure_layout() -> usize {
+    LAYOUT.iter().filter(|d| !exists(d) && hal::file::mkdir(d)).count()
+}
+
 pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,

@@ -88,6 +88,16 @@ impl Storage {
         }
     }
 
+    /// Make a directory and its parents in user storage: 0, or -1.
+    pub fn mkdir(&self, name: &str) -> i32 {
+        let Some(p) = self.resolve_write(name) else { return -1 };
+        if std::fs::create_dir_all(p).is_ok() {
+            0
+        } else {
+            -1
+        }
+    }
+
     pub fn read(&self, name: &str) -> Option<Vec<u8>> {
         let (p, _) = self.resolve_read(name)?;
         if p.is_dir() {

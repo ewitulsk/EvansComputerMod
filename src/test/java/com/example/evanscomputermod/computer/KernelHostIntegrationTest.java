@@ -99,6 +99,18 @@ public class KernelHostIntegrationTest {
         if (dataDir != null) deleteTree(dataDir);
     }
 
+    /** Boot makes the standard directories in the computer's real storage (man filesystem). */
+    @Test
+    void bootMakesTheDirectoryLayout() throws Exception {
+        for (String d : new String[]{"bin", "home", "home/Downloads", "home/Pictures", "etc", "tmp", "srv",
+                "var/lib", "var/log", "var/spool", "usr/share/man"}) {
+            assertTrue(Files.isDirectory(dataDir.resolve(d)), "/" + d + " missing after boot in " + dataDir.toAbsolutePath());
+        }
+        // upload's default folder is there for programs, too.
+        computer.sendInput("cd /home\n");
+        waitForScreen(s -> s.contains("/home > "), 10_000, "prompt in /home");
+    }
+
     @Test
     void childProgramOutputReachesScreenAndPromptReturns() throws Exception {
         int prompts = count(screen(), "/ > ");
