@@ -6,7 +6,7 @@ that never leaves it; for every payment it increments its counter and signs
 accepts a payment only when the tag verifies AND the counter is newer than
 the last one it saw. A thief who records a payment can't replay it (old
 counter) or forge one (no K); a stripe or a sniffed NFC session gives them
-nothing a chip payment needs. Compare: `skimmer` (a stripe is plain text).
+nothing a chip payment needs. Compare: a stripe, which is plain text.
 
     python /apps/dev.ecm.bankd/main.py issue <name> <pan> [--pin 1234] [--issuer acme] [--tap]
     python /apps/dev.ecm.bankd/main.py serve <port>
@@ -21,8 +21,8 @@ issue   writes a blank bank card in the attached Card Reader/Writer (block or
         fields. The key goes into the subscriber file, nowhere else.
         --tap also stores the PAN and a tap token in NFC sector 1 of a hybrid
         card, keyed with the issuer's terminal key (printed once; give it to
-        `pos --nfc-key`). A tap is a convenience, not a signature: anyone who
-        sniffs that sector can replay it (`rx_nfc`), which is the point.
+        your point-of-sale program). A tap is a convenience, not a signature:
+        anyone who sniffs that sector can replay it, which is the point.
 serve   answers TCP requests, one JSON object per connection:
           {"pan", "nonce", "ctr", "tag", "amount"}          a chip payment
           {"pan", "token", "amount", "tap": true}           an NFC tap
@@ -229,7 +229,7 @@ def issue(args, ledger=None):
         card.nfc.set_key(1, tkey)
         ledger.open_account(pan, name, key, pin, tap_token=token)
         print("tap enabled: sector 1 holds the PAN and a tap token under the terminal key %s" % tkey)
-        print("  (give that key to the POS: pos <host:port> <amount> --nfc-key %s)" % tkey)
+        print("  (give that key to your point-of-sale program: %s)" % tkey)
     else:
         ledger.open_account(pan, name, key, pin)
     reader.eject()

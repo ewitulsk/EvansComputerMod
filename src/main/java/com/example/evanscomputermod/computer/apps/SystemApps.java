@@ -34,10 +34,10 @@ import java.util.function.Function;
  * socket is TCP on 127.0.0.1). {@code celld-site config set} and {@code cored init}
  * ask the app manager to reindex, so the app shows up at once.
  *
- * <p>The <b>Card Designer</b> ({@code dev.ecm.carddesigner}, docs/cards/CARDS.md) is a Python app:
- * its {@code app.toml}, {@code main.py} and icon ship in the mod's resources
- * ({@code assets/evanscomputermod/ecm_apps/dev.ecm.carddesigner}) and the app manager runs it
- * with the {@code python} program, like any {@code .py} package.
+ * <p>A Python system app ({@link App#python}) ships whole in the mod's resources
+ * ({@code assets/evanscomputermod/ecm_apps/<id>}: {@code app.toml}, {@code main.py}, icon) and the
+ * app manager runs it with the {@code python} program, like any {@code .py} package. None ships
+ * today; the Card Designer did, and {@link #RETIRED} takes its copy off computers that have it.
  *
  * <p>A system app is copied again when its program changes size (a Python entry: when its
  * text changes) or its folder is missing; {@code pkg remove} of one lasts until the next boot.
@@ -150,13 +150,14 @@ public final class SystemApps {
                     List.of("network"), List.of(), "/evanscomputermod/apps/cellsite.png", List.of("etc/celld-site.toml")),
             new App("dev.ecm.carrier", "Carrier Console", "carrier",
                     "This computer's carrier core: subscribers and SIMs, sites, phones, handovers.",
-                    List.of("network"), List.of(), "/evanscomputermod/apps/carrier.png", List.of("etc/cored.db", "etc/cored.toml")),
-            // Cards (docs/cards/CARDS.md "Programs and apps"): the Card Designer, a Python app on ecm-ui
-            // shipped in the mod's resources (ecm_apps/dev.ecm.carddesigner: app.toml, main.py, icon.png).
-            // It is a printer client only; its .card files live in its own /var/apps folder.
-            App.python("dev.ecm.carddesigner", "Card Designer",
-                    "Draw a card's faces, name it, write its stripe and print it on a Card Printer.",
-                    List.of("peripherals:card_printer")));
+                    List.of("network"), List.of(), "/evanscomputermod/apps/carrier.png", List.of("etc/cored.db", "etc/cored.toml")));
+
+    /**
+     * System apps the mod no longer ships: {@link #provision} removes the copy it installed in
+     * {@code /apps/<id>} (one whose manifest is still a system app's); the app's
+     * {@code /var/apps/<id>} data stays.
+     */
+    static final List<String> RETIRED = List.of("dev.ecm.carddesigner");
 
     private SystemApps() {}
 
@@ -175,9 +176,25 @@ public final class SystemApps {
         }
     }
 
+    /** Remove a retired system app's folder, when its manifest says SystemApps installed it. */
+    private static void removeRetired(Path root, String id) {
+        Path dir = root.resolve("apps").resolve(id);
+        Path toml = dir.resolve("app.toml");
+        try {
+            if (!Files.isRegularFile(toml) || !Files.readString(toml, StandardCharsets.UTF_8).startsWith("# A system app")) return;
+            try (var walk = Files.walk(dir)) {
+                for (Path p : (Iterable<Path>) walk.sorted(java.util.Comparator.reverseOrder())::iterator) Files.deleteIfExists(p);
+            }
+            EvansComputerMod.LOGGER.info("[apps] retired system app {} removed", id);
+        } catch (IOException e) {
+            EvansComputerMod.LOGGER.warn("[apps] cannot remove retired system app {}: {}", id, e.toString());
+        }
+    }
+
     /** Install or refresh the system apps under {@code root}. Returns how many were (re)written. */
     static int provision(Path root, Function<String, Path> programs, PermissionStore store) {
         int n = 0;
+        for (String id : RETIRED) removeRetired(root, id);
         for (App a : ALL) {
             if (a.id().equals(VIDEO_PLAYER) && !com.example.evanscomputermod.api.video.VideoBackends.available()) {
                 // No video support on this server (the evanscomputermod-ffmpeg sidecar): no Video Player,

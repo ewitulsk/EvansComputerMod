@@ -440,17 +440,15 @@ Everything above is built on 1.21.1 with these differences and notes:
   exported with `py -3 scripts/export-radio-models.py`. The two bay modules use the **generic cartridge**: a
   `ModuleSlotVisual` value multiplies the Terminal's block states by (n+1)⁴/n⁴ (four slot properties), and two
   more took model baking out of the client's 2 GB heap.
-- **Not built**: the `card_phone_tap` scenario (phone + NFC module + `pos` + `bankd`) and the SDR sniffer step of
-  `card_nfc`; `rx_nfc` ships as an example program only.
-- **Card Designer** (`dev.ecm.carddesigner`): a Python system app (`ecm_apps/dev.ecm.carddesigner/main.py`, installed by
-  `SystemApps` with `App.python`; the app manager runs `python main.py`) over the new `pixel_grid` and `color_picker`
-  widgets; its only permission is `peripherals:card_printer` (an app owns `/var/apps/<id>` without a `files:` grant).
-  Print = `cards.Printer.find()` → `cost` → `print` → waits for `print_done` / `print_failed`; Export writes the `.card`.
-- **Example packages** (`examples/cards/*`, built into the Tech Village repository by `scripts/stage-wasm.sh` next to
-  Chat): `dev.ecm.bankd` (issuer: `issue`, `serve <port>`, replay-safe counter checks), `dev.ecm.pos` (chip or tap),
-  `dev.ecm.doord` (`--uid-only` is the deliberately bad mode), `dev.ecm.skimmer` (stripe cloning), `dev.ecm.rxnfc`
-  (SDR burst sniffer + `raw` probes; the SDR path renders frames as noise bursts, so bytes are not decodable over IQ).
-  `python`'s `sys.argv` is now set like CPython's (it was empty), which these need.
+- **Not built**: the `card_phone_tap` scenario and the SDR sniffer step of `card_nfc`.
+- **Removed after shipping**: the Card Designer system app (`dev.ecm.carddesigner`) and the `pos`, `doord`, `skimmer`
+  and `rx_nfc` example packages. The design text above still describes them; it is not what ships. Designs are made
+  with the `cards` module and printed with `cardtool print`; `SystemApps.RETIRED` takes an installed Card Designer off
+  a computer (its `/var/apps/dev.ecm.carddesigner` files stay). The `pixel_grid` and `color_picker` widgets stay in
+  ecm-ui (golden `card_widgets`).
+- **Example package** (`examples/cards/*`, built into the Tech Village repository by `scripts/stage-wasm.sh` next to
+  Discord and Music): `dev.ecm.bankd` (issuer: `issue`, `serve <port>`, replay-safe counter checks).
+  `python`'s `sys.argv` is now set like CPython's (it was empty), which it needs.
 - **Render check**: `scripts\Test.ps1 -ClientChecks -ClientSuite cards` (`CardsServerChecks` / `CardsClientChecks`):
   the three blocks, a printed bank card in the hand (the renderer must report a bank card's faces), four framed
   cards, the Card Printer screen opened by right-clicking the block, and the inventory icons; screenshots under

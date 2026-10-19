@@ -93,7 +93,7 @@ fi
 # The Tech Village repository's packages (docs/TECH_VILLAGE_NETWORK.md "Apps"): Discord and Music
 # packed from the staged discord.wasm and music.wasm the way `discord --source` + `pkg build` do, natively (debug
 # profile: a native release link of ecm-host-abi misses the host imports), plus the card
-# example programs (examples/cards/*: bankd, pos, doord, skimmer, rx_nfc; docs/cards/CARDS.md),
+# example programs (examples/cards/*: bankd; docs/cards/CARDS.md),
 # Python packages built from their folders the same way.
 if [ -f wasm-bin/discord.wasm ]; then
     CARD_EXAMPLES=()

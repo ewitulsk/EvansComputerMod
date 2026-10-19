@@ -1,8 +1,0 @@
-# Card example (docs/cards/CARDS.md "Programs and apps"): a toy NFC door in Python.
-id          = "dev.ecm.doord"
-name        = "doord"
-version     = "1.0.0"
-entry       = "main.py"
-summary     = "Example NFC door: sector-authenticated allow list on a redstone link, and a deliberately bad --uid-only mode."
-publisher   = "ECM"
-permissions = ["peripherals:nfc_reader", "peripherals:redstone_link"]

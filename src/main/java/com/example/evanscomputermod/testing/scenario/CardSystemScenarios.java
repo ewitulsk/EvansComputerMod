@@ -98,7 +98,7 @@ public final class CardSystemScenarios {
                     r.player().place(Blocks.CHEST, r.abs(CHEST), Direction.NORTH, s -> s.getBlock() instanceof ChestBlock);
                     r.say("§7  Card Printer against the computer's east side, a chest beyond it");
                 }))
-                .note("The design: bank.card (typed in from Python; the Card Designer app saves the same file)");
+                .note("The design: bank.card (typed in from Python; cardtool and the cards module read the same file)");
         PlayerKit.typeBundledFile(b, "pc", "/bank.card", "/evanscomputermod/scenarios/bank.card");
         return b.note("Open the printer (right-click it), set Auto Eject to true; shift-click dyes and a blank bank card into its slots")
                 .mutate(r -> setPrinterAutoEject(r, true), "printer screen: Auto Eject = true")
