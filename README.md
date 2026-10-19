@@ -245,6 +245,7 @@ The emulator core is [rustboyadvance-ng](https://github.com/michelhe/rustboyadva
 | `display.defaultRefreshHz` | 30 | Refresh rate a display starts at |
 | `display.maxRefreshHz` | 60 | Highest rate a program may set (each refresh may send a frame to every viewer) |
 | `speaker.range` | 48 | Blocks a speaker can be heard from |
+| `techVillages.enabled` | true | Generate Tech Villages, their fiber and cell sites in new chunks and run the village computers. False: none of that (parts already generated stay as blocks). Restart after changing it |
 | `internet.gatewayRecipe` | false | Players can craft Internet Gateways. Off: the recipe doesn't exist. Read when recipes load: run `/reload` or restart after changing it |
 
 ## Modules and Peripherals

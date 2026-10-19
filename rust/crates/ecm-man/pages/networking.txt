@@ -87,6 +87,9 @@ THE TECH VILLAGE RING
     run by its ISP router; neighbouring villages are joined by fiber
     and exchange routes with BGP, so traffic goes the other way round
     when a fiber is cut. Village 1 has the uplink to the internet.
+    A server can turn the villages off with techVillages.enabled =
+    false in its config: no villages, fiber or cell sites generate in
+    new chunks and the village computers don't run.
 
       100.(64+N).1.0/24   the village cable under the streets
       100.(64+N).0.0/24   the Data Center (web server .10, DNS .53)

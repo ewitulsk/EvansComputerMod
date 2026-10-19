@@ -20,7 +20,8 @@ public final class TechVillagePlacement extends StructurePlacement {
     }
 
     protected boolean isPlacementChunk(ChunkGeneratorStructureState state, int x, int z) {
-        return WorldNetwork.siteAt(state.getLevelSeed(), x, z) != null;
+        return com.example.evanscomputermod.EcmConfig.techVillagesEnabled()
+                && WorldNetwork.siteAt(state.getLevelSeed(), x, z) != null;
     }
 
     public StructurePlacementType<?> type() {

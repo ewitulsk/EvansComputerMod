@@ -731,6 +731,10 @@ Server launch properties:
 -Devanscomputermod.techVillages=true
 ```
 
+`-Devanscomputermod.techVillages=false` only stops the village computers from
+booting. To stop the villages generating as well, set `techVillages.enabled = false`
+in `config/evanscomputermod-common.toml` ([TECH_VILLAGE_NETWORK.md](TECH_VILLAGE_NETWORK.md)).
+
 With the internet sidecar installed (below), also:
 
 ```text

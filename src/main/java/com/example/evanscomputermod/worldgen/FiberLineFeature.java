@@ -45,6 +45,7 @@ public final class FiberLineFeature extends Feature<NoneFeatureConfiguration> {
     @Override
     public boolean place(FeaturePlaceContext<NoneFeatureConfiguration> context) {
         WorldGenLevel level = context.level();
+        if (!com.example.evanscomputermod.EcmConfig.techVillagesEnabled()) return false;   // techVillages.enabled
         FiberChords ring = WorldNetwork.FIBER.get(level.getSeed());
         if (ring == null || level.getLevel().dimension() != net.minecraft.world.level.Level.OVERWORLD) return false;
         int cx = context.origin().getX() >> 4, cz = context.origin().getZ() >> 4;
