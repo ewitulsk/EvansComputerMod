@@ -53,12 +53,12 @@ class VillageRepoTest {
     }
 
     @Test
-    void theServerHoldsDiscordMusicAndBankdSignedWithTheWorldsKey() {
+    void theServerHoldsDiscordAndMusicSignedWithTheWorldsKey() {
         var packages = VillageRepo.packages();
-        // Discord, Music and the card example bankd (examples/cards, staged by scripts/stage-wasm.sh).
-        assertEquals(3, packages.size(), "the mod's repository (wasm-bin/repo, staged by scripts/stage-wasm.sh): " + packages);
+        // Discord and Music (staged by scripts/stage-wasm.sh).
+        assertEquals(2, packages.size(), "the mod's repository (wasm-bin/repo, staged by scripts/stage-wasm.sh): " + packages);
         var chat = packages.stream().filter(p -> p.id().equals("dev.ecm.discord")).findFirst().orElseThrow();
-        for (String id : new String[] {"dev.ecm.music", "dev.ecm.bankd"})
+        for (String id : new String[] {"dev.ecm.music"})
             assertTrue(packages.stream().anyMatch(p -> p.id().equals(id)), id + " in " + packages);
         assertEquals(chat.id() + "-" + chat.version() + ".ecmpkg", chat.file());
         VillageRepo repo = VillageRepo.of(42L, 7);

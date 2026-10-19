@@ -117,13 +117,6 @@ card to put it in the reader module; sneak-right-click the air holding the loose
 ePhone: the NFC Module in a phone bay reads cards you hold near the phone, and a card in the phone's other bay
 (a Card Reader Module) answers pads you walk up to.
 
-## 7. The example program
-
-**bankd** is a package in the Tech Village app repository (App Store → Discover, or `pkg search card`):
-the issuer, `pkg run dev.ecm.bankd issue alice 4000123412341234 --pin 1234`, then `… serve 7000`. Without a
-village repository the source is in `examples/cards/` in the repo: copy its `main.py` onto a computer and run it
-with `python`.
-
 ## Known gaps
 
 - No `card_phone_tap` scenario yet.

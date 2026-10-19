@@ -412,7 +412,7 @@ protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding **Discord** (`dev.ecm.discord`), **Music** (`dev.ecm.music`, docs/MUSIC.md) and, since the card system, the card example package from `examples/cards` (`dev.ecm.bankd`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
+"Repositories") holding **Discord** (`dev.ecm.discord`), **Music** (`dev.ecm.music`, docs/MUSIC.md), both built and signed the same way:
 
 * **Built with the mod.** `scripts/stage-wasm.sh` packs Discord and Music from the staged `discord.wasm` and `music.wasm` the
   way a player does, natively on the same code: `discord --source` (the package folder) and

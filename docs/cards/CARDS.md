@@ -441,21 +441,19 @@ Everything above is built on 1.21.1 with these differences and notes:
   `ModuleSlotVisual` value multiplies the Terminal's block states by (n+1)⁴/n⁴ (four slot properties), and two
   more took model baking out of the client's 2 GB heap.
 - **Not built**: the `card_phone_tap` scenario and the SDR sniffer step of `card_nfc`.
-- **Removed after shipping**: the Card Designer system app (`dev.ecm.carddesigner`) and the `pos`, `doord`, `skimmer`
-  and `rx_nfc` example packages. The design text above still describes them; it is not what ships. Designs are made
+- **Removed after shipping**: the Card Designer system app (`dev.ecm.carddesigner`) and all the example packages
+  (`bankd`, `pos`, `doord`, `skimmer`, `rx_nfc`; there is no `examples/cards` any more). The design text above still describes them; it is not what ships. Designs are made
   with the `cards` module and printed with `cardtool print`; `SystemApps.RETIRED` takes an installed Card Designer off
   a computer (its `/var/apps/dev.ecm.carddesigner` files stay). The `pixel_grid` and `color_picker` widgets stay in
   ecm-ui (golden `card_widgets`).
-- **Example package** (`examples/cards/*`, built into the Tech Village repository by `scripts/stage-wasm.sh` next to
-  Discord and Music): `dev.ecm.bankd` (issuer: `issue`, `serve <port>`, replay-safe counter checks).
-  `python`'s `sys.argv` is now set like CPython's (it was empty), which it needs.
+- `python`'s `sys.argv` is set like CPython's (it was empty).
 - **Render check**: `scripts\Test.ps1 -ClientChecks -ClientSuite cards` (`CardsServerChecks` / `CardsClientChecks`):
   the three blocks, a printed bank card in the hand (the renderer must report a bank card's faces), four framed
   cards, the Card Printer screen opened by right-clicking the block, and the inventory icons; screenshots under
   `artifacts/cards-render-*/screenshots/`.
 - **Tests**: JUnit `BankAppletTest`, `NfcAppletTest`, `CardFacesTest`, `NfcAirTest`, `NfcRadioTest` (+ lane R's
-  `NearFieldTest`, `PassiveEndpointTest`); Rust `ecm-cards` (14), `ecm-ui` (`tests/cards.rs`), `python` (`cards_tests`,
-  `cards_apps_tests`), `lua`; GameTests `ecm_cards`; goldens `card_widgets`; the radio client suite frames printed cards.
+  `NearFieldTest`, `PassiveEndpointTest`); Rust `ecm-cards` (14), `ecm-ui` (`tests/cards.rs`), `python` (`cards_tests`),
+  `lua`; GameTests `ecm_cards`; goldens `card_widgets`; the radio client suite frames printed cards.
 - **Reader display**: the Card Reader/Writer draws the card actually in its slot (`CardReaderRenderer`, the item's own body
   and painted faces) from a client-safe copy in its update tag (item, faces, stripe-corrupted flag; never applets or
   secrets); the block model's fixed SIM cube is gone. Right-clicking a card into a reader (block or bay module) consumes

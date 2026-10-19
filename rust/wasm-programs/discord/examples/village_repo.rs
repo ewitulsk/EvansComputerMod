@@ -13,7 +13,7 @@
 //! `.sig` file and `publisher.pub`); `pkg serve` makes the index from them.
 //!
 //! Every further `<package dir>` is a ready package folder (an `app.toml` and its
-//! files, e.g. the card examples in `examples/cards/*`, docs/cards/CARDS.md) built
+//! files) built
 //! with the same `pkg build` and listed in `packages.txt` too. `--music=<music.wasm>` adds
 //! Music the way Discord is added (`music --source <dir>`: `music_app::source::write`).
 

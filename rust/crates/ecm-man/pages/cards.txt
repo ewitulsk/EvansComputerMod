@@ -28,9 +28,6 @@ PROGRAMS
     cardtool works every device from the shell. Designs (.card files)
     are written with the cards module and printed with cardtool print.
 
-    The village App Store has an example app: bankd (a bank: writes
-    cards, checks signatures, keeps balances).
-
 SCRIPTING
     The cards module (import cards / require("cards")):
       cards.Reader.find()          the reader; reader.card()
