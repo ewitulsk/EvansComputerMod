@@ -66,7 +66,7 @@ Shared memory has no fixed addresses: the input, interrupt, socket-IPC, framebuf
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
 | **Screen** | In-world display block. Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
 | **Redstone Link Interface** | *(Create installed)* Place next to a Terminal to give it a `redstone_link` peripheral: 64 programmable Create Redstone Link channels. Keeps its channel setup when broken. |
-| **Internet Gateway** | Unbreakable block at (0,0,0) linking cabled networks to the real internet (needs the optional internet add-on on the server; offline without it). Auto-generated with cable column to surface on first server start. |
+| **Internet Gateway** | Links cabled networks to the real internet (needs the optional internet add-on on the server; offline without it). One is generated, unbreakable, at (0,0,0) with a cable column to the surface on first server start. With `internet.gatewayRecipe = true` in the server config (off by default) players can craft more: `iron ingot, Network Cable, iron ingot` / `comparator, ender pearl, comparator` / `iron ingot, block of redstone, iron ingot`. A placed gateway breaks with a pickaxe and drops itself. |
 
 ### Network Interface Block
 
@@ -245,6 +245,7 @@ The emulator core is [rustboyadvance-ng](https://github.com/michelhe/rustboyadva
 | `display.defaultRefreshHz` | 30 | Refresh rate a display starts at |
 | `display.maxRefreshHz` | 60 | Highest rate a program may set (each refresh may send a frame to every viewer) |
 | `speaker.range` | 48 | Blocks a speaker can be heard from |
+| `internet.gatewayRecipe` | false | Players can craft Internet Gateways. Off: the recipe doesn't exist. Read when recipes load: run `/reload` or restart after changing it |
 
 ## Modules and Peripherals
 

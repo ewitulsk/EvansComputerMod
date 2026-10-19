@@ -68,6 +68,10 @@ ROUTING
     Only public addresses are reached: the server's own LAN (10.x,
     172.16-31.x, 192.168.x, 100.64-127.x) is refused unless the server
     allows it.
+    One gateway is generated at the world's origin (0, 0, 0). If the
+    server turns on internet.gatewayRecipe (off by default), players
+    can craft more from iron ingots, a Network Cable, two comparators,
+    an ender pearl and a block of redstone, and place them anywhere.
 
 WI-FI
     Put a Wi-Fi Module in a bay, then wifi connect <network>

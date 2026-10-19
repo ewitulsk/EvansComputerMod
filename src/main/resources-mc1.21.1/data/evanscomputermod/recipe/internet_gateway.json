@@ -1,0 +1,25 @@
+{
+  "neoforge:conditions": [
+    {
+      "type": "evanscomputermod:internet_gateway_recipe_enabled"
+    }
+  ],
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "INI",
+    "CEC",
+    "IRI"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "N": { "item": "evanscomputermod:network_cable" },
+    "C": { "item": "minecraft:comparator" },
+    "E": { "item": "minecraft:ender_pearl" },
+    "R": { "item": "minecraft:redstone_block" }
+  },
+  "result": {
+    "count": 1,
+    "id": "evanscomputermod:internet_gateway"
+  }
+}

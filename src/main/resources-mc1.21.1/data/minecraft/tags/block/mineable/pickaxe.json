@@ -2,6 +2,7 @@
   "replace": false,
   "values": [
     "evanscomputermod:terminal_block",
+    "evanscomputermod:internet_gateway",
     "evanscomputermod:burner_generator",
     "evanscomputermod:microphone",
     "evanscomputermod:access_point",
