@@ -1,0 +1,4 @@
+" The system vimrc of an Evans Computer Mod computer ($VIM/vimrc, read before
+" ~/.vimrc). Vim can't ask this terminal for its background colour, and the
+" computer's console is light text on black.
+set background=dark

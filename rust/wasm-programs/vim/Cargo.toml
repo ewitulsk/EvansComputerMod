@@ -1,0 +1,17 @@
+[package]
+name = "vim"
+version = "0.1.0"
+edition = "2021"
+license = "Vim"
+
+# Vim 9.2 (rust/third_party/vim, the Vim license: see its LICENSE and
+# README.ecm.md), built from its C sources for wasm32-wasip1 with wasi-sdk
+# (build.rs; set WASI_SDK_PATH, as for lua). port/ holds what a configure run
+# would generate (auto/config.h, pathdef.c) and the WASI glue (wasi_shim.c:
+# termios, window size, keyboard input, no processes).
+[[bin]]
+name = "vim"
+path = "src/main.rs"
+
+[build-dependencies]
+cc = "1"

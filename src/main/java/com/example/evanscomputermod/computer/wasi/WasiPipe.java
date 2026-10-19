@@ -16,6 +16,8 @@ public class WasiPipe {
     private final Object lock = new Object();
     /** Invoked (outside the lock) after data is written or the write end closes. */
     private volatile Runnable onActivity;
+    /** poll_oneoff waiters on the read end ({@link PipeFd} as a {@link Pollable}): notified on writes and close. */
+    private final java.util.Set<Object> waiters = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public WasiPipe(int capacity) {
         this.capacity = capacity;
@@ -82,6 +84,7 @@ public class WasiPipe {
             }
             if (n > 0) lock.notifyAll();
         }
+        if (n > 0) wakeWaiters();
         return n;
     }
 
@@ -93,6 +96,26 @@ public class WasiPipe {
     private void fireActivity() {
         Runnable r = onActivity;
         if (r != null) r.run();
+        wakeWaiters();
+    }
+
+    private void wakeWaiters() {
+        for (Object w : waiters) {
+            synchronized (w) {
+                w.notifyAll();
+            }
+        }
+    }
+
+    void addWaiter(Object waiter) { waiters.add(waiter); }
+
+    void removeWaiter(Object waiter) { waiters.remove(waiter); }
+
+    /** Bytes buffered for the reader. */
+    public int available() {
+        synchronized (lock) {
+            return buffer.size();
+        }
     }
 
     /**

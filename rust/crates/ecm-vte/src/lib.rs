@@ -14,7 +14,8 @@
 //! - Modes (CSI ? h/l, several at once): 25 cursor, 1049/47/1047 alternate
 //!   screen (no scrollback there), 2004 bracketed paste, 1 cursor keys, and
 //!   [`MODE_OWN_INTERRUPT`]; read them with [`Vte::modes`] or a [`ModeScanner`]
-//! - Queries: CSI 6n / 5n / 18t, answered through [`Vte::take_responses`]
+//! - Queries: CSI 6n / 5n / 18t, answered through [`Vte::take_responses`],
+//!   and `?2048` in-band resize reports ([`MODE_RESIZE_REPORTS`])
 //! - OSC/DCS/APC strings (window titles) and charset selection are skipped
 //! - UTF-8: one cell per character ([`cell_byte`] picks its ASCII look-alike)
 //! - \n, \r, \b, \t and the other C0 controls
@@ -182,6 +183,10 @@ pub struct Modes {
     pub own_interrupt: bool,
     /// `?1`: application cursor keys (arrows as `ESC O A`).
     pub app_cursor: bool,
+    /// `?2048`: in-band resize reports. The terminal answers `ESC[48;rows;cols;0;0t`
+    /// when the mode is set and whenever its size changes (vim follows the
+    /// window size this way: there is no SIGWINCH).
+    pub resize_reports: bool,
 }
 
 impl Modes {
@@ -196,9 +201,18 @@ impl Modes {
             1049 | 47 | 1047 => self.alternate = on,
             2004 => self.bracketed_paste = on,
             MODE_OWN_INTERRUPT => self.own_interrupt = on,
+            MODE_RESIZE_REPORTS => self.resize_reports = on,
             _ => {}
         }
     }
+}
+
+/// DEC private mode for in-band resize reports ([`Modes::resize_reports`]).
+pub const MODE_RESIZE_REPORTS: u16 = 2048;
+
+/// The in-band resize report for a `cols x rows` text area (`ESC[48;rows;cols;0;0t`).
+pub fn resize_report(cols: u16, rows: u16) -> Vec<u8> {
+    format!("\x1b[48;{rows};{cols};0;0t").into_bytes()
 }
 
 /// Follows the DEC private modes in a program's output without drawing it
@@ -895,6 +909,10 @@ impl Vte {
                         self.leave_alternate_screen();
                     }
                 }
+                MODE_RESIZE_REPORTS if on => {
+                    let r = resize_report(self.width, self.height);
+                    self.responses.extend_from_slice(&r);
+                }
                 _ => {}
             }
             self.modes.set(p, on);
@@ -1174,6 +1192,10 @@ impl Vte {
         self.cursor_x = self.cursor_x.min(w1);
         self.saved_cursor = (self.saved_cursor.0.min(w1 - 1), self.saved_cursor.1.min(h1 - 1));
         self.flush_cursor();
+        if self.modes.resize_reports && (w1, h1) != (w0, h0) {
+            let r = resize_report(w1, h1);
+            self.responses.extend_from_slice(&r);
+        }
         (w1, h1)
     }
 
@@ -1297,6 +1319,23 @@ mod tests {
 
     fn row(v: &Vte, y: u16) -> String {
         (0..v.width()).map(|x| v.cell(x, y).0 as char).collect::<String>().trim_end().to_string()
+    }
+
+    #[test]
+    fn in_band_resize_reports() {
+        let mut v = Vte::new_virtual(80, 25);
+        v.resize(70, 20);
+        assert!(v.take_responses().is_empty(), "no reports until a program asks");
+        v.write(b"\x1b[?2048h");
+        assert!(v.modes().resize_reports);
+        assert_eq!(v.take_responses(), b"\x1b[48;20;70;0;0t", "set: the size now");
+        v.resize(100, 30);
+        assert_eq!(v.take_responses(), b"\x1b[48;30;100;0;0t", "every change");
+        v.resize(100, 30);
+        assert!(v.take_responses().is_empty(), "the same size again is no change");
+        v.reset_modes();
+        v.resize(80, 25);
+        assert!(v.take_responses().is_empty(), "a program's exit ends the reports");
     }
 
     #[test]

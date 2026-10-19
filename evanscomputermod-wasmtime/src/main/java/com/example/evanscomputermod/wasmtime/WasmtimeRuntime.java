@@ -142,7 +142,8 @@ final class WasmtimeRuntime implements WasmRuntime {
                                 + imp.module() + "::" + imp.name() + " is not provided by the host;"
                                 + " refusing to stub it with zeros");
                     } else {
-                        f = new Func(store, ft, new StubHandler(ft.getResults()));
+                        f = new Func(store, ft, new StubHandler(ft.getResults(),
+                                WasmRuntime.stubResult(imp.module(), imp.name())));
                     }
                     ownedFuncs.add(f);
                     orderedExterns.add(Extern.fromFunc(f));
@@ -304,16 +305,18 @@ final class WasmtimeRuntime implements WasmRuntime {
         }
     }
 
-    /** Stub for unmatched function imports: returns zero values. */
+    /** Stub for unmatched function imports: zero values, the first one {@code result} (ENOSYS for WASI). */
     private static final class StubHandler implements Func.Handler {
         private final Val.Type[] returns;
-        StubHandler(Val.Type[] returns) { this.returns = returns; }
+        private final long result;
+        StubHandler(Val.Type[] returns, long result) { this.returns = returns; this.result = result; }
         @Override
         public void call(io.github.kawamuray.wasmtime.Caller caller, Val[] params, Val[] results) {
             for (int i = 0; i < results.length; i++) {
+                long v = i == 0 ? result : 0;
                 results[i] = switch (returns[i]) {
-                    case I32 -> Val.fromI32(0);
-                    case I64 -> Val.fromI64(0);
+                    case I32 -> Val.fromI32((int) v);
+                    case I64 -> Val.fromI64(v);
                     case F32 -> Val.fromF32(0.0f);
                     case F64 -> Val.fromF64(0.0);
                     default -> Val.fromI32(0);

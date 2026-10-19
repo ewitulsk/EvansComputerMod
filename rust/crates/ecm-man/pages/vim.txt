@@ -1,0 +1,136 @@
+NAME
+    vim - Vi IMproved, the programmer's text editor
+
+SYNOPSIS
+    vim [options] [file ...]
+
+    vi [file ...]
+    view file ...
+    vimdiff file1 file2 [file3]
+    ex [file]
+
+DESCRIPTION
+    Vim 9.2, the real one, running on the computer: everything you know
+    from Vim on Linux works the same way, from the keys to the Ex
+    commands, options and Vim script. It opens each file named (or an
+    empty buffer) full screen; when you quit, the shell's screen comes
+    back as it was.
+
+    Vim has modes. It starts in Normal mode, where keys are commands:
+    move with h j k l, w b e, 0 $, gg G; delete with x and d plus a
+    motion (dw, d2w, dd); change with c (cw, ci"); yank with y and put
+    with p; undo with u and redo with Ctrl+R; repeat the last change
+    with a dot. i, a, o and friends enter Insert mode to type text, and
+    Esc goes back to Normal mode (at the Terminal, Esc is Shift+Esc:
+    see KEYS). v, V and Ctrl+V start Visual mode to
+    select text for an operator. A colon starts a command line: :w
+    writes, :q quits, :wq does both, :q! quits without saving,
+    :%s/old/new/g replaces, /text searches.
+
+    Everything else is there too: counts, text objects (iw, a", ip,
+    ...), registers ("a to "z), macros (qa ... q, then @a), marks (ma,
+    'a), several buffers (:e, :ls, :bn), split windows (:split,
+    :vsplit, Ctrl+W), tab pages (:tabnew, gt), folding, :set options,
+    abbreviations and mappings, Vim script, syntax highlighting with
+    automatic filetype detection, spell checking (:set spell, English),
+    diff mode, colour schemes (:colorscheme), the comment and matchit
+    packages (:packadd comment), and :help.
+
+    vi, view, vimdiff and ex are Vim too, started under that name: view
+    opens files read-only, vimdiff shows the differences between files
+    side by side, ex starts in Ex mode.
+
+OPTIONS
+    Vim's own command line works as usual; the most used:
+
+    +N
+        Start at line N (+ alone: the last line).
+
+    +/text
+        Start at the first line containing text.
+
+    -R
+        Read-only, like view.
+
+    -d
+        Diff mode, like vimdiff.
+
+    -o, -O, -p
+        Open the files in split windows, side by side, or in tabs.
+
+    -u file
+        Read file instead of ~/.vimrc (-u NONE: no vimrc, no plugins).
+
+    -c command
+        Run an Ex command after loading the first file.
+
+    --version
+        Show the version and the features this build has.
+
+FILES
+    ~/.vimrc, ~/.vim/vimrc
+        Your vimrc. Home is the computer's root folder, so ~/.vimrc is
+        /.vimrc and ~/.vim is /.vim (plugins, colors, syntax go under
+        it as on Linux). Without a vimrc Vim reads defaults.vim.
+
+    /server-bin/vim/vimrc
+        The computer's system vimrc (it sets background=dark: the
+        console is light on black).
+
+    /server-bin/vim/runtime
+        Vim's runtime files ($VIMRUNTIME, read-only): defaults.vim,
+        filetype detection, syntax and indent files for about fifty
+        languages, colour schemes, the English spell file and the main
+        help files.
+
+    ~/.viminfo
+        History, marks and registers kept between sessions.
+
+    .file.swp
+        The swap file next to a file being edited (recovery after a
+        crash: vim -r file).
+
+KEYS
+    The Terminal sends the keys Vim expects: the arrows, Home, End,
+    PgUp, PgDn, Insert, Delete, F1 to F12, Tab, Backspace and Enter.
+    Esc: at the Terminal, plain Esc closes the screen (Vim keeps
+    running; right-click the Terminal to come back) and Shift+Esc sends
+    Esc to Vim: leave Insert mode with Shift+Esc (Ctrl+C leaves it
+    too). Ctrl+C (Vim's interrupt key: it stops a long search or tells
+    you how to quit), Ctrl+Z and the other Ctrl keys reach Vim.
+
+    Ctrl+T is the computer's own key: it stops Vim at once, without
+    saving, as it stops any program. Vim's Ctrl+T (pop the tag stack,
+    or indent in Insert mode) is not available; use :pop and Ctrl+D /
+    >> instead.
+
+NOTES
+    Vim follows the terminal's size: swap in another display panel and
+    it redraws at the new size.
+
+    A computer can't run other programs from inside Vim: :!command,
+    :shell, :make, :grep with an external program, filters (!motion)
+    and system() say "E9999: Shell commands are not available on this
+    computer". Ctrl+Z and :suspend can't stop Vim either (E9998): save
+    with :w and quit instead. There is no system clipboard register
+    ("+ and "* are plain registers), no terminal window (:terminal),
+    no jobs or channels, and no mouse.
+
+    The first Vim after the server starts may take a few seconds to
+    open while the computer prepares the program.
+
+    Vim is Vim 9.2.1202 by Bram Moolenaar and the Vim community, under
+    the Vim license (charityware, GPL-compatible: :help license and
+    /server-bin/vim/LICENSE). The port's changes and its source are in
+    the mod's repository, rust/third_party/vim and rust/wasm-programs/
+    vim; Vim itself is at https://www.vim.org.
+
+EXAMPLES
+      vim notes.txt
+      vi +12 main.py
+      view /etc/dhcpd.conf
+      vimdiff old.txt new.txt
+      vim -u NONE big.log
+
+SEE ALSO
+    vi, edit, less, keys, filesystem
