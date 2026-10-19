@@ -75,6 +75,8 @@ impl Kernel {
     pub fn boot(now: i64) -> Kernel {
         let mut con = Console::new();
         con.clear();
+        // Before anything (services, restored config) expects them.
+        crate::fs::ensure_layout();
         let mut net = Net::new(now);
         if net::config::load(&mut net.stack, now) {
             // Interfaces saved as `down` are physically disabled too.
@@ -701,6 +703,43 @@ mod tests {
 
     fn row_text(y: u16) -> String {
         (0..framebuffer::width()).map(|x| framebuffer::read_cell(x, y).0 as char).collect::<String>()
+    }
+
+    /// Boot makes the standard directories (upload saves into /home) on a
+    /// new computer and on one made before they existed, and leaves what is
+    /// already there alone: files inside them, and a file in a dir's place.
+    #[test]
+    fn boot_makes_the_directory_layout() {
+        use crate::hal::ffi::{DIRS, FILES};
+        let _g = crate::hal::test_lock();
+        FILES.with(|f| f.borrow_mut().clear());
+        DIRS.with(|d| d.borrow_mut().clear());
+        // Control: nothing there before boot.
+        assert!(!crate::fs::is_dir("home"));
+        Kernel::boot(0);
+        for d in crate::fs::LAYOUT {
+            assert!(crate::fs::is_dir(d), "/{d} missing after boot");
+        }
+        assert!(crate::fs::is_dir("usr") && crate::fs::is_dir("usr/share"));
+        // An older computer: some dirs gone, a file in /home, a file named tmp.
+        DIRS.with(|d| d.borrow_mut().clear());
+        FILES.with(|f| {
+            let mut f = f.borrow_mut();
+            f.insert("home/notes.txt".into(), b"keep".to_vec());
+            f.insert("tmp".into(), b"a file".to_vec());
+        });
+        Kernel::boot(0);
+        assert!(crate::fs::is_dir("var/log") && crate::fs::is_dir("home/Downloads"));
+        assert_eq!(crate::fs::read_to_string("home/notes.txt").as_deref(), Some("keep"));
+        assert_eq!(crate::fs::read_to_string("tmp").as_deref(), Some("a file"));
+        assert!(!DIRS.with(|d| d.borrow().contains("tmp")), "a file in the way is not replaced");
+        // Booting again changes nothing.
+        let before = DIRS.with(|d| d.borrow().clone());
+        Kernel::boot(0);
+        assert_eq!(DIRS.with(|d| d.borrow().clone()), before);
+        FILES.with(|f| f.borrow_mut().clear());
+        DIRS.with(|d| d.borrow_mut().clear());
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
     }
 
     /// A panel swap resizes the console without a reboot: the text and the

@@ -55,6 +55,7 @@ file_size                = { params = ["i32", "i32"],                   results 
 file_exists              = { params = ["i32", "i32"],                   results = ["i32"] }
 file_is_dir              = { params = ["i32", "i32"],                   results = ["i32"] }
 file_list_dir            = { params = ["i32", "i32", "i32", "i32"],     results = ["i32"], doc = "\"d:name\\n\" / \"f:name\\n\" lines" }
+file_mkdir               = { params = ["i32", "i32"],                   results = ["i32"], doc = "Make a directory and its parents in user storage; 0 = ok (also when it exists)" }
 fd_open                  = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "May be unsupported (-1): redirects are then rejected by the shell" }
 fd_close                 = { params = ["i32"],                          results = ["i32"] }
 pipe_create              = { params = ["i32", "i32"],                   results = ["i32"], doc = "May be unsupported (-1): pipelines are then rejected by the shell" }

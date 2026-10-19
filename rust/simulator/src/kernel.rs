@@ -368,6 +368,9 @@ fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<KHost>> {
     l.func_wrap(E, "file_is_dir", |c: KC<'_>, pp: i32, pl: i32| -> i32 {
         krd_str(&c, pp, pl).is_some_and(|p| c.data().storage.is_dir(&p)) as i32
     })?;
+    l.func_wrap(E, "file_mkdir", |c: KC<'_>, pp: i32, pl: i32| -> i32 {
+        krd_str(&c, pp, pl).map(|p| c.data().storage.mkdir(&p)).unwrap_or(-1)
+    })?;
     l.func_wrap(E, "file_list_dir", |mut c: KC<'_>, pp: i32, pl: i32, bp: i32, bl: i32| -> i32 {
         let path = krd_str(&c, pp, pl).unwrap_or_default();
         let Some(s) = c.data().storage.list_dir(&path) else { return -1 };
