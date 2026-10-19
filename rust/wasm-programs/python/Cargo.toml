@@ -44,5 +44,3 @@ ecm-cards = { workspace = true }
 ecm-tel = { workspace = true }
 # The Visual Programmer's designer-built sample app runs through `import ui` in the tests.
 visual = { path = "../visual" }
-# The Card Designer's and the card examples' app.toml files are checked with the real manifest parser.
-pkg = { path = "../pkg" }

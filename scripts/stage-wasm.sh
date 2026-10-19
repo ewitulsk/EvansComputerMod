@@ -92,14 +92,11 @@ fi
 
 # The Tech Village repository's packages (docs/TECH_VILLAGE_NETWORK.md "Apps"): Discord and Music
 # packed from the staged discord.wasm and music.wasm the way `discord --source` + `pkg build` do, natively (debug
-# profile: a native release link of ecm-host-abi misses the host imports), plus the card
-# example programs (examples/cards/*: bankd, pos, doord, skimmer, rx_nfc; docs/cards/CARDS.md),
-# Python packages built from their folders the same way.
+# profile: a native release link of ecm-host-abi misses the host imports).
 if [ -f wasm-bin/discord.wasm ]; then
-    CARD_EXAMPLES=()
-    for d in examples/cards/*/; do [ -f "$d/app.toml" ] && CARD_EXAMPLES+=("../${d%/}"); done
-    [ -f wasm-bin/music.wasm ] && CARD_EXAMPLES=("--music=../wasm-bin/music.wasm" "${CARD_EXAMPLES[@]}")
-    (cd rust && cargo run --quiet -p discord --example village_repo -- ../wasm-bin/discord.wasm ../wasm-bin/repo "${CARD_EXAMPLES[@]}") ||
+    REPO_ARGS=()
+    [ -f wasm-bin/music.wasm ] && REPO_ARGS=("--music=../wasm-bin/music.wasm")
+    (cd rust && cargo run --quiet -p discord --example village_repo -- ../wasm-bin/discord.wasm ../wasm-bin/repo "${REPO_ARGS[@]}") ||
         { echo "error: the Tech Village repository package failed to build"; exit 1; }
 fi
 echo "Staged kernel + $ok programs into wasm-bin/ ($missing missing); manifest updated."

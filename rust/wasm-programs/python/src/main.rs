@@ -823,7 +823,7 @@ impl PythonRepl {
     fn new() -> Self {
         let mut settings = Settings::default();
         // Like CPython: sys.argv is the script's path and its arguments
-        // (`python /apps/dev.ecm.bankd/main.py serve 7000` -> ["/apps/.../main.py", "serve", "7000"]).
+        // (`python /apps/dev.ecm.example/main.py serve 7000` -> ["/apps/.../main.py", "serve", "7000"]).
         settings.argv = std::env::args().skip(1).collect();
 
         let interpreter = Interpreter::with_init(settings, |vm| {

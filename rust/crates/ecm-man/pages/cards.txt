@@ -25,15 +25,8 @@ HARDWARE
         blank cards and take printed ones.
 
 PROGRAMS
-    cardtool works every device from the shell. The Card Designer app
-    (on the desktop and the ePhone) draws faces with a pencil, fill,
-    eyedropper, line and mirror, edits the printed fields and stripe,
-    and saves .card files or prints them.
-
-    The village App Store has example apps: bankd (a bank: writes cards,
-    checks signatures, keeps balances), pos (a point of sale), doord (an
-    NFC door), skimmer and rx_nfc (to show what a careless design
-    allows).
+    cardtool works every device from the shell. Designs (.card files)
+    are written with the cards module and printed with cardtool print.
 
 SCRIPTING
     The cards module (import cards / require("cards")):
@@ -49,8 +42,7 @@ SCRIPTING
 FILES
     *.card
         A design: kind, palette, both faces and the printed fields, as
-        JSON. The Card Designer keeps them in
-        /var/apps/dev.ecm.carddesigner/.
+        JSON, written by cards.Design.save.
 
 SEE ALSO
     cardtool, cellular, scripting, peripherals, store

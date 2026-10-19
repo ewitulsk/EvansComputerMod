@@ -401,11 +401,11 @@ All four are messages on the same UI connection. The compositor and app manager 
 
 ### Implementation
 
-`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas, for editors `board`, `panel` and `wire`: see [Visual Programmer](VISUAL_PROGRAMMER.md#toolkit-additions), and for the Card Designer `pixel_grid` and `color_picker`, below), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
+`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas, for editors `board`, `panel` and `wire`: see [Visual Programmer](VISUAL_PROGRAMMER.md#toolkit-additions), and for card faces `pixel_grid` and `color_picker`, below), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
 
 ### Card widgets
 
-Two widgets for the Card Designer ([CARDS.md](../cards/CARDS.md) "Programs and apps"), drawn with ordinary display-list nodes (rects per run of equal texels, lines for hatching), so they need no resources and render identically everywhere:
+Two widgets for drawing card faces ([CARDS.md](../cards/CARDS.md) "Programs and apps"; the Card Designer app that used them has been removed), drawn with ordinary display-list nodes (rects per run of equal texels, lines for hatching), so they need no resources and render identically everywhere:
 
 | Widget | Props | Behaviour |
 | --- | --- | --- |

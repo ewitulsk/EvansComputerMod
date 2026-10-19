@@ -14,7 +14,7 @@ import net.minecraft.world.inventory.Slot;
 /**
  * Card Printer screen: the card in and out, the sixteen dye slots, the job's progress
  * and the Auto Eject setting. Printing itself is the computer's: a program sends the
- * design through the {@code card_printer} peripheral (the Card Designer app does).
+ * design through the {@code card_printer} peripheral (cardtool print or the cards module does).
  */
 public class CardPrinterScreen extends AbstractContainerScreen<CardPrinterMenu> {
     private static final int BG = 0xFF2B3036, PANEL = 0xFF1B1F24, EDGE = 0xFF4A535C, SLOT = 0xFF0F1215, TEXT = 0xFFE6EDF3,

@@ -3118,7 +3118,6 @@ dependencies = [
  "ecm-ui-proto",
  "getrandom 0.2.17",
  "num-complex",
- "pkg",
  "rustpython-vm",
  "visual",
 ]

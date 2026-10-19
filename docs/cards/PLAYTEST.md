@@ -43,14 +43,9 @@ pull from below.
 
 ## 2. Print a card
 
-Option A, the **Card Designer** app (on any Terminal desktop / App Store → Installed): New → pick the kind, paint
-the front and back (the chip pad and stripe rows are locked), set the palette with the colour picker, fill in
-name / number / issuer, the stripe tracks for bank cards, Save. Open the Card Printer next to the computer and
-put dyes and a blank card in its slots, then press **Print**: it shows the dye cost, prints, and the card appears in the printer's output
-slot (or is pushed into an adjacent chest with Auto Eject on).
-
-Option B, the shell, with a design file (the Designer saves the same format under
-`/var/apps/dev.ecm.carddesigner/`):
+Write a design file with the `cards` module, then print it from the shell. Open the Card Printer next to the
+computer and put dyes and a blank card in its slots first; the card appears in the printer's output slot (or is
+pushed into an adjacent chest with Auto Eject on):
 
 ```
 python
@@ -85,7 +80,7 @@ cardtool stripe read                          the stripe still reads
 The key is printed once by `bank write`; it is never readable from the card again (try `/data get` on the item:
 the `bank_secret` is there on the server, but a client never receives it).
 
-## 4. Stripes (the skimmer's lesson)
+## 4. Stripes (a stripe is plain text)
 
 ```
 cardtool stripe write ALICE 4000123412341234 LOYALTY=42
@@ -122,17 +117,8 @@ card to put it in the reader module; sneak-right-click the air holding the loose
 ePhone: the NFC Module in a phone bay reads cards you hold near the phone, and a card in the phone's other bay
 (a Card Reader Module) answers pads you walk up to.
 
-## 7. The example programs
-
-They are packages in the Tech Village app repository (App Store → Discover, or `pkg search card`): **bankd**
-(issuer: `pkg run dev.ecm.bankd issue alice 4000123412341234 --pin 1234`, `… serve 7000`), **pos**
-(`pkg run dev.ecm.pos <bankd-ip>:7000 30`: nonce → the card signs → bankd verifies tag and counter), **doord**
-(an NFC door; `--uid-only` is the deliberately bad mode a cloned UID fools), **skimmer** (stripe cloning),
-**rx_nfc** (SDR burst sniffer on 13.56 MHz + raw-frame probes). Without a village repository the sources are in
-`examples/cards/` in the repo: copy a `main.py` onto a computer and run it with `python`.
-
 ## Known gaps
 
-- No `card_phone_tap` scenario yet (phone + NFC module + pos + bankd is a manual test).
+- No `card_phone_tap` scenario yet.
 - The stripe hazard has no scenario (needs an SDR + amplifier chain); it is unit-tested.
 - Bay cartridges for the two modules use the generic look.

@@ -1,8 +1,0 @@
-# Card example (docs/cards/CARDS.md "Programs and apps"): a near-field sniffer in Python.
-id          = "dev.ecm.rxnfc"
-name        = "rx_nfc"
-version     = "1.0.0"
-entry       = "main.py"
-summary     = "Example sniffer: hears NFC bursts on 13.56 MHz with an SDR, and shows a session frame by frame with an NFC reader."
-publisher   = "ECM"
-permissions = ["radio", "peripherals:nfc_reader"]

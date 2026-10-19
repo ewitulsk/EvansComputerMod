@@ -1,8 +1,0 @@
-# Card example (docs/cards/CARDS.md "Programs and apps"): a toy point of sale in Python.
-id          = "dev.ecm.pos"
-name        = "pos"
-version     = "1.0.0"
-entry       = "main.py"
-summary     = "Example point of sale: charges a chip card (signed) or an NFC tap (not signed) through bankd."
-publisher   = "ECM"
-permissions = ["peripherals:card_reader", "peripherals:nfc_reader", "network"]

@@ -52,7 +52,7 @@ COMMANDS
         rekey it.
 
     print file.card, cost file.card
-        Print a design (made with the Card Designer or the cards module)
+        Print a design (made with the cards module)
         on the card in the printer; or only list the dyes it would take.
 
     eject, wait
