@@ -93,12 +93,14 @@ COMMANDS
         Make a signing key (default /etc/pkg/signing.key) and print its
         public key.
 
-    serve dir [port] [--name name] [--tls]
+    serve dir [port] [--name name] [--tls] [--mirror repo]
         Host dir as a repository on port 8080 (or port): pkg writes its
         index.json from the .ecmpkg files there and answers requests.
         With disco serve running on this computer it is found on the
         network. --tls serves HTTPS (port 8443) with this computer's
-        certificate (man cert).
+        certificate (man cert). --mirror copies all of repo into dir
+        first (as pkg mirror repo dir does), each time it starts: the
+        line for /services.cfg on a data center.
 
     mirror repo dir [--only id,id] [--list file] [--kind kind] [--prune]
         Copy a repository into dir, to serve it from here: everything,
@@ -130,7 +132,9 @@ ACCOUNTS
 
     logout [repo]
     whoami [repo]
-        Sign out, or show who is signed in.
+        Sign out, or show who is signed in. Signing out ends a sign-in
+        made with a code; an API key is only forgotten by this computer
+        (revoke it on your account page).
 
     publish dir|file.ecmpkg [repo]
         Upload a package under your name. You are asked to confirm in

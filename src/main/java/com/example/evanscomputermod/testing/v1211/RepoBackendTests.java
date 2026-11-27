@@ -55,6 +55,12 @@ public final class RepoBackendTests {
         TestDriver.scenario(h, NS, RepoBackendScenarios.ALL.get("repo_login"), true);
     }
 
+    /** Tech Villages with repo.access = datacenter: the ring's package server mirrors by itself; a house PC installs from it. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".repo_village")
+    public static void repo_village(GameTestHelper h) {
+        TestDriver.scenario(h, NS, RepoBackendScenarios.ALL.get("repo_village"), false);
+    }
+
     private RepoBackendTests() {}
 }
 //?}

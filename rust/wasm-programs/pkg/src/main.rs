@@ -526,9 +526,14 @@ fn serve_args(dir: &str, rest: &[&str]) -> Result<(), String> {
     let mut port = None;
     let mut name = String::new();
     let mut tls = false;
+    let mut upstream = None;
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
+            "--mirror" => {
+                i += 1;
+                upstream = Some(rest.get(i).ok_or("--mirror wants a repository's name")?.to_string());
+            }
             "--name" => {
                 i += 1;
                 name = rest.get(i).ok_or("--name wants a name")?.to_string();
@@ -546,6 +551,17 @@ fn serve_args(dir: &str, rest: &[&str]) -> Result<(), String> {
     } else {
         None
     };
+    if let Some(repo) = upstream {
+        // A repository this computer does not have is the end of it (nothing to offer);
+        // one that cannot be reached right now is not: the last copy is still served.
+        let mut c = client();
+        let source = find_repo(&c, Some(&repo))?;
+        println!("Mirroring {} ({}) into {} ...", source.name, source.url, dir);
+        match c.mirror(&source, dir, &Selection::default(), false, &mut |_, _| {}) {
+            Ok(r) => println!("{} copied, {} already there.", r.copied.len(), r.kept.len()),
+            Err(e) => println!("pkg: {} cannot be copied now ({}); serving the copy that is here", source.name, e),
+        }
+    }
     serve(dir, port.unwrap_or(if tls { 8443 } else { 8080 }), &name, identity)
 }
 

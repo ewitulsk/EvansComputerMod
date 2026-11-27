@@ -330,10 +330,14 @@ pub fn whoami(net: &mut dyn Net, base: &Url, token: &str) -> Result<Account, Str
     })
 }
 
-/// Sign out: revoke the token at the repository (best effort) and forget it.
+/// Sign out: forget the sign-in. One made here with a code (`ecm_d_...`) is
+/// also revoked at the repository (best effort). An API key is not: the player
+/// made it on the account page, may use it elsewhere, and revokes it there.
 pub fn logout(net: &mut dyn Net, secrets: &mut dyn Secrets, base: &Url) -> Option<Account> {
     let a = load(secrets, base)?;
-    let _ = net.call(base, &Call { method: "POST".into(), path: "/auth/v1/token/revoke".into(), token: Some(a.token.clone()), ..Call::default() });
+    if a.token.starts_with("ecm_d_") {
+        let _ = net.call(base, &Call { method: "POST".into(), path: "/auth/v1/token/revoke".into(), token: Some(a.token.clone()), ..Call::default() });
+    }
     forget(secrets, base);
     Some(a)
 }
@@ -506,8 +510,16 @@ mod tests {
         // Another origin never sees it, even under the same host name on plain http.
         assert_eq!(load(&secrets, &Url::parse("http://repo.test/").unwrap()), None);
         assert_eq!(load(&secrets, &Url::parse("https://other.test/").unwrap()), None);
-        assert_eq!(logout(&mut net, &mut secrets, &base()), Some(a));
+        assert!(a.token.starts_with("ecm_d_"), "{}", a.token);
+        assert_eq!(logout(&mut net, &mut secrets, &base()), Some(a.clone()));
         assert_eq!(net.calls.last().unwrap().path, "/auth/v1/token/revoke");
+        assert_eq!(load(&secrets, &base()), None);
+        // An API key is forgotten here but not revoked: it is the player's, from the account page.
+        let key = Account { token: "ecm_k_made_on_the_account_page".into(), ..a };
+        save(&mut secrets, &key).unwrap();
+        let before = net.calls.len();
+        assert_eq!(logout(&mut net, &mut secrets, &base()), Some(key));
+        assert_eq!(net.calls.len(), before, "no call to the repository");
         assert_eq!(load(&secrets, &base()), None);
         // No signing in over plain http.
         assert!(device_start(&mut net, &Url::parse("http://10.0.0.1:8080/").unwrap(), "x", &[]).unwrap_err().contains("not encrypted"));

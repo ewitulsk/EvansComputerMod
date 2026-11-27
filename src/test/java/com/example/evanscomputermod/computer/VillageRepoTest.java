@@ -70,6 +70,15 @@ class VillageRepoTest {
         assertEquals(repo.publicKey(), VillageRepo.publicKeyHex(VillageRepo.unhex(new String(files.get("etc/pkg/signing.key"), StandardCharsets.US_ASCII))));
         // Control: another world's key does not verify this world's signature.
         assertFalse(VillageRepo.verify(VillageRepo.of(43L, 7).publicKey(), VillageRepo.signedMessage(chat.id(), chat.version(), chat.sha256()), sig));
-        assertEquals(2 + 2 * packages.size(), files.size(), files.keySet().toString());
+        // The ring's authority (cad): its key and name on the package server, and the anchor generated computers trust it by.
+        String caKey = new String(files.get("etc/cad/ca.key"), StandardCharsets.US_ASCII).trim();
+        assertEquals("Tech-Village-Authority\n", new String(files.get("etc/cad/ca.name"), StandardCharsets.US_ASCII));
+        assertEquals("ed25519 " + VillageRepo.publicKeyHex(VillageRepo.unhex(caKey)) + " Tech-Village-Authority\n", repo.anchorFile());
+        assertNotEquals(repo.publicKey(), VillageRepo.publicKeyHex(VillageRepo.unhex(caKey)), "the authority's key is not the repository's");
+        assertEquals(repo.anchorFile(), VillageRepo.of(42L, 3).anchorFile(), "fixed by the seed");
+        assertNotEquals(repo.anchorFile(), VillageRepo.of(43L, 7).anchorFile());
+        assertEquals("http://100.71.0.21:8081/", VillageRepo.mirrorUrl(repo.url()));
+        assertEquals("pkg serve /srv/official 8081 --name Official-Packages --mirror official &", VillageRepo.mirrorCommand());
+        assertEquals(4 + 2 * packages.size(), files.size(), files.keySet().toString());
     }
 }

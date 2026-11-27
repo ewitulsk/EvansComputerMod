@@ -2,6 +2,7 @@ package com.example.evanscomputermod.computer.repo;
 
 import com.example.evanscomputermod.EcmConfig;
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.computer.VillageRepo;
 import net.minecraft.server.MinecraftServer;
 
 import java.io.IOException;
@@ -22,7 +23,9 @@ import java.util.UUID;
  *     {@code community}), reached through the server, no network needed;
  * <li>{@code internet}: the same channels at {@code https://...}, reached over
  *     the computer's own network;
- * <li>{@code datacenter}: {@code host://} entries on repository servers only;
+ * <li>{@code datacenter}: {@code host://} entries on repository servers only.
+ *     A computer generated with a Tech Village (it has the village's own
+ *     repository) gets {@code official} at the village data center's copy;
  *     other computers get none (they add a data center's repository, or find
  *     it on the network);
  * <li>{@code off}, or no key configured: none.
@@ -41,8 +44,17 @@ public final class RepoProvision {
 
     /** The managed lines for a computer: {@code <name> <url> <key>}. */
     public static List<String> wanted(String access, String url, String key, boolean community, boolean repoServer) {
+        return wanted(access, url, key, community, repoServer, null);
+    }
+
+    /** As above; {@code villageCopy} is the address of the Tech Village data center's copy, or null. */
+    public static List<String> wanted(String access, String url, String key, boolean community, boolean repoServer, String villageCopy) {
         List<String> out = new ArrayList<>();
         if (key.length() != 64 || !key.chars().allMatch(c -> Character.digit(c, 16) >= 0)) return out;
+        if (access.equals("datacenter") && !repoServer && villageCopy != null) {
+            out.add("official " + villageCopy + " " + key);
+            return out;
+        }
         String origin = switch (access) {
             case "open" -> HOST_ORIGIN;
             case "internet" -> url;
@@ -59,6 +71,7 @@ public final class RepoProvision {
     static boolean managed(String line) {
         String[] p = line.trim().split("\\s+");
         if (p.length < 2) return false;
+        if (p[0].equals("official") && p[1].matches("http://100\\.\\d+\\.0\\.\\d+:" + VillageRepo.MIRROR_PORT + "/")) return true;
         boolean channel = (p[0].equals("official") && p[1].endsWith("/r/stable/")) || (p[0].equals("community") && p[1].endsWith("/r/community/"));
         return channel && (p[1].startsWith("host://repo/") || p[1].startsWith("https://") || p[1].startsWith("http://"));
     }
@@ -84,14 +97,23 @@ public final class RepoProvision {
         return next.equals(current) ? null : next;
     }
 
+    /** The village data center's copy, for a computer whose list has the Tech Village repository. */
+    static String villageCopy(String repos) {
+        for (String line : repos.split("\n")) {
+            String[] p = line.trim().split("\\s+");
+            if (p.length >= 2 && p[0].equals(VillageRepo.NAME)) return VillageRepo.mirrorUrl(p[1]);
+        }
+        return null;
+    }
+
     /** Bring {@code <root>/etc/pkg/repos} up to date. */
     public static void apply(Path root, MinecraftServer server, UUID computer) {
         try {
             String access = EcmConfig.repoAccess();
             boolean repoServer = access.equals("datacenter") && RepoServers.isServer(server, computer);
-            List<String> wanted = wanted(access, EcmConfig.repoUrl(), EcmConfig.repoKey(), EcmConfig.repoAllowCommunity(), repoServer);
             Path file = root.resolve(REPOS);
             String current = Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
+            List<String> wanted = wanted(access, EcmConfig.repoUrl(), EcmConfig.repoKey(), EcmConfig.repoAllowCommunity(), repoServer, villageCopy(current));
             String next = merge(current, wanted);
             if (next == null) return;
             Files.createDirectories(file.getParent());

@@ -67,7 +67,16 @@ public final class RepoServers {
     }
 
     public static synchronized boolean isServer(MinecraftServer server, UUID computer) {
-        return computer != null && set(server).contains(computer);
+        return computer != null && (set(server).contains(computer) || isVillageServer(server, computer));
+    }
+
+    /** The Tech Village ring's package server is a repository server without a grant. */
+    public static boolean isVillageServer(MinecraftServer server, UUID computer) {
+        // Tech Villages generate on 1.21.1 only.
+        //? if >=26.1 {
+        return false;
+        //?} else
+        /*return server != null && computer != null && computer.equals(com.example.evanscomputermod.computer.WorldNetwork.packageServer(server.overworld().getSeed()));*/
     }
 
     /** True if it was not one already. */

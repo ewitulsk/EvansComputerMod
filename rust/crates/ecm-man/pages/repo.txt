@@ -36,13 +36,17 @@ DESCRIPTION
                   as https:// addresses. pkg online says what is
                   missing.
       datacenter  only the server's repository servers reach it (the
-                  Tech Village data centers, and computers an operator
-                  chose). Everyone else adds a data center's repository
-                  (pkg discover finds them) and gets what it offers.
+                  Tech Village ring's package server, and computers an
+                  operator chose). Everyone else gets what a data
+                  center offers: computers generated with a Tech
+                  Village already have official pointing at the ring's
+                  copy; on your own computer add a data center's
+                  repository (pkg discover finds them).
       off         not at all. Repositories in the game still work.
 
     A data center picks what it offers with pkg mirror: all of the
-    official repository, or a chosen list.
+    official repository, or a chosen list. The Tech Village one copies
+    all of the stable channel each time it starts.
 
     WHO TO TRUST
 

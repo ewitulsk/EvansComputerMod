@@ -34,6 +34,56 @@ public record VillageRepo(int village, String publicKey, byte[] secret) {
     public static final String NAME = "Tech-Village-Apps";
     /** Last octet of the package server on the data center LAN, and its port. */
     public static final int HOST = 21, PORT = 8080;
+    /**
+     * The package server's copy of the official repository (docs/REPO.md), offered when the
+     * server's {@code repo.access} is {@code datacenter}: its port, folder and name.
+     */
+    public static final int MIRROR_PORT = 8081;
+    public static final String MIRROR_DIR = "srv/official", MIRROR_NAME = "Official-Packages";
+
+    /**
+     * The package server's services.cfg line for that copy: it mirrors the repository
+     * {@code official} (which only a repository server has, in {@code datacenter} mode) each
+     * time it starts and serves it; with no such repository the line ends with a message.
+     */
+    public static String mirrorCommand() {
+        return "pkg serve /" + MIRROR_DIR + " " + MIRROR_PORT + " --name " + MIRROR_NAME + " --mirror official &";
+    }
+
+    /**
+     * The ring's certificate authority (docs/TLS.md), on the package server: its name, the
+     * file every generated computer trusts it by, and its services.cfg line. Its key is derived
+     * from this world's repository key, so it is fixed by the seed like everything else here.
+     */
+    public static final String AUTHORITY = "Tech-Village-Authority";
+    public static final String ANCHOR_FILE = "etc/ssl/certs/tech-village-authority.anchor";
+
+    public static String authorityCommands() {
+        return "cad &";
+    }
+
+    /** The authority's 32-byte ed25519 seed: HMAC-SHA256(repository secret, "ECM-TECHVILLAGE-CA"). Server-side only. */
+    public byte[] authoritySecret() {
+        try {
+            var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"));
+            return mac.doFinal("ECM-TECHVILLAGE-CA".getBytes(StandardCharsets.US_ASCII));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** An {@code .anchor} file as {@code cert trust} writes it: {@code ed25519 <key> <name>}. */
+    public String anchorFile() {
+        return "ed25519 " + publicKeyHex(authoritySecret()) + " " + AUTHORITY + "\n";
+    }
+
+    /** Where a village computer finds the copy, from its Tech Village repository line's address. */
+    public static String mirrorUrl(String villageRepoUrl) {
+        String tail = ":" + PORT + "/";
+        return villageRepoUrl.endsWith(tail) ? villageRepoUrl.substring(0, villageRepoUrl.length() - tail.length()) + ":" + MIRROR_PORT + "/" : null;
+    }
+
     /** The repository folder on the package server (pkg serve's argument). */
     public static final String DIR = "srv/repo";
     /** Where the mod's build puts the packages (wasm-bin/repo/, see the village_repo example). */
@@ -148,6 +198,9 @@ public record VillageRepo(int village, String publicKey, byte[] secret) {
         }
         files.put(DIR + "/publisher.pub", publicKey.getBytes(StandardCharsets.US_ASCII));
         files.put("etc/pkg/signing.key", CellPlan.hex(secret).getBytes(StandardCharsets.US_ASCII));
+        // What cad init leaves: the authority's key and name (cad makes its certificate from them).
+        files.put("etc/cad/ca.key", (CellPlan.hex(authoritySecret()) + "\n").getBytes(StandardCharsets.US_ASCII));
+        files.put("etc/cad/ca.name", (AUTHORITY + "\n").getBytes(StandardCharsets.US_ASCII));
         return files;
     }
 

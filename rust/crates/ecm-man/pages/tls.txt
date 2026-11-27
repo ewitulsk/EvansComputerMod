@@ -33,8 +33,12 @@ DESCRIPTION
     before it signs. A certificate lasts 90 days; cert renew gets a new
     one. See man cert.
 
-    Computers generated in a Tech Village already trust the village's
-    authority (at the name ca), and its servers have certificates.
+    The Tech Villages have an authority, Tech-Village-Authority, on
+    the ring's package server (the address of Tech-Village-Apps in
+    /etc/pkg/repos). Computers generated with a village already trust
+    it; on your own computer, cert trust <that address>. Its servers do
+    not serve https by themselves: cert request gets a certificate for
+    a computer of yours on the ring.
 
     SERVING HTTPS
 

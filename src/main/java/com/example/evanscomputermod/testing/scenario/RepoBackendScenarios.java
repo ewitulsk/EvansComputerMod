@@ -26,7 +26,9 @@ import java.util.regex.Pattern;
  * <li>{@code repo_curated}: the same, offering only a chosen package;
  * <li>{@code repo_account}: sign in with an API key, publish (confirmed in
  *     chat), install, like, favorite, yank, sign out;
- * <li>{@code repo_login}: sign in with a code approved in the browser.
+ * <li>{@code repo_login}: sign in with a code approved in the browser;
+ * <li>{@code repo_village}: the Tech Village data center mirrors it by itself
+ *     and a house PC installs from there.
  * </ul>
  *
  * The backend is outside the game, as the real one is. These scenarios use
@@ -546,8 +548,87 @@ public final class RepoBackendScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------------ repo_village
+
+    /**
+     * Type {@code command} on the house PC when its shell is idle (again every
+     * {@code everyMs} while the answer is not there) until its screen shows
+     * {@code re} after the command.
+     */
+    static void ask(Scenario.Builder b, BrowserScenarios.Pc pc, java.util.function.Function<ScenarioRun, String> command, String label,
+                    java.util.function.Function<ScenarioRun, String> re, String what, int everyMs, int timeoutMs) {
+        long[] next = {0};
+        b.await(r -> {
+            String screen = pc.screen(r), c = command.apply(r);
+            int at = screen.lastIndexOf("> " + c);
+            if (at >= 0 && Pattern.compile(re.apply(r), Pattern.MULTILINE).matcher(screen.substring(at)).find()) return null;
+            if (System.currentTimeMillis() > next[0] && screen.stripTrailing().endsWith(">")) {
+                pc.type(r, c);
+                pc.key(r, BrowserScenarios.HID_ENTER, 0, "\n");
+                next[0] = System.currentTimeMillis() + everyMs;
+            }
+            return "not yet:\n" + screen.strip();
+        }, "[the house PC] " + label + ": " + what, timeoutMs);
+    }
+
+    static String dataCenter(ScenarioRun r) {
+        return "100." + (64 + com.example.evanscomputermod.computer.WorldNetwork.chatVillage(r.level().getSeed())) + ".0." + com.example.evanscomputermod.computer.VillageRepo.HOST;
+    }
+
+    /**
+     * {@code repo_village}: {@code repo.access = datacenter} in a world with
+     * Tech Villages. The ring's package server (in one village's Data Center)
+     * is a repository server without any grant: it copies the official
+     * repository each time it starts and offers the copy on port 8081. A
+     * house PC, as generated, already has {@code official} at that copy with
+     * the official key pinned: {@code pkg update}, {@code pkg install} and the
+     * app runs, fetched over the house router, the ISP and the fiber ring.
+     * The same server is the ring's authority, which the PC trusts as
+     * generated ({@code cert authorities}). Control: the house PC is refused the server's own link.
+     */
+    static Scenario village() {
+        BrowserScenarios.Pc pc = new BrowserScenarios.Pc("the house PC", r -> BrowserScenarios.houseTerminal(r, true));
+        var b = Scenario.builder("repo_village",
+                        "repo.access = datacenter with Tech Villages: the ring's package server mirrors the official repository by itself; a house"
+                                + " PC already has it (key pinned), installs an app from the data center over the ring, and trusts the ring's authority")
+                .asPlayer()
+                .inWorld()
+                .timeLimit(110_000);
+        b.note("Stand in a Tech Village; the server's config has repo.access = datacenter (in a GameTest world the scenario places the nearest"
+                + " village at its planned site, and starts the ring's infrastructure as a normal server does at start).");
+        b.await(r -> ready(r, true), "the repository's backend is up and the server can reach it", 2_000);
+        // The world is the layout here, so the setting is made as a step (the computers read it when they start).
+        b.mutate(r -> EcmConfig.overrideRepo("datacenter", url(), key()), "server config: repo.access = datacenter, repo.url and repo.key the repository's");
+        b.mutate(BrowserScenarios::village, "find the nearest Tech Village, its first house's router and PC; the ring is running");
+        b.mutate(r -> {
+            for (boolean isPc : new boolean[] {false, true}) {
+                var t = BrowserScenarios.houseTerminal(r, isPc);
+                if (t != null) r.player().openScreen(t.getBlockPos(), t.getBlockState().getValue(com.example.evanscomputermod.block.TerminalBlock.FACING));
+            }
+        }, "open the house router's screen, then the PC's (opening a computer starts it)");
+        b.await(r -> pc.screen(r).contains("Welcome to Terminal OS") ? null : "booting: " + pc.screen(r).strip(), "the house PC has booted", 30_000);
+
+        b.note("The house PC: the official repository is the data center's copy, key pinned");
+        ask(b, pc, r -> "cat /etc/pkg/repos", "cat /etc/pkg/repos",
+                r -> "^official http://" + q(dataCenter(r)) + ":8081/ " + key() + "\\s*$", "official is at the village data center, with the official key", 60_000, 15_000);
+        ask(b, pc, r -> "ping " + dataCenter(r) + " -n 1", "ping <the data center>", r -> "1 packets sent, 1 received", "the data center answers over the ring", 4_000, 40_000);
+        ask(b, pc, r -> "pkg update", "pkg update", r -> "^official: 4 packages", "the data center offers the four stable packages", 6_000, 40_000);
+        ask(b, pc, r -> "pkg install com.ecmtest.hello", "pkg install com.ecmtest.hello",
+                r -> "^Installed Hello 1\\.0\\.0 \\(com\\.ecmtest\\.hello\\) - verified publisher", "installed from the data center, checked against the official key", 60_000, 20_000);
+        ask(b, pc, r -> "lua /apps/com.ecmtest.hello/main.lua", "lua /apps/com.ecmtest.hello/main.lua", r -> "^hello from the repository\\s*$", "the app runs", 60_000, 15_000);
+        b.note("Control: an ordinary computer is refused the server's own link; and the ring's authority");
+        ask(b, pc, r -> "pkg repo add direct host://repo/r/stable/", "pkg repo add direct host://repo/r/stable/",
+                r -> "only lets its repository servers use that link", "control: the house PC is not a repository server", 60_000, 15_000);
+        ask(b, pc, r -> "cert authorities", "cert authorities", r -> "Tech-Village-Authority", "the house PC trusts the ring's authority as generated", 60_000, 15_000);
+        ask(b, pc, r -> "curl http://" + dataCenter(r) + ":8555/ca", "curl http://<the data center>:8555/ca",
+                r -> "^" + q(com.example.evanscomputermod.computer.VillageRepo.of(r.level().getSeed(), 1).anchorFile().trim()) + "\\s*$",
+                "the authority on the package server answers with the key the PC trusts (cert request gets a certificate from it)", 8_000, 25_000);
+        b.mutate(r -> EcmConfig.overrideRepo(null, null, null), "(the server's config is as it was)");
+        return b.build();
+    }
+
     static {
-        for (Scenario s : new Scenario[] {open(), internet(), datacenter(false), datacenter(true), account(), login()}) ALL.put(s.name, s);
+        for (Scenario s : new Scenario[] {open(), internet(), datacenter(false), datacenter(true), account(), login(), village()}) ALL.put(s.name, s);
     }
 
     private RepoBackendScenarios() {}

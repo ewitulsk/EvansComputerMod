@@ -442,6 +442,24 @@ computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `servic
   (an old world's house router), add it by address on Discord's + page (the village web page's
   Discord section names it, `100.(64+K).0.20`); Discord remembers it.
 
+**The official repository and the ring's authority.** The package server has two more jobs
+(provision version 10; docs/REPO.md, docs/TLS.md):
+
+* When the server's `repo.access` is `datacenter`, it is a repository server without an
+  operator's grant: its `services.cfg` line `pkg serve /srv/official 8081 --name Official-Packages
+  --mirror official &` copies the official repository's stable channel each time it starts and
+  offers the copy on port 8081. Every generated computer then has `official
+  http://100.(64+K).0.21:8081/ <the official key>` in `/etc/pkg/repos` (written when it starts,
+  from its Tech-Village-Apps line). In the other modes the line ends with a message (there is
+  no repository `official` to copy) and nothing listens on 8081.
+* It runs `cad`, the ring's certificate authority **Tech-Village-Authority** (port 8555). Its
+  key is derived from the world seed (`HMAC-SHA256(repository secret, "ECM-TECHVILLAGE-CA")`),
+  and every generated computer trusts it from the start
+  (`/etc/ssl/certs/tech-village-authority.anchor`). `cert request <name or address>` on a
+  computer on the ring gets a certificate from it; the village's own servers stay plain HTTP.
+
+`/ecm scenario spawn repo_village` shows both from a house PC.
+
 On your own computer: `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key <key>`
 (the key is on every village page and in any village computer's `/etc/pkg/repos`), then
 `pkg search` / `pkg install dev.ecm.discord` or the App Store. Without `--key` the apps show as
