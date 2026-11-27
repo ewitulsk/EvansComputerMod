@@ -17,14 +17,51 @@ echo "Building kernel (terminal_os.wasm)..."
 
 # lua's C sources (Lua 5.2), the browser's (QuickJS) and vim's (Vim 9.2) need
 # wasi-sdk's clang and sysroot: WASI_SDK_PATH, or wasi-sdk unpacked in one of the
-# usual places. Without it lua, browser and vim are skipped, loudly.
+# usual places, or auto-downloaded on demand into .wasi-sdk/ (gitignored).
+WASI_SDK_VERSION="30.0"
+WASI_SDK_TAG="wasi-sdk-30"
 if [ -z "$WASI_SDK_PATH" ]; then
-    for d in /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk" /c/wasi-sdk-*; do
+    for d in "$ROOT/.wasi-sdk"/wasi-sdk-* /opt/wasi-sdk "$HOME/wasi-sdk" /c/wasi-sdk "/c/Users/$USERNAME/wasi-sdk" /c/wasi-sdk-*; do
         if [ -x "$d/bin/clang" ] || [ -x "$d/bin/clang.exe" ]; then export WASI_SDK_PATH="$d"; break; fi
     done
 fi
+if [ -z "$WASI_SDK_PATH" ]; then
+    case "$(uname -s)" in
+        Darwin)  WASI_OS="macos" ;;
+        Linux)   WASI_OS="linux" ;;
+        MINGW*|MSYS*|CYGWIN*) WASI_OS="windows" ;;
+        *)       WASI_OS="" ;;
+    esac
+    case "$(uname -m)" in
+        arm64|aarch64) WASI_ARCH="arm64" ;;
+        x86_64|amd64)  WASI_ARCH="x86_64" ;;
+        *)             WASI_ARCH="" ;;
+    esac
+    if [ -n "$WASI_OS" ] && [ -n "$WASI_ARCH" ]; then
+        WASI_NAME="wasi-sdk-${WASI_SDK_VERSION}-${WASI_ARCH}-${WASI_OS}"
+        WASI_URL="https://github.com/WebAssembly/wasi-sdk/releases/download/${WASI_SDK_TAG}/${WASI_NAME}.tar.gz"
+        WASI_DEST="$ROOT/.wasi-sdk/$WASI_NAME"
+        echo "wasi-sdk not found; fetching $WASI_NAME into .wasi-sdk/ (for lua, browser and vim)..."
+        mkdir -p "$ROOT/.wasi-sdk"
+        WASI_TMP="$ROOT/.wasi-sdk/.tmp-$$"
+        rm -rf "$WASI_TMP"
+        mkdir -p "$WASI_TMP"
+        if curl -fSL --retry 3 "$WASI_URL" | tar xz -C "$WASI_TMP" && [ -d "$WASI_TMP/$WASI_NAME" ]; then
+            rm -rf "$WASI_DEST"
+            mv "$WASI_TMP/$WASI_NAME" "$WASI_DEST"
+            export WASI_SDK_PATH="$WASI_DEST"
+        else
+            echo "warning: failed to download wasi-sdk from $WASI_URL"
+        fi
+        rm -rf "$WASI_TMP"
+    fi
+fi
 if [ -n "$WASI_SDK_PATH" ]; then
-    export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
+    if [ -x "$WASI_SDK_PATH/bin/llvm-ar.exe" ]; then
+        export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar.exe"
+    else
+        export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
+    fi
 else
     echo "warning: wasi-sdk not found (set WASI_SDK_PATH; https://github.com/WebAssembly/wasi-sdk/releases): lua, browser and vim will NOT be built"
     rm -f rust/target/wasm32-wasip1/release/lua.wasm rust/target/wasm32-wasip1/release/browser.wasm rust/target/wasm32-wasip1/release/vim.wasm
