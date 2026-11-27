@@ -78,6 +78,7 @@ for n, size in STRUCTURES.items():
 STRUCTURES_1211['ecm_router_scenarios'] = ['gametest_switch']
 STRUCTURES_1211['ecm_dns'] = ['gametest_switch']
 STRUCTURES_1211['ecm_repo'] = ['gametest_switch']
+STRUCTURES_1211['ecm_repo_backend'] = ['gametest_switch']
 for ns, names in STRUCTURES_1211.items():
     for n in names:
         write(n, STRUCTURES[n], ROOT / f"src/main/resources-mc1.21.1/data/{ns}/structure", DATA_VERSION_1211)

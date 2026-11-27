@@ -87,7 +87,7 @@ public final class UploadPort {
     public ServerPlayer operator() {
         var o = operator;
         ServerPlayer p = o == null ? null : o.get();
-        return p == null || p.hasDisconnected() ? null : p;
+        return p == null || p.isRemoved() ? null : p;
     }
 
     /** Is {@code player} already the operator noted through {@code via}? Any thread (input off the server thread checks it). */
