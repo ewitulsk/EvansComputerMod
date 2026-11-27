@@ -1,0 +1,39 @@
+# Litestream 0.5.x (image litestream/litestream:0.5.18, docker-compose.yml).
+# Replicates both SQLite databases to the Spaces bucket LITESTREAM_BUCKET.
+#
+# Credentials are not in this file: Litestream reads LITESTREAM_ACCESS_KEY_ID
+# and LITESTREAM_SECRET_ACCESS_KEY from its environment. The ${...} names
+# below are expanded by Litestream from the same environment.
+#
+# The bucket has versioning and a rule that expires noncurrent versions
+# (infra/terraform), so files Litestream deletes here stay recoverable for a
+# few more days.
+
+logging:
+  level: info
+  type: text
+
+# A full snapshot every day, kept for a week: a restore can go back to any
+# moment in the last 7 days.
+snapshot:
+  interval: 24h
+  retention: 168h
+
+dbs:
+  - path: /data/auth.db
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: litestream/auth.db
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: ${LITESTREAM_REGION}
+      sync-interval: 1s
+
+  - path: /data/repo.db
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: litestream/repo.db
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: ${LITESTREAM_REGION}
+      sync-interval: 1s

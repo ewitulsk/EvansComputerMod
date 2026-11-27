@@ -1,0 +1,38 @@
+# Optional: keep the Terraform state in a Spaces bucket instead of the local
+# file terraform.tfstate. Start with local state; move it later with:
+#
+#   1. Create a SEPARATE private bucket by hand (control panel > Spaces Object
+#      Storage > Create bucket), for example evanwitulski-ecm-tfstate. Do not
+#      reuse the packages or db bucket, and do not manage this bucket with the
+#      state it holds.
+#   2. cp backend.tf.example backend.tf, and set "bucket" and the endpoint's
+#      region below.
+#   3. Give the S3 backend the Spaces key under the AWS names:
+#        export AWS_ACCESS_KEY_ID="$SPACES_ACCESS_KEY_ID"
+#        export AWS_SECRET_ACCESS_KEY="$SPACES_SECRET_ACCESS_KEY"
+#   4. terraform init -migrate-state
+#      Answer "yes" to copy the existing state, check "terraform plan" shows
+#      no changes, then delete the local terraform.tfstate*.
+#
+# The "region" below is a placeholder the S3 backend insists on; Spaces takes
+# its region from the endpoint.
+#
+# There is no state locking here. Do not run two applies at once.
+
+terraform {
+  backend "s3" {
+    bucket = "evanwitulski-ecm-tfstate"
+    key    = "ecm-repo/terraform.tfstate"
+    region = "us-east-1"
+
+    endpoints = {
+      s3 = "https://nyc3.digitaloceanspaces.com"
+    }
+
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_s3_checksum            = true
+  }
+}

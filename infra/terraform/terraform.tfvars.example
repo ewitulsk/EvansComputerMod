@@ -1,0 +1,36 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is ignored by git.
+# No secrets belong in this file: the API token and the Spaces key come from
+# environment variables (docs/DEPLOY.md, step 3).
+
+# Your SSH public key: the contents of ~/.ssh/id_ed25519.pub.
+admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...replace-me you@laptop"
+
+# The public half of the key GitHub Actions deploys with (step 12). Leave
+# empty until then; adding it later needs one command on the droplet, not a
+# rebuild.
+ci_ssh_public_key = ""
+
+# Who may reach SSH. The default is nobody. Put your own address here
+# (curl -4 https://ifconfig.me), as a /32.
+#   Deploying from GitHub Actions needs ["0.0.0.0/0", "::/0"].
+ssh_allowed_cidrs = ["203.0.113.7/32"]
+
+# The buckets will be <prefix>-packages and <prefix>-db. Names are global
+# across DigitalOcean, so use something of your own.
+bucket_prefix = "evanwitulski-ecm-repo"
+
+# Defaults, shown for reference.
+# name          = "ecm-repo"
+# region        = "nyc3"
+# spaces_region = ""            # empty: same as region
+# droplet_size  = "s-1vcpu-1gb"
+# droplet_image = "ubuntu-24-04-x64"
+# droplet_backups = false
+# project_name  = ""            # for example "ecm-repo" to get its own project
+
+# DNS. Set manage_dns = true only if evanwitulski.com is hosted at DigitalOcean
+# (Networking > Domains). Otherwise create the A record by hand from the
+# "dns_records" output.
+domain     = "evanwitulski.com"
+subdomain  = "repo"
+manage_dns = false
