@@ -87,11 +87,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private static final int FONT_CELL_WIDTH = 8;
     private static final int FONT_CELL_HEIGHT = 16;
     private static final int FONT_ASCENT = 14;  // from terminal.json — must match
-    // Vertical offset applied to fill() rectangles so they align with where
-    // drawString actually renders glyphs.  Minecraft's bitmap font renderer
-    // positions glyphs above the Y coordinate by an amount related to ascent.
-    // This value is tuned empirically to match the terminal font.
-    private static final int GLYPH_Y_OFFSET = 4;
+    // Minecraft's bitmap font renderer draws a glyph's top row at (y + 7 - ascent),
+    // so passing (rowY + FONT_TEXT_Y_OFFSET) places the 8x16 bitmap cell at exact
+    // [rowY, rowY + FONT_CELL_HEIGHT), aligning it pixel-for-pixel with cell
+    // background fills (Vim MatchParen/Visual/status), cursor, underline, and
+    // mouse selection without overflowing above row 0.
+    private static final int FONT_TEXT_Y_OFFSET = FONT_ASCENT - 7;
 
     // Dynamic dimensions (calculated in init())
     private int charWidth;
@@ -550,7 +551,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
 
         for (int row = 0; row < termHeight; row++) {
             int rowY = row * baseCharHeight;
-            int glyphY = rowY - GLYPH_Y_OFFSET;
+            int textY = rowY + FONT_TEXT_Y_OFFSET;
             for (int col = 0; col < termWidth; col++) {
                 byte ch = display.getCharAt(col, row);
                 byte attr = display.getAttrAt(col, row);
@@ -575,16 +576,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
                     g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, bg);
                 }
                 if (isCursor) {
-                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, cursorColor());
+                    g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, cursorColor());
                 }
                 if (hidden) continue;
 
                 int charColor = isCursor ? pal[0] : fg;
                 if (ch > 0x20 && ch < 0x7F) {
-                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, textY, charColor, false);
                 }
                 if ((flags & FLAG_UNDERLINE) != 0) {
-                    int lineY = glyphY + FONT_ASCENT;
+                    int lineY = rowY + FONT_ASCENT;
                     g.fill(cellX, lineY, cellX + baseCharWidth, lineY + 1, charColor);
                 }
             }
