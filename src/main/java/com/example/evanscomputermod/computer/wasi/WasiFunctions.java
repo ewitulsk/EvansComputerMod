@@ -34,9 +34,12 @@ public class WasiFunctions {
     private static final int ERRNO_AGAIN = 6;
     private static final int FDFLAGS_NONBLOCK = 4;
     private static final int ERRNO_BADF = 8;
+    private static final int ERRNO_EXIST = 20;
     private static final int ERRNO_INVAL = 28;
+    private static final int ERRNO_ISDIR = 31;
     private static final int ERRNO_NOSYS = 52;
     private static final int ERRNO_NOENT = 44;
+    private static final int ERRNO_NOTDIR = 54;
     private static final int ERRNO_ACCES = 2;
     private static final int ERRNO_NOTEMPTY = 55;
     /** Returned by env:: functions when an app lacks the permission (docs/gui/APPS.md). */
@@ -145,21 +148,26 @@ public class WasiFunctions {
         addWasi(sink, "fd_fdstat_get", I32_I32, RET_I32, (inst, args) -> {
             int fd = (int) args[0];
             int bufPtr = (int) args[1];
+            WasiFileDescriptor statDesc = state.fdTable.get(fd);
+            if (fd != 3 && statDesc == null) {
+                return retI32(ERRNO_BADF);
+            }
             WasmMemory mem = state.mem();
             // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
             for (int i = 0; i < 24; i++) mem.writeByte(bufPtr + i, (byte) 0);
-            WasiFileDescriptor statDesc = state.fdTable.get(fd);
             if ((statDesc instanceof PipeFd p && p.isNonBlocking())
                     || (statDesc instanceof DeviceFd d && d.isNonBlocking())) {
                 mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
             }
-            if (fd <= 2 && statDesc instanceof SharedFd.Handle h) {
+            if (fd == 3 || statDesc instanceof DirFd) {
+                mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY
+            } else if (statDesc instanceof PipeFd p && p.isTty()) {
+                mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE (stdin/out/err or /dev/tty)
+            } else if (statDesc instanceof SharedFd.Handle h) {
                 // A shell redirect or pipe: a file, or a stream to another program.
                 mem.writeByte(bufPtr, (byte) (h.shared().inner() instanceof VfsFileFd ? 4 : 6));
             } else if (fd <= 2 || statDesc instanceof DeviceFd) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
-            } else if (fd == 3) {
-                mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY
             } else {
                 mem.writeByte(bufPtr, (byte) 4);  // FILETYPE_REGULAR_FILE
             }
@@ -183,16 +191,24 @@ public class WasiFunctions {
         addWasi(sink, "fd_filestat_get", I32_I32, RET_I32, (inst, args) -> {
             int fd = (int) args[0];
             int bufPtr = (int) args[1];
+            WasiFileDescriptor desc = state.fdTable.get(fd);
+            if (fd != 3 && desc == null) {
+                return retI32(ERRNO_BADF);
+            }
             WasmMemory mem = state.mem();
             for (int i = 0; i < 64; i++) mem.writeByte(bufPtr + i, (byte) 0);
-            WasiFileDescriptor desc = state.fdTable.get(fd);
-            if (desc instanceof VfsFileFd vfs) {
+            WasiFileDescriptor inner = desc instanceof SharedFd.Handle h ? h.shared().inner() : desc;
+            if (fd == 3 && inner == null) {
+                writeFilestat(mem, bufPtr, state.storagePath);
+            } else if (inner instanceof VfsFileFd vfs) {
                 writeFilestat(mem, bufPtr, vfs.path());
                 try { mem.writeLong(bufPtr + 32, vfs.size()); } catch (IOException ignored) {}
-            } else if (desc instanceof DirFd dir) {
+            } else if (inner instanceof DirFd dir) {
                 writeFilestat(mem, bufPtr, dir.getDirPath());
+            } else if (inner instanceof PipeFd p && !p.isTty()) {
+                mem.writeByte(bufPtr + 16, (byte) 6); // FILETYPE_SOCKET_STREAM
             } else {
-                mem.writeByte(bufPtr + 16, (byte) 2);
+                mem.writeByte(bufPtr + 16, (byte) 2); // FILETYPE_CHARACTER_DEVICE
             }
             return retI32(ERRNO_SUCCESS);
         });
@@ -349,13 +365,20 @@ public class WasiFunctions {
                 return retI32(ERRNO_NOENT);
             }
 
+            boolean create = (oflags & 1) != 0;
+            boolean directory = (oflags & 2) != 0;
+            boolean excl = (oflags & 4) != 0;
+            boolean trunc = (oflags & 8) != 0;
+            boolean append = (fdflags & 1) != 0;
+
             // server-bin/: the server's programs, read-only, as the console sees them (cp, pkg build).
             Path bin = Files.exists(filePath) ? null : serverBinPath(pathStr);
             if (bin != null) {
-                boolean writes = (oflags & (1 | 8)) != 0 || (fdflags & 1) != 0 || (argsArr[5] & (1L << 6)) != 0;
+                boolean writes = create || excl || trunc || append || (argsArr[5] & (1L << 6)) != 0;
                 if (writes) return retI32(ERRNO_ACCES);
                 if (state.sandbox != null && !pathAllowed(state, pathStr, false)) return retI32(ERRNO_NOENT);
                 if (!Files.exists(bin)) return retI32(ERRNO_NOENT);
+                if (directory && !Files.isDirectory(bin)) return retI32(ERRNO_NOTDIR);
                 try {
                     int newFd = Files.isDirectory(bin) ? state.fdTable.allocate(new DirFd(bin))
                             : state.fdTable.allocate(new VfsFileFd(bin, true, false, false));
@@ -366,9 +389,6 @@ public class WasiFunctions {
                 }
             }
 
-            boolean create = (oflags & 1) != 0;
-            boolean trunc = (oflags & 8) != 0;
-            boolean append = (fdflags & 1) != 0;
             // fs_rights_base bit 6 = FD_WRITE: wasi-libc leaves it out for O_RDONLY.
             boolean wantsWrite = create || trunc || append || (argsArr[5] & (1L << 6)) != 0;
             boolean writable = true;
@@ -380,24 +400,36 @@ public class WasiFunctions {
                 writable = wantsWrite || pathAllowed(state, pathStr, true);
             }
 
-            EvansComputerMod.LOGGER.debug("WASI path_open: path='{}' oflags={} create={} trunc={} append={} resolved={}",
-                    pathStr, oflags, create, trunc, append, filePath);
+            EvansComputerMod.LOGGER.debug("WASI path_open: path='{}' oflags={} create={} dir={} excl={} trunc={} append={} resolved={}",
+                    pathStr, oflags, create, directory, excl, trunc, append, filePath);
 
-            if (!Files.exists(filePath) && !create) {
+            boolean exists = Files.exists(filePath);
+            if (create && excl && exists) {
+                return retI32(ERRNO_EXIST);
+            }
+            if (!exists && !create) {
                 EvansComputerMod.LOGGER.debug("WASI path_open: NOENT (no O_CREAT)");
                 return retI32(ERRNO_NOENT);
             }
 
             try {
-                if (Files.isDirectory(filePath)) {
+                if (exists && Files.isDirectory(filePath)) {
+                    if (wantsWrite) return retI32(ERRNO_ISDIR);
                     DirFd dirFd = new DirFd(filePath);
                     int newFd = state.fdTable.allocate(dirFd);
                     mem.writeInt(fdOutPtr, newFd);
                     EvansComputerMod.LOGGER.debug("WASI path_open: opened dir fd={}", newFd);
                 } else {
-                    if (create && !Files.exists(filePath)) {
-                        Files.createDirectories(filePath.getParent());
-                        Files.createFile(filePath);
+                    if (directory) {
+                        return retI32(exists ? ERRNO_NOTDIR : ERRNO_NOENT);
+                    }
+                    if (create && !exists) {
+                        if (filePath.getParent() != null) Files.createDirectories(filePath.getParent());
+                        try {
+                            Files.createFile(filePath);
+                        } catch (java.nio.file.FileAlreadyExistsException e) {
+                            if (excl) return retI32(ERRNO_EXIST);
+                        }
                         EvansComputerMod.LOGGER.debug("WASI path_open: created new file");
                     }
                     VfsFileFd vfs = new VfsFileFd(filePath, true, writable, append);
@@ -415,9 +447,10 @@ public class WasiFunctions {
 
         addWasi(sink, "path_create_directory", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            Path p = resolveChildPath(state, pathStr);
+            if (p == null) return retI32(ERRNO_NOENT);
             if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
             try {
-                Path p = state.storagePath.resolve(pathStr).normalize();
                 Files.createDirectories(p);
                 return retI32(ERRNO_SUCCESS);
             } catch (IOException e) {
@@ -431,9 +464,9 @@ public class WasiFunctions {
             Path p = resolveChildPath(state, pathStr);
             if (p == null || p.equals(state.storagePath)) return retI32(ERRNO_NOENT);
             if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
-            if (!Files.isDirectory(p)) return retI32(Files.exists(p) ? 54 /* NOTDIR */ : ERRNO_NOENT);
+            if (!Files.isDirectory(p)) return retI32(Files.exists(p) ? ERRNO_NOTDIR : ERRNO_NOENT);
             try (var entries = Files.list(p)) {
-                if (entries.findAny().isPresent()) return retI32(55); // NOTEMPTY
+                if (entries.findAny().isPresent()) return retI32(ERRNO_NOTEMPTY);
             } catch (IOException e) {
                 return retI32(ERRNO_NOENT);
             }
@@ -447,10 +480,13 @@ public class WasiFunctions {
 
         addWasi(sink, "path_unlink_file", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            Path p = resolveChildPath(state, pathStr);
+            if (p == null || p.equals(state.storagePath)) return retI32(ERRNO_NOENT);
             if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            if (!Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return retI32(ERRNO_NOENT);
+            if (Files.isDirectory(p)) return retI32(ERRNO_ISDIR);
             try {
-                Path p = state.storagePath.resolve(pathStr).normalize();
-                Files.deleteIfExists(p);
+                Files.delete(p);
                 return retI32(ERRNO_SUCCESS);
             } catch (IOException e) {
                 return retI32(ERRNO_NOENT);
@@ -1982,6 +2018,12 @@ public class WasiFunctions {
         return filePath;
     }
 
+    /** Stable non-zero inode derived from a path's normalized location (shared by stat and readdir). */
+    static long inodeFor(Path p) {
+        long ino = p.toAbsolutePath().normalize().toString().hashCode() & 0xFFFFFFFFL;
+        return ino == 0 ? 1 : ino;
+    }
+
     /**
      * A WASI filestat (64 bytes) for a real file: dev, inode, type, nlink, size
      * and the times. Programs tell files apart by dev and inode (vim keeps one
@@ -1993,9 +2035,8 @@ public class WasiFunctions {
         Path real = p.toAbsolutePath().normalize();
         Path bin = com.example.evanscomputermod.wasm.WasmManager.getWasmBinPath();
         boolean server = bin != null && real.startsWith(bin.toAbsolutePath().normalize());
-        long ino = real.toString().hashCode() & 0xFFFFFFFFL;
         mem.writeLong(bufPtr, server ? 2 : 1);
-        mem.writeLong(bufPtr + 8, ino == 0 ? 1 : ino);
+        mem.writeLong(bufPtr + 8, inodeFor(real));
         mem.writeByte(bufPtr + 16, Files.isDirectory(real) ? (byte) 3 : (byte) 4);
         mem.writeLong(bufPtr + 24, 1);
         try {

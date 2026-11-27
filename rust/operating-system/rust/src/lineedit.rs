@@ -95,6 +95,11 @@ fn commands(cwd: &str, prefix: &str) -> Vec<String> {
             out.push(e.name.strip_suffix(".wasm").unwrap_or(&e.name).to_string());
         }
     }
+    for &(alias, target) in crate::shell::PROGRAM_ALIASES {
+        if out.iter().any(|c| c == target) {
+            out.push(alias.to_string());
+        }
+    }
     out.retain(|c| c.starts_with(prefix));
     out.sort();
     out.dedup();
@@ -266,6 +271,12 @@ mod tests {
         let (s, w) = c.complete("cat home/n", 10);
         assert_eq!(s, 4);
         assert_eq!(w, vec!["home/new/".to_string(), "home/notes.txt".to_string()]);
+        // Program aliases only complete when their target exists.
+        assert!(c.complete("vimd", 4).1.is_empty());
+        ffi::FILES.with(|f| f.borrow_mut().insert("server-bin/vim.wasm".into(), vec![0]));
+        assert_eq!(c.complete("vimd", 4).1, vec!["vimdiff".to_string()]);
+        assert_eq!(c.complete("vi", 2).1, vec!["vi".to_string(), "view".to_string(), "vim".to_string(), "vimdiff".to_string()]);
+        ffi::FILES.with(|f| f.borrow_mut().remove("server-bin/vim.wasm"));
         let mut c = ShellCompleter { cwd: "home" };
         assert_eq!(c.complete("cat no", 6).1, vec!["notes.txt".to_string()]);
         assert_eq!(c.complete("ls | he", 7).1.len(), 2, "after a pipe: a command");

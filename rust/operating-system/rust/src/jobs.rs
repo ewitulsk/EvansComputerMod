@@ -18,13 +18,17 @@ pub struct Job {
     pub command: String,
     /// Paused with Ctrl+Z (waits for `fg` or `bg`).
     pub stopped: bool,
+    /// Killed by Ctrl+T / Ctrl+C: keep waiting for exit so IPC sessions are
+    /// reaped, but drop any stray output so a dead full-screen program cannot
+    /// re-dirty the terminal modes after reset.
+    killed: bool,
     /// The stage that gets the keyboard: the first, or a pager at the end
-    /// (`ls | less`, which reads its keys from /dev/tty).
+    /// (`ls | less`, `echo hi | vim -`, which read keys from /dev/tty).
     input: usize,
 }
 
 /// Programs that read the keyboard (from /dev/tty) at the end of a pipeline.
-const PAGERS: &[&str] = &["less", "more"];
+const PAGERS: &[&str] = &["less", "more", "vim", "vi", "view", "ex"];
 
 fn input_stage(pids: usize, command: &str) -> usize {
     let last = command.rsplit('|').next().unwrap_or("").split_whitespace().next().unwrap_or("");
@@ -78,7 +82,7 @@ impl Jobs {
         self.next_id += 1;
         let exit_codes = vec![None; pids.len()];
         let input = input_stage(pids.len(), &command);
-        Job { id, pids, exit_codes, command, stopped: false, input }
+        Job { id, pids, exit_codes, command, stopped: false, killed: false, input }
     }
 
     pub fn start_foreground(&mut self, pids: Vec<i32>, command: String) {
@@ -105,8 +109,9 @@ impl Jobs {
 
     /// Kill the foreground job (Ctrl+T). Returns true if there was one.
     pub fn kill_foreground(&mut self) -> bool {
-        match &self.fg {
+        match &mut self.fg {
             Some(job) => {
+                job.killed = true;
                 for &pid in &job.pids {
                     hal::proc::kill(pid);
                 }
@@ -216,7 +221,9 @@ impl Jobs {
                     if n == 0 {
                         break;
                     }
-                    con.write(&buf[..n]);
+                    if !job.killed {
+                        con.write(&buf[..n]);
+                    }
                     *budget -= n;
                 }
                 if job.exit_codes[i].is_none() {
@@ -229,7 +236,9 @@ impl Jobs {
                                 if n == 0 {
                                     break;
                                 }
-                                con.write(&buf[..n]);
+                                if !job.killed {
+                                    con.write(&buf[..n]);
+                                }
                             }
                             job.exit_codes[i] = Some(code);
                             events.push(JobEvent::Exited(pid));
@@ -264,5 +273,20 @@ impl Jobs {
             }
         }
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_stage_routes_keyboard_to_pagers_and_vim_in_pipeline() {
+        assert_eq!(input_stage(2, "ls | less"), 1);
+        assert_eq!(input_stage(2, "echo hi | vim -"), 1);
+        assert_eq!(input_stage(2, "cat a.txt | view -"), 1);
+        assert_eq!(input_stage(2, "cat a.txt | vi -"), 1);
+        assert_eq!(input_stage(2, "cat a.txt | grep foo"), 0);
+        assert_eq!(input_stage(1, "vim a.txt"), 0);
     }
 }

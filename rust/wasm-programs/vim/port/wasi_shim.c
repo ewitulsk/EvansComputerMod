@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <time.h>
 #include <wasi/api.h>
 
 /* The real calls (wasi_shim.h renames them for Vim's sources). */
@@ -135,12 +136,36 @@ int wasi_shim_ioctl(int fd, int request, ...) {
 
 /* --- keyboard input ---------------------------------------------------- */
 
-/* Keys read from stdin but not yet given to Vim. */
-static unsigned char keys[8192];
+/* Keys read from the tty but not yet given to Vim (grown dynamically up to 1 MiB
+ * so large pastes are not silently truncated). */
+#define MAX_KEYS_CAP (1024 * 1024)
+static unsigned char *keys;
 static size_t nkeys;
+static size_t capkeys;
 /* The start of a resize report that ended mid-read: ESC [ 4 8 ; ... */
 static char partial[64];
 static size_t npartial;
+
+static void push_key(unsigned char b) {
+    if (nkeys == capkeys) {
+        size_t next = capkeys == 0 ? 8192 : capkeys * 2;
+        if (next > MAX_KEYS_CAP) next = MAX_KEYS_CAP;
+        if (nkeys >= next) return;
+        unsigned char *p = realloc(keys, next);
+        if (!p) return;
+        keys = p;
+        capkeys = next;
+    }
+    keys[nkeys++] = b;
+}
+
+static int more_ready(int fd) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    return poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN);
+}
 
 /* Does `s` (n bytes) start a report "ESC[48;r;c;h;wt"? 2 = a whole one
  * (its length in *len), 1 = maybe (too short to tell), 0 = no. */
@@ -172,7 +197,7 @@ static int match_report(const unsigned char *s, size_t n, size_t *len, int *r, i
 }
 
 /* Take resize reports out of `data`, keep the keys. Returns 1 if the size changed. */
-static int take_keys(const unsigned char *data, size_t n) {
+static int take_keys(int fd, const unsigned char *data, size_t n) {
     unsigned char buf[sizeof(partial) + 4096];
     size_t m = 0;
     memcpy(buf, partial, npartial);
@@ -198,9 +223,11 @@ static int take_keys(const unsigned char *data, size_t n) {
                 i += len;
                 continue;
             }
-            /* "ESC[48;" and more at the very end: wait for the rest. A lone
-             * ESC (the key) is never held back. */
-            if (k == 1 && m - i >= 5 && m - i < sizeof(partial)) {
+            /* Hold back an incomplete "ESC[48;..." prefix at the end of a read.
+             * Also hold back a 2-4 byte prefix ("ESC[", "ESC[4", "ESC[48") when
+             * more bytes are already waiting in the pipe, so a split resize report
+             * is reassembled without delaying a lone Esc key. */
+            if (k == 1 && m - i < sizeof(partial) && (m - i >= 5 || (m - i >= 2 && more_ready(fd)))) {
                 memcpy(partial, buf + i, m - i);
                 npartial = m - i;
                 break;
@@ -211,7 +238,7 @@ static int take_keys(const unsigned char *data, size_t n) {
          * reads). A raw tty without ICRNL sees the Enter key as "\r", and Vim
          * reads "\n" as Ctrl+J (down a line), so it gets "\r". */
         if (b == '\n' && !(tty_settings.c_iflag & ICRNL) && !(tty_settings.c_lflag & ICANON)) b = '\r';
-        if (nkeys < sizeof(keys)) keys[nkeys++] = b;
+        push_key(b);
         i++;
     }
     if (resized) raise(SIGWINCH);
@@ -226,51 +253,73 @@ static size_t give_keys(void *out, size_t n) {
     return n;
 }
 
+static long long monotonic_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (long long)ts.tv_sec * 1000LL + (long long)(ts.tv_nsec / 1000000L);
+}
+
 ssize_t wasi_shim_read(int fd, void *buf, size_t n) {
-    if (fd != 0) return read(fd, buf, n);
+    if (!wasi_shim_isatty(fd)) return read(fd, buf, n);
     for (;;) {
         if (nkeys > 0) return (ssize_t)give_keys(buf, n);
         unsigned char tmp[4096];
-        ssize_t got = read(0, tmp, sizeof(tmp));
+        ssize_t got = read(fd, tmp, sizeof(tmp));
         if (got <= 0) return got;
         init_size();
-        take_keys(tmp, (size_t)got);
+        take_keys(fd, tmp, (size_t)got);
     }
 }
 
 int wasi_shim_poll(struct pollfd *fds, nfds_t n, int timeout) {
-    int stdin_at = -1;
+    int tty_at = -1;
     for (nfds_t i = 0; i < n; i++) {
         fds[i].revents = 0;
-        if (fds[i].fd == 0 && (fds[i].events & POLLIN)) stdin_at = (int)i;
+        if (tty_at < 0 && (fds[i].events & POLLIN) && wasi_shim_isatty(fds[i].fd)) tty_at = (int)i;
     }
-    if (stdin_at < 0) return poll(fds, n, timeout);
+    if (tty_at < 0) return poll(fds, n, timeout);
     if (nkeys > 0) {
-        fds[stdin_at].revents = POLLIN;
+        fds[tty_at].revents = POLLIN;
         return 1;
     }
-    int ret = poll(fds, n, timeout);
-    if (ret <= 0 || !(fds[stdin_at].revents & (POLLIN | POLLHUP))) return ret;
-    unsigned char tmp[4096];
-    ssize_t got = read(0, tmp, sizeof(tmp));
-    if (got <= 0) {
-        fds[stdin_at].revents = POLLIN | POLLHUP; /* end of input: Vim's read sees it */
-        return ret;
+    long long deadline = timeout > 0 ? monotonic_ms() + (long long)timeout : 0;
+    for (;;) {
+        int rem = timeout;
+        if (timeout > 0) {
+            long long left = deadline - monotonic_ms();
+            if (left <= 0) return 0;
+            rem = left > 0x7fffffffLL ? 0x7fffffff : (int)left;
+        }
+        int ret = poll(fds, n, rem);
+        if (ret <= 0 || !(fds[tty_at].revents & (POLLIN | POLLHUP))) return ret;
+        unsigned char tmp[4096];
+        ssize_t got = read(fds[tty_at].fd, tmp, sizeof(tmp));
+        if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            fds[tty_at].revents = 0;
+            if (--ret > 0) return ret;
+            if (timeout == 0) return 0;
+            continue;
+        }
+        if (got <= 0) {
+            fds[tty_at].revents = POLLIN | POLLHUP; /* end of input: Vim's read sees it */
+            return ret;
+        }
+        init_size();
+        int resized = take_keys(fds[tty_at].fd, tmp, (size_t)got);
+        if (nkeys > 0) {
+            fds[tty_at].revents = POLLIN;
+            return ret;
+        }
+        /* Only a resize report (or partial): like a tty's SIGWINCH, a real size
+         * change interrupts the wait; a no-op report matching the current size
+         * keeps waiting for the rest of the timeout instead of timing out early. */
+        fds[tty_at].revents = 0;
+        if (--ret > 0) return ret;
+        if (resized) {
+            errno = EINTR;
+            return -1;
+        }
     }
-    init_size();
-    int resized = take_keys(tmp, (size_t)got);
-    if (nkeys > 0) {
-        fds[stdin_at].revents = POLLIN;
-        return ret;
-    }
-    /* Only a resize report: like a tty's SIGWINCH, the wait is interrupted. */
-    fds[stdin_at].revents = 0;
-    if (--ret > 0) return ret;
-    if (resized) {
-        errno = EINTR;
-        return -1;
-    }
-    return 0;
 }
 
 /* --- file permissions ------------------------------------------------- */
@@ -281,7 +330,11 @@ static int read_only_path(const char *path) {
     return strncmp(path, "server-bin", 10) == 0 && (path[10] == '\0' || path[10] == '/');
 }
 
-static void add_perms(struct stat *st, int read_only) {
+static void add_perms(struct stat *st, const char *path) {
+    /* WasiFunctions.writeFilestat sets st_dev = 2 for /server-bin (read-only)
+     * and 1 for computer storage, so this stays accurate for relative paths,
+     * '..' segments and fstat(). */
+    int read_only = (st->st_dev == 2) || (st->st_dev == 0 && path != NULL && read_only_path(path));
     mode_t type = st->st_mode & S_IFMT;
     mode_t perm = (type == S_IFDIR) ? 0755 : 0644;
     if (read_only) perm &= ~0222;
@@ -290,19 +343,19 @@ static void add_perms(struct stat *st, int read_only) {
 
 int wasi_shim_stat(const char *path, struct stat *st) {
     int r = stat(path, st);
-    if (r == 0) add_perms(st, read_only_path(path));
+    if (r == 0) add_perms(st, path);
     return r;
 }
 
 int wasi_shim_lstat(const char *path, struct stat *st) {
     int r = lstat(path, st);
-    if (r == 0) add_perms(st, read_only_path(path));
+    if (r == 0) add_perms(st, path);
     return r;
 }
 
 int wasi_shim_fstat(int fd, struct stat *st) {
     int r = fstat(fd, st);
-    if (r == 0) add_perms(st, 0);
+    if (r == 0) add_perms(st, NULL);
     return r;
 }
 

@@ -59,9 +59,6 @@ fn main() {
         .define("main", "vim_main")
         .opt_level_str("s")
         .warnings(false)
-        .flag_if_supported("-Wno-implicit-function-declaration")
-        .flag_if_supported("-Wno-int-conversion")
-        .flag_if_supported("-Wno-incompatible-pointer-types")
         .flag_if_supported("-fno-strict-aliasing");
     for e in EMULATED {
         b.define(&format!("_WASI_EMULATED_{}", e.to_uppercase().replace('-', "_")), None);

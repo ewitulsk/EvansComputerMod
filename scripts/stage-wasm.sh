@@ -63,12 +63,15 @@ for dir in rust/wasm-programs/*/; do
     fi
 done
 
-# Interactive GUI apps must compile before they run (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES,
-# 2 MiB): a bigger module starts interpreted and stays so while open, too slow to type into.
-for app in browser; do
+# Interactive programs must compile before they run (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES,
+# 4 MiB; browser has a tighter 2 MiB budget): a bigger module starts interpreted and stays
+# so while open, too slow to type into.
+for spec in browser:2097152 vim:4194304; do
+    app="${spec%%:*}"
+    limit="${spec##*:}"
     f="wasm-bin/$app.wasm"
-    if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 2097152 ]; then
-        echo "error: $f is $(wc -c < "$f") bytes, over the 2 MiB compile-before-run limit (see the size profile in rust/Cargo.toml)"
+    if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt "$limit" ]; then
+        echo "error: $f is $(wc -c < "$f") bytes, over its $limit-byte compile-before-run limit (see the size profile in rust/Cargo.toml)"
         exit 1
     fi
 done

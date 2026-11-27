@@ -39,6 +39,8 @@ pub struct RemoteTerm {
     last: u8,
     /// The modes the session's programs switched (alternate screen, Ctrl+C, paste).
     modes: ModeScanner,
+    /// Replies owed to the foreground program (in-band resize reports for ?2048h).
+    replies: Vec<u8>,
 }
 
 impl RemoteTerm {
@@ -49,16 +51,55 @@ impl RemoteTerm {
             height: 24,
             last: 0,
             modes: ModeScanner::default(),
+            replies: Vec::new(),
         }
     }
     fn full(&self) -> bool {
         self.out.len() >= OUT_CAP
+    }
+    fn take_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.replies)
+    }
+    /// A foreground program ended or was killed: reset any terminal modes it
+    /// left on (alternate screen, resize reports, own interrupt, bracketed paste,
+    /// application cursor) so the client terminal recovers cleanly.
+    fn reset_modes(&mut self) {
+        let m = self.modes.modes;
+        self.modes = ModeScanner::default();
+        self.replies.clear();
+        if m.resize_reports {
+            self.push_raw(b"\x1b[?2048l");
+        }
+        if m.own_interrupt {
+            self.push_raw(b"\x1b[?7727l");
+        }
+        if m.bracketed_paste {
+            self.push_raw(b"\x1b[?2004l");
+        }
+        if m.app_cursor {
+            self.push_raw(b"\x1b[?1l");
+        }
+        if m.alternate {
+            self.push_raw(b"\x1b[?1049l\x1b[?25h\x1b[0m");
+        }
+    }
+    fn push_raw(&mut self, data: &[u8]) {
+        for &b in data {
+            if self.out.len() >= OUT_CAP {
+                return;
+            }
+            self.out.push(b);
+            self.last = b;
+        }
     }
 }
 
 impl Term for RemoteTerm {
     fn write(&mut self, data: &[u8]) {
         self.modes.feed(data);
+        if self.modes.take_resize_requested() {
+            self.replies.extend_from_slice(&ecm_vte::resize_report(self.width, self.height));
+        }
         for &b in data {
             if self.out.len() >= OUT_CAP {
                 return;
@@ -185,12 +226,19 @@ impl Sessions {
         match self.map.get_mut(&id) {
             Some(s) => {
                 let width = w.clamp(10, 1000);
-                let changed = width != s.term.width;
+                let height = h.clamp(4, 1000);
+                let width_changed = width != s.term.width;
+                let size_changed = width_changed || height != s.term.height;
                 s.term.width = width;
-                s.term.height = h.clamp(4, 1000);
+                s.term.height = height;
                 // The client's terminal re-wrapped the text: draw the line again in place.
-                if changed && !s.jobs.has_foreground() && !s.one_shot {
+                if width_changed && !s.jobs.has_foreground() && !s.one_shot {
                     s.editor.refresh(&mut TermOut(&mut s.term));
+                }
+                // A program that asked for in-band resize reports (?2048, vim) learns the new size.
+                if size_changed && s.term.modes.modes.resize_reports && s.jobs.has_foreground() {
+                    let report = ecm_vte::resize_report(width, height);
+                    s.jobs.send_input(&report);
                 }
                 true
             }
@@ -253,6 +301,7 @@ impl Sessions {
                 }
                 Piece::Interrupt | Piece::Terminate if s.jobs.has_foreground() => {
                     s.jobs.kill_foreground();
+                    s.term.reset_modes();
                     s.term.println("^C");
                 }
                 Piece::Terminate | Piece::Interrupt => {
@@ -279,7 +328,7 @@ impl Sessions {
                 match ev {
                     JobEvent::Exited(pid) => exited.push(pid),
                     JobEvent::ForegroundDone(status) => {
-                        s.term.modes = ModeScanner::default();
+                        s.term.reset_modes();
                         s.shell.status = status;
                         if status != 0 {
                             s.term
@@ -291,6 +340,10 @@ impl Sessions {
                         prompt(s);
                     }
                 }
+            }
+            let replies = s.term.take_replies();
+            if !replies.is_empty() && s.jobs.has_foreground() {
+                s.jobs.send_input(&replies);
             }
         }
         exited
@@ -452,5 +505,31 @@ mod tests {
         let big = vec![b'x'; OUT_CAP * 2];
         t.write(&big);
         assert!(t.out.len() <= OUT_CAP);
+    }
+
+    #[test]
+    fn remote_term_tracks_resize_requests_and_resets_lingering_modes() {
+        let mut t = RemoteTerm::new();
+        t.width = 100;
+        t.height = 35;
+        t.write(b"\x1b[?1049h\x1b[?2048h\x1b[?7727h");
+        assert_eq!(t.take_replies(), b"\x1b[48;35;100;0;0t");
+        assert!(t.take_replies().is_empty());
+
+        // Killed without cleaning up: reset_modes emits leave-alt-screen and mode resets.
+        t.out.clear();
+        t.reset_modes();
+        let out = String::from_utf8_lossy(&t.out);
+        assert!(out.contains("\x1b[?1049l"), "{out:?}");
+        assert!(out.contains("\x1b[?2048l"), "{out:?}");
+        assert!(out.contains("\x1b[?7727l"), "{out:?}");
+        assert!(!t.modes.modes.alternate && !t.modes.modes.resize_reports && !t.modes.modes.own_interrupt);
+
+        // Clean exit (program turned everything off itself): reset_modes emits nothing.
+        t.out.clear();
+        t.write(b"\x1b[?1049h\x1b[?2048h\x1b[?2048l\x1b[?1049l");
+        t.out.clear();
+        t.reset_modes();
+        assert!(t.out.is_empty());
     }
 }

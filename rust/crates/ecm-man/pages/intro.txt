@@ -21,8 +21,8 @@ GETTING AROUND
     Left and Right move inside the line, Up recalls earlier commands,
     Ctrl+R searches them, and Tab finishes command and file names. The
     mouse wheel and Shift+PageUp scroll back over output. Drag to select
-    text and press Ctrl+C to copy it; Ctrl+V pastes. Ctrl+C with nothing
-    selected stops the running program. All the keys: man keys.
+    text and press Ctrl+C to copy it; Ctrl+Shift+V pastes. Ctrl+C with
+    nothing selected stops the running program. All the keys: man keys.
 
 WHERE NEXT
     man shell (pipes, redirects, jobs), man filesystem (where files

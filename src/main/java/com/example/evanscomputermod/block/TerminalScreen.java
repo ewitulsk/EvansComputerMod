@@ -771,7 +771,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         }
         sendRawKey(256, shift ? modifiers & ~1 : modifiers, true);
         altTyped = false;
-        sendInput("\u001b");
+        // Shift+Esc sends plain Esc to console programs; Ctrl+Esc / Alt+Esc are chords (e.g. desktop launcher).
+        if (shift && !ctrl && !alt) {
+            sendInput("\u001b");
+        }
     }
 
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
@@ -798,8 +801,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             copySelection();
             return true;
         }
-        // Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert.
-        if ((ctrl && keyCode == 86) || (shift && keyCode == 260)) {
+        // Paste: Ctrl+Shift+V, Shift+Insert (plain Ctrl+V goes to console programs such as Vim Visual Block and edit).
+        if ((ctrl && shift && keyCode == 86) || (shift && keyCode == 260)) {
             pasteClipboard();
             return true;
         }
@@ -832,6 +835,18 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         int mod = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
         if (ctrl && !alt && keyCode >= 65 && keyCode <= 90) {
             return String.valueOf((char) (keyCode - 64));
+        }
+        if (ctrl && !alt) {
+            String ctrlPunct = switch (keyCode) {
+                case 50 -> "\u0000"; // Ctrl+2 / Ctrl+@
+                case 91 -> "\u001b"; // Ctrl+[ (Esc)
+                case 92 -> "\u001c"; // Ctrl+\
+                case 93 -> "\u001d"; // Ctrl+] (Vim tag jump)
+                case 54 -> "\u001e"; // Ctrl+6 / Ctrl+^ (Vim alternate buffer)
+                case 45 -> "\u001f"; // Ctrl+- / Ctrl+_
+                default -> null;
+            };
+            if (ctrlPunct != null) return ctrlPunct;
         }
         if (alt && !ctrl && keyCode >= 65 && keyCode <= 90) {
             char c = (char) (shift ? keyCode : keyCode + 32);

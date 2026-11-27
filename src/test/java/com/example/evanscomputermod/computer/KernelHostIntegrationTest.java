@@ -319,6 +319,10 @@ public class KernelHostIntegrationTest {
         computer.sendInput("ihello world\nsecond line\u001b");
         waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("second line")), 30_000, "typed lines");
         Thread.sleep(500); // the Esc timeout passes, as before a player's next key
+        // Moving left with 'h' emits BS (\b) via Vim's T_LE: must not erase characters on screen.
+        computer.sendInput("hhhh");
+        Thread.sleep(200);
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("second line")), 10_000, "h moves left without erasing");
         computer.sendInput("\u0003");
         waitForScreen(s -> s.contains("Type  :qa!  and press <Enter>"), 30_000, "Vim's Ctrl+C message");
         computer.requestConsoleResize(80, 25);
@@ -330,6 +334,14 @@ public class KernelHostIntegrationTest {
         computer.sendInput(":wq\n");
         waitForScreen(s -> s.contains("/ > "), 30_000, "back at the shell");
         assertEquals("hello world\nsecond line\n", Files.readString(dataDir.resolve("notes.txt")));
+
+        // Ctrl+T terminates Vim and immediately leaves the alternate screen back to the shell prompt.
+        computer.sendInput("vim -u NONE -i NONE notes.txt\n");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("hello world")), 30_000, "reopened notes.txt");
+        computer.sendInput("\u0014");
+        waitForScreen(s -> s.contains("^T - Program terminated") && s.contains("/ > "), 30_000, "Ctrl+T restored shell");
+        computer.sendInput("echo alive\n");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("alive")), 15_000, "shell works after Ctrl+T");
     }
 
     /**
