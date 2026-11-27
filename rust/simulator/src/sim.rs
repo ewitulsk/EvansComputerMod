@@ -142,6 +142,14 @@ impl Sim {
                     anyhow::bail!("invalid node file {}:{}", n.name, path);
                 }
             }
+            for (path, program) in &n.programs {
+                let from = cfg.programs.as_ref().map(|d| d.join(format!("{}.wasm", program)));
+                let bytes = from.as_ref().and_then(|f| std::fs::read(f).ok());
+                match bytes {
+                    Some(b) if storage.write(path, &b) >= 0 => {}
+                    _ => anyhow::bail!("node {}: cannot copy program {} to {}", n.name, program, path),
+                }
+            }
             let env = Arc::new(NodeEnv {
                 node: i,
                 name: n.name.clone(),
@@ -152,6 +160,7 @@ impl Sim {
                 ipc: IpcBridge::new(sched.clone()),
                 net: net.clone(),
                 root,
+                bin: cfg.programs.clone(),
                 seed: cfg.seed,
                 log: Arc::new(Mutex::new(Vec::new())),
             });

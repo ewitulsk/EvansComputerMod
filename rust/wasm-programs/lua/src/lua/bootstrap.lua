@@ -16,8 +16,9 @@ for name, src in pairs(sources) do
 end
 
 -- require of the computer's own files, like Python's import: "a.b" is
--- a/b.lua or a/b/init.lua, next to the running script or from the computer's
--- root.
+-- a/b.lua or a/b/init.lua, next to the running script, from the computer's
+-- root, or among the installed libraries (pkg puts library packages in
+-- /lib/lua).
 local function read(path)
   local ok, shell = pcall(require, "shell")
   if ok and type(shell) == "table" then
@@ -39,7 +40,7 @@ end
 
 local function search(name)
   local base = name:gsub("%.", "/")
-  local dirs = { "" }
+  local dirs = { "", "lib/lua/" }
   local d = script_dir()
   if d and d ~= "" then table.insert(dirs, 1, d .. "/") end
   local tried = {}

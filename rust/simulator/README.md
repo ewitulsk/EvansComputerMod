@@ -145,6 +145,8 @@ loss_db = 25
 name = "core"
 [node.files]
 "cored.db" = '''...'''        # the subscriber database (ecm_cell::db format)
+[node.programs]               # built programs copied onto its disk: path = program name
+"src/tool/tool.wasm" = "echo"
 [node.cell]
 role = "core"                 # db = "cored.db", listen = 7700, tunnel_port = 7701, tun = "cell0"
 

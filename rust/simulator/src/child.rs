@@ -99,6 +99,8 @@ pub struct ChildCtx {
     nonblock: std::collections::HashSet<i32>,
     next_fd: i32,
     pub root: PathBuf,
+    /// The built-in programs (`/server-bin` on a computer), read-only.
+    pub bin: Option<PathBuf>,
     pub sched: Arc<Sched>,
     pub ipc: Arc<IpcBridge>,
     pub net: Arc<Mutex<Network>>,
@@ -151,6 +153,8 @@ pub struct NodeEnv {
     pub ipc: Arc<IpcBridge>,
     pub net: Arc<Mutex<Network>>,
     pub root: PathBuf,
+    /// The built-in programs (`/server-bin` on a computer), read-only.
+    pub bin: Option<PathBuf>,
     pub seed: u64,
     pub log: Arc<Mutex<Vec<String>>>,
 }
@@ -220,6 +224,17 @@ fn i32le(v: i32) -> [u8; 4] {
 
 /// Child paths: relative to storage, no traversal, no leading '/'
 /// (`WasiFunctions.resolveChildPath`).
+/// A built-in program's file for a guest path under `server-bin/`, as the Java
+/// host's read resolution finds it (the computer's own files first).
+fn bin_path(bin: Option<&PathBuf>, guest: &str) -> Option<PathBuf> {
+    let rel = guest.trim_start_matches('/').strip_prefix("server-bin/")?;
+    if rel.is_empty() || rel.contains("..") {
+        return None;
+    }
+    let p = safe_join(bin?, rel)?;
+    p.is_file().then_some(p)
+}
+
 fn child_path(root: &std::path::Path, p: &str) -> Option<PathBuf> {
     if p.contains("..") || p.starts_with('/') {
         return None;
@@ -274,6 +289,7 @@ pub fn spawn(env: &Arc<NodeEnv>, path: PathBuf, argv: Vec<String>, envv: Vec<(St
         nonblock: Default::default(),
         next_fd: 4,
         root: env.root.clone(),
+        bin: env.bin.clone(),
         sched: env.sched.clone(),
         ipc: env.ipc.clone(),
         net: env.net.clone(),
@@ -888,6 +904,13 @@ fn register_wasi(l: &mut Linker<ChildCtx>) -> Result<()> {
     })?;
     l.func_wrap(W, "path_filestat_get", |mut c: C<'_>, dirfd: i32, _fl: i32, pp: i32, pl: i32, buf: i32| -> i32 {
         let Some(p) = wasi_path(&c, dirfd, pp, pl) else { return ENOENT };
+        // A built-in program is visible under /server-bin, as on the Java host.
+        let p = if p.exists() {
+            p
+        } else {
+            let guest = p.strip_prefix(&c.data().root).ok().map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+            bin_path(c.data().bin.as_ref(), &guest).unwrap_or(p)
+        };
         match std::fs::metadata(&p) {
             Ok(m) => filestat(&mut c, buf, if m.is_dir() { FT_DIR } else { FT_FILE }, m.len()),
             Err(_) => ENOENT,
@@ -1037,7 +1060,8 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
         std::fs::metadata(p).map(|m| m.len().min(i32::MAX as u64) as i32).unwrap_or(-1)
     })?;
     l.func_wrap(E, "file_exists", |c: C<'_>, pp: i32, pl: i32| -> i32 {
-        rd_str(&c, pp, pl).and_then(|s| child_path(&c.data().root, &s)).is_some_and(|p| p.exists()) as i32
+        let Some(s) = rd_str(&c, pp, pl) else { return 0 };
+        (child_path(&c.data().root, &s).is_some_and(|p| p.exists()) || bin_path(c.data().bin.as_ref(), &s).is_some()) as i32
     })?;
     l.func_wrap(E, "file_delete", |c: C<'_>, pp: i32, pl: i32| -> i32 {
         let Some(p) = rd_str(&c, pp, pl).and_then(|s| child_path(&c.data().root, &s)) else { return 0 };
@@ -1234,6 +1258,25 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
 
     // --- apps: no app manager in the simulator (abi/child-abi.toml [imports.apps]) ---
     l.func_wrap(E, "app_ctl", |_c: C<'_>, _rp: i32, _rl: i32, _bp: i32, _bl: i32, _sp: i32| -> i32 { -1 })?;
+
+    // --- the server's repository link, the secret store and player links: the
+    // simulator has no server behind it (abi/child-abi.toml [imports.repo],
+    // [imports.keystore], [imports.player]). pkg falls back to the network and
+    // to /etc/pkg/account. ---
+    l.func_wrap(E, "repo_supported", |_c: C<'_>| -> i32 { 0 })?;
+    l.func_wrap(E, "repo_begin", |_c: C<'_>, _p: i32, _l: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "repo_poll", |_c: C<'_>, _t: i32, _o: i32, _n: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "repo_read", |_c: C<'_>, _t: i32, _b: i32, _n: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "repo_error", |_c: C<'_>, _t: i32, _b: i32, _n: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "repo_close", |_c: C<'_>, _t: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "keystore_get", |_c: C<'_>, _n: i32, _l: i32, _o: i32, _c2: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_put", |_c: C<'_>, _n: i32, _l: i32, _v: i32, _vl: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_delete", |_c: C<'_>, _n: i32, _l: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_keygen", |_c: C<'_>, _n: i32, _l: i32, _o: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_public", |_c: C<'_>, _n: i32, _l: i32, _o: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_sign", |_c: C<'_>, _n: i32, _l: i32, _m: i32, _ml: i32, _o: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "keystore_confirm", |_c: C<'_>, _t: i32, _l: i32, _ms: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "player_link", |_c: C<'_>, _u: i32, _ul: i32, _t: i32, _tl: i32| -> i32 { -52 })?;
 
     // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
@@ -1539,6 +1582,7 @@ pub fn provided_sigs_static(rt: &Runtime, linker: &Linker<ChildCtx>) -> HashMap<
         nonblock: Default::default(),
         next_fd: 4,
         root: PathBuf::new(),
+        bin: None,
         sched: sched.clone(),
         ipc: IpcBridge::new(sched),
         net: Arc::new(Mutex::new(Network::new(0))),

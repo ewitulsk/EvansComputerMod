@@ -1,0 +1,265 @@
+# Packages of every kind, from an HTTPS repository, through a data-center
+# mirror, onto a client (docs/REPO.md):
+#   origin  builds and signs an app, a library, a program and a source package,
+#           gets a certificate and serves them over HTTPS (pkg serve --tls);
+#   dc      mirrors a chosen part (pkg mirror --only) and re-serves it in plain
+#           HTTP, signatures intact;
+#   client  pins the origin's key, installs from the mirror (the app brings its
+#           library), imports the library from Python, and installs the
+#           rest straight from the origin over HTTPS.
+# Controls: a package the mirror was not given, a library that is still needed,
+# a program from a repository nobody vouches for, a command that would replace
+# one of the system's, and an origin the client has no certificate authority for.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "origin"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+[node.files]
+# The signing key: seed 07..07, public key ea4a6c...d22c.
+"etc/pkg/signing.key" = "0707070707070707070707070707070707070707070707070707070707070707"
+"src/geo/app.toml" = '''
+id = "dev.lab.geo"
+name = "Geometry"
+version = "1.2.0"
+kind = "library"
+provides = ["geo"]
+'''
+"src/geo/python/geo.py" = '''
+def area(w, h):
+    return w * h
+'''
+"src/geo/lua/geo.lua" = '''
+return { area = function(w, h) return w * h end }
+'''
+"src/area/app.toml" = '''
+id = "dev.lab.area"
+name = "Area"
+version = "1.0.0"
+entry = "main.py"
+depends = ["dev.lab.geo >= 1.0.0"]
+'''
+"src/area/main.py" = '''
+import geo
+print("area is", geo.area(6, 7))
+'''
+"src/shout/app.toml" = '''
+id = "dev.lab.shout"
+name = "Shout"
+version = "1.0.0"
+kind = "program"
+bin = ["shout.wasm"]
+'''
+"src/notes/app.toml" = '''
+id = "dev.lab.notes"
+name = "Notes"
+version = "0.1.0"
+kind = "source"
+'''
+"src/notes/blink.py" = '''
+print("blink")
+'''
+"src/fakels/app.toml" = '''
+id = "dev.lab.fakels"
+name = "Fake ls"
+version = "1.0.0"
+kind = "program"
+bin = ["ls.wasm"]
+'''
+# A program is any .wasm: the built echo stands in for one the player compiled.
+[node.programs]
+"src/shout/shout.wasm" = "echo"
+"src/fakels/ls.wasm" = "echo"
+
+[[node]]
+name = "dc"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[node]]
+name = "client"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.3/24"]
+[node.files]
+"usegeo.py" = '''
+import geo
+print("python says", geo.area(2, 3))
+'''
+
+[[link]]
+a = "origin:eth0"
+b = "sw1:eth0"
+
+[[link]]
+a = "dc:eth0"
+b = "sw1:eth1"
+
+[[link]]
+a = "client:eth0"
+b = "sw1:eth2"
+
+[scenario]
+name = "pkg-kinds-mirror-https"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+
+# origin: build and sign the packages.
+send origin "pkg build src/geo /srv/repo --sign /etc/pkg/signing.key"
+expect origin /Built \/srv\/repo\/dev\.lab\.geo-1\.2\.0\.ecmpkg/ within 15s
+expect origin /Signed with key ea4a6c63e29c520a/
+wait_prompt origin
+send origin "pkg build src/area /srv/repo --sign /etc/pkg/signing.key"
+expect origin /Built \/srv\/repo\/dev\.lab\.area-1\.0\.0\.ecmpkg/ within 15s
+wait_prompt origin
+send origin "pkg build src/shout /srv/repo --sign /etc/pkg/signing.key"
+expect origin /Built \/srv\/repo\/dev\.lab\.shout-1\.0\.0\.ecmpkg/ within 15s
+wait_prompt origin
+send origin "pkg build src/notes /srv/repo --sign /etc/pkg/signing.key"
+expect origin /Built \/srv\/repo\/dev\.lab\.notes-0\.1\.0\.ecmpkg/ within 15s
+wait_prompt origin
+send origin "pkg build src/fakels /srv/repo --sign /etc/pkg/signing.key"
+expect origin /Built \/srv\/repo\/dev\.lab\.fakels/ within 15s
+wait_prompt origin
+
+# origin: a certificate from its own authority, then HTTPS.
+send origin "pkg serve /srv/repo --tls"
+expect origin /get a certificate first/ within 10s
+wait_prompt origin
+send origin "cad init Lab Authority"
+expect origin /This computer is the authority/ within 10s
+wait_prompt origin
+send origin "cad &"
+expect origin /listening on port 8555/ within 10s
+send origin "cert request 10.0.0.1 --ca 10.0.0.1"
+expect origin /Certificate installed/ within 30s
+wait_prompt origin within 10s
+send origin "pkg serve /srv/repo --tls &"
+expect origin /Serving 5 packages from \/srv\/repo on port 8443 \(HTTPS\)/ within 15s
+
+# dc: trust the authority, mirror the app (its library comes along), re-serve.
+send dc "pkg repo add up https://10.0.0.1:8443/ --key ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+expect dc /index not fetched yet: .*trusts no in-game authority/ within 15s
+wait_prompt dc within 10s
+send dc "pkg online up"
+expect dc /trusts no in-game authority/ within 15s
+wait_prompt dc within 10s
+send dc "cert trust 10.0.0.1"
+expect dc /Now trusting "Lab Authority"/ within 15s
+wait_prompt dc
+send dc "pkg online up"
+expect dc /up  https:\/\/10\.0\.0\.1:8443\/  online/ within 15s
+wait_prompt dc within 10s
+send dc "pkg mirror up /srv/mirror --only dev.lab.area"
+expect dc /copied dev\.lab\.area-1\.0\.0\.ecmpkg/ within 30s
+expect dc /copied dev\.lab\.geo-1\.2\.0\.ecmpkg/ within 30s
+expect dc /2 copied, 0 already there/ within 15s
+wait_prompt dc within 10s
+send dc "pkg mirror up /srv/mirror --only dev.lab.area"
+expect dc /0 copied, 2 already there/ within 30s
+wait_prompt dc within 10s
+send dc "pkg serve /srv/mirror 8080 &"
+expect dc /Serving 2 packages from \/srv\/mirror on port 8080\./ within 15s
+expect dc /dev\.lab\.area 1\.0\.0 \(signed\)/
+
+# client: the mirror, with the origin's key pinned.
+send client "pkg repo add dc http://10.0.0.2:8080/ --key ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+expect client /Added dc .*: 2 packages/ within 15s
+wait_prompt client within 10s
+send client "pkg search"
+expect client /dev\.lab\.geo 1\.2\.0  Geometry  \[library, dc, signed\]/ within 15s
+expect client /needs: dev\.lab\.geo >= 1\.0\.0/
+wait_prompt client within 10s
+# Control: the mirror was not given this one.
+send client "pkg install dev.lab.shout"
+expect client /dev\.lab\.shout is not in any repository/ within 15s
+wait_prompt client within 10s
+send client "pkg install dev.lab.area"
+expect client /Installed dev\.lab\.geo 1\.2\.0 \(needed by dev\.lab\.area\)/ within 30s
+expect client /Installed Area 1\.0\.0 \(dev\.lab\.area\) - verified publisher/ within 15s
+wait_prompt client within 10s
+send client "pkg list"
+expect client /dev\.lab\.geo 1\.2\.0  Geometry  \[library\]/ within 10s
+wait_prompt client
+send client "python usegeo.py"
+expect client /^python says 6$/ within 60s
+wait_prompt client within 30s
+# (The simulator cannot load lua.wasm; `cargo test -p lua` covers require of
+# /lib/lua, and the repo_kinds in-game scenario runs both interpreters.)
+send client "python /apps/dev.lab.area/main.py"
+expect client /^area is 42$/ within 60s
+wait_prompt client within 30s
+# Control: the library is still needed.
+send client "pkg remove dev.lab.geo"
+expect client /dev\.lab\.geo is needed by dev\.lab\.area; remove that first/ within 10s
+wait_prompt client
+send client "pkg remove dev.lab.area"
+expect client /Removed dev\.lab\.area/ within 10s
+wait_prompt client
+send client "pkg autoremove"
+expect client /Removed dev\.lab\.geo \(nothing needs it any more\)/ within 10s
+wait_prompt client
+send client "python usegeo.py"
+expect client /No module named 'geo'|ModuleNotFoundError|ImportError/ within 60s
+wait_prompt client within 30s
+
+# client: the rest, straight from the origin over HTTPS.
+# Control: no authority trusted yet.
+send client "pkg repo add up https://10.0.0.1:8443/ --key ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+expect client /trusts no in-game authority/ within 15s
+wait_prompt client within 10s
+send client "cert trust 10.0.0.1"
+expect client /Now trusting/ within 15s
+wait_prompt client
+send client "pkg update"
+expect client /up: 5 packages/ within 30s
+wait_prompt client within 15s
+send client "pkg install dev.lab.shout"
+expect client /Note: dev\.lab\.shout is a program\. Unlike an app it is not sandboxed/ within 15s
+expect client /New commands: shout/ within 30s
+wait_prompt client within 10s
+send client "shout it-works"
+expect client /^it-works$/ within 15s
+wait_prompt client
+# Control: a package may not take a system command's name.
+send client "pkg install dev.lab.fakels"
+expect client /wants to install the command 'ls', which is one of the system's own/ within 30s
+wait_prompt client within 10s
+send client "pkg install dev.lab.notes"
+expect client /Its files are in \/home\/src\/dev\.lab\.notes\// within 30s
+wait_prompt client within 10s
+send client "python /home/src/dev.lab.notes/blink.py"
+expect client /^blink$/ within 60s
+wait_prompt client within 30s
+send client "pkg remove dev.lab.shout"
+expect client /Removed dev\.lab\.shout/ within 10s
+wait_prompt client
+send client "shout gone"
+expect client /not found|Unknown command|No such/i within 10s
+wait_prompt client
+# Control: the same program from a repository with no pinned key is refused.
+send client "pkg repo remove up"
+wait_prompt client
+send client "pkg repo add up https://10.0.0.1:8443/"
+expect client /Added up/ within 15s
+wait_prompt client within 10s
+send client "pkg install dev.lab.shout"
+expect client /whole computer in reach/ within 30s
+expect client /--unverified/
+wait_prompt client within 10s
+send client "pkg install dev.lab.shout --unverified"
+expect client /New commands: shout/ within 30s
+'''
