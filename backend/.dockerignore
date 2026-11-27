@@ -1,0 +1,14 @@
+# Not used by the image build: the build context is the REPOSITORY ROOT
+# (`docker build -f backend/Dockerfile .`), because the backend depends on
+# rust/wasm-programs/pkg by path, and Docker reads the .dockerignore at the
+# root of the context. The root .dockerignore must let these paths through:
+#
+#   backend  rust/Cargo.toml  rust/crates  rust/wasm-programs/pkg
+#
+# and should keep out **/target, **/.env and SQLite files. This file only
+# matters if someone builds with backend/ as the context, which cannot work.
+target
+.env
+*.db
+*.db-shm
+*.db-wal

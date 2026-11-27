@@ -1,0 +1,114 @@
+# LOCAL development stack: http://localhost:8080
+#
+#   docker compose -f backend/docker-compose.yml up --build
+#
+# auth-api and repo-api (one image, built from the repository root), MinIO as
+# the S3 store, and Caddy routing as docs/REPO_API.md says. Mails are printed
+# to the auth-api log (EMAIL_PROVIDER=log): `docker compose logs auth-api`.
+#
+# Every secret below is a throwaway for this stack. Do not reuse them.
+
+x-backend: &backend
+  image: ecm-backend:local
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  restart: unless-stopped
+
+services:
+  auth-api:
+    <<: *backend
+    command: ["auth-api"]
+    environment:
+      PUBLIC_ORIGIN: http://localhost:8080
+      LISTEN: 0.0.0.0:8081
+      DATABASE_PATH: /data/auth.db
+      INTERNAL_SECRET: local-development-internal-secret
+      EMAIL_PROVIDER: log
+      EMAIL_FROM: ECM packages <noreply@localhost>
+      ADMIN_EMAILS: admin@example.com
+      TRUST_PROXY: "true"
+    volumes:
+      - auth-data:/data
+    healthcheck:
+      test: ["CMD", "auth-api", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
+  repo-api:
+    <<: *backend
+    command: ["repo-api"]
+    environment:
+      PUBLIC_ORIGIN: http://localhost:8080
+      LISTEN: 0.0.0.0:8082
+      DATABASE_PATH: /data/repo.db
+      INTERNAL_SECRET: local-development-internal-secret
+      AUTH_INTERNAL_URL: http://auth-api:8081
+      STORAGE: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: ecm-packages
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_PATH_STYLE: auto
+      # A throwaway key for local use; make a real one with `repo-api admin keygen`.
+      REPO_SIGNING_KEY: "0101010101010101010101010101010101010101010101010101010101010101"
+      TRUST_PROXY: "true"
+    volumes:
+      - repo-data:/data
+    depends_on:
+      auth-api:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "repo-api", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
+  minio:
+    # MinIO no longer publishes images on Docker Hub or quay.io; this is a community
+    # build of the same server (it also carries the `mc` client).
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "127.0.0.1:9001:9001" # the MinIO console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Creates the bucket, then exits.
+  minio-init:
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/ecm-packages
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+    depends_on:
+      auth-api:
+        condition: service_healthy
+      repo-api:
+        condition: service_healthy
+
+volumes:
+  auth-data:
+  repo-data:
+  minio-data:
