@@ -1,154 +1,126 @@
-use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM};
+use curl::{error_message, parse};
+use ecm_http::{Check, Transfer};
+use std::io::Write;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: curl [-v] [-X METHOD] [-d DATA] [-H HEADER] <url>");
-        std::process::exit(1);
-    }
-
-    let mut verbose = false;
-    let mut method = "GET".to_string();
-    let mut body: Option<String> = None;
-    let mut extra_headers: Vec<(String, String)> = Vec::new();
-    let mut url: Option<String> = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-v" => verbose = true,
-            "-X" => { i += 1; if i < args.len() { method = args[i].clone(); } }
-            "-d" => {
-                i += 1;
-                if i < args.len() {
-                    body = Some(args[i].clone());
-                    if method == "GET" { method = "POST".to_string(); }
-                }
-            }
-            "-H" => {
-                i += 1;
-                if i < args.len() {
-                    if let Some(colon) = args[i].find(':') {
-                        let key = args[i][..colon].trim().to_string();
-                        let value = args[i][colon + 1..].trim().to_string();
-                        extra_headers.push((key, value));
-                    }
-                }
-            }
-            _ => { url = Some(args[i].clone()); }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let o = match parse(&args) {
+        Ok(o) => o,
+        Err(m) => {
+            eprintln!("{m}");
+            std::process::exit(2);
         }
-        i += 1;
-    }
-
-    let url = match url {
-        Some(u) => u,
-        None => { eprintln!("No URL specified"); std::process::exit(1); }
     };
-
-    let (host, port, path) = match parse_url(&url) {
-        Some(v) => v,
-        None => { eprintln!("Invalid URL"); std::process::exit(1); }
+    let req = match o.request() {
+        Ok(r) => r,
+        Err(m) => {
+            eprintln!("{m}");
+            std::process::exit(3);
+        }
     };
-
-    // Resolve hostname via getaddrinfo
-    let mut addr = SockAddrIn::default();
-    match socket::resolve(&host) {
-        Ok(ip) => addr.sin_addr = ip,
-        Err(e) => {
-            eprintln!("curl: Could not resolve host: {} ({})", host, e.describe());
-            std::process::exit(1);
+    let mut client = ecm_http::sys::client("curl/ecm");
+    if o.insecure {
+        client.check = Check::None;
+    }
+    if o.verbose {
+        println!("> {} {} HTTP/1.1", req.method, req.url.target);
+        println!("> Host: {}", req.url.authority());
+        for (k, v) in &req.headers {
+            println!("> {k}: {v}");
         }
-    }
-    addr.sin_family = socket::AF_INET as u16;
-    // Set the port
-    addr.sin_port = port.to_be();
-
-    // Create TCP socket
-    let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
-    if fd < 0 {
-        eprintln!("curl: Failed to create socket");
-        std::process::exit(1);
-    }
-
-    // Connect
-    if socket::connect(fd, &addr) != 0 {
-        eprintln!("curl: Failed to connect to {}:{}", host, port);
-        socket::close(fd);
-        std::process::exit(1);
-    }
-
-    // Build HTTP request
-    let mut request = format!("{} {} HTTP/1.0\r\nHost: {}\r\n", method, path, host);
-    for (k, v) in &extra_headers {
-        request.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    if let Some(ref b) = body {
-        request.push_str(&format!("Content-Length: {}\r\n", b.len()));
-        if !extra_headers.iter().any(|(k, _)| k.to_lowercase() == "content-type") {
-            request.push_str("Content-Type: application/x-www-form-urlencoded\r\n");
-        }
-    }
-    request.push_str("Connection: close\r\n\r\n");
-    if let Some(ref b) = body {
-        request.push_str(b);
-    }
-
-    if verbose {
-        println!("> {} {} HTTP/1.0", method, path);
-        println!("> Host: {}:{}", host, port);
         println!(">");
     }
-
-    // Send
-    socket::send(fd, request.as_bytes(), 0);
-
-    // Receive
-    let mut response_data = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let n = socket::recv(fd, &mut buf, 0);
-        if n <= 0 { break; }
-        response_data.extend_from_slice(&buf[..n as usize]);
-    }
-    socket::close(fd);
-
-    // Parse response
-    let response_str = String::from_utf8_lossy(&response_data);
-    if let Some(header_end) = response_str.find("\r\n\r\n") {
-        let headers = &response_str[..header_end];
-        let body_str = &response_str[header_end + 4..];
-
-        if verbose {
-            for line in headers.lines() {
-                println!("< {}", line);
+    // A download goes to a temporary name first, so a failed one leaves no half file.
+    let part = o.output.as_ref().map(|f| format!("{f}.part"));
+    let mut file = match &part {
+        Some(p) => match std::fs::File::create(p) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("curl: cannot write {}: {e}", o.output.as_deref().unwrap_or(""));
+                std::process::exit(23);
             }
-            println!("<");
+        },
+        None => None,
+    };
+    let show = !o.silent && o.output.is_some();
+    let mut last = 0u64;
+    let mut progress = |done: u64, total: Option<u64>| {
+        if show && (done - last >= 64 * 1024 || Some(done) == total) {
+            last = done;
+            match total {
+                Some(t) if t > 0 => println!("  {} of {} KiB ({}%)", done / 1024, t.div_ceil(1024), done * 100 / t),
+                _ => println!("  {} KiB", done / 1024),
+            }
         }
-
-        print!("{}", body_str);
-        if !body_str.ends_with('\n') {
-            println!();
+    };
+    let result = {
+        let mut t = Transfer { sink: file.as_mut().map(|f| f as &mut dyn Write), progress: Some(&mut progress), max_body: if o.output.is_some() { 256 << 20 } else { ecm_http::DEFAULT_MAX_BODY } };
+        if o.follow {
+            client.send(&req, &mut t)
+        } else {
+            client.exchange(&req, &mut t)
         }
-    } else {
-        print!("{}", response_str);
+    };
+    drop(file);
+    let r = match result {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(p) = &part {
+                let _ = std::fs::remove_file(p);
+            }
+            if !o.silent {
+                eprintln!("{}", error_message(&e, &req.url));
+            }
+            std::process::exit(match e {
+                ecm_http::HttpError::Resolve(..) => 6,
+                ecm_http::HttpError::Connect(_) | ecm_http::HttpError::NoNetwork => 7,
+                ecm_http::HttpError::Tls(_) => 60,
+                _ => 1,
+            });
+        }
+    };
+    if o.verbose || o.head {
+        let mark = if o.verbose { "< " } else { "" };
+        if let (true, Some(v)) = (o.verbose, r.tls) {
+            println!("* {v} connection to {}", r.url.host);
+        }
+        println!("{mark}{} {} {}", r.version, r.status, r.reason);
+        for (k, v) in &r.headers {
+            println!("{mark}{k}: {v}");
+        }
+        println!("{}", mark.trim_end());
     }
-}
-
-fn parse_url(url: &str) -> Option<(String, u16, String)> {
-    let url = url.strip_prefix("http://").unwrap_or(url);
-    let (host_port, path) = if let Some(slash) = url.find('/') {
-        (&url[..slash], format!("/{}", &url[slash + 1..]))
-    } else {
-        (url, "/".to_string())
-    };
-
-    let (host, port) = if let Some(colon) = host_port.find(':') {
-        let h = &host_port[..colon];
-        let p: u16 = host_port[colon + 1..].parse().ok()?;
-        (h.to_string(), p)
-    } else {
-        (host_port.to_string(), 80)
-    };
-
-    Some((host, port, path))
+    let failed = o.fail && r.status >= 400;
+    if failed {
+        if !o.silent {
+            eprintln!("curl: The requested URL returned error: {}", r.status);
+        }
+        if let Some(p) = &part {
+            let _ = std::fs::remove_file(p);
+        }
+        std::process::exit(22);
+    }
+    match (&o.output, &part) {
+        (Some(out), Some(p)) if r.ok() => {
+            if let Err(e) = std::fs::rename(p, out) {
+                eprintln!("curl: cannot write {out}: {e}");
+                std::process::exit(23);
+            }
+            if !o.silent {
+                println!("Saved {out} ({} bytes)", r.length);
+            }
+        }
+        (Some(_), Some(p)) => {
+            let _ = std::fs::remove_file(p);
+            eprintln!("curl: HTTP {} {}; nothing saved", r.status, r.reason);
+            std::process::exit(22);
+        }
+        _ => {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&r.body);
+            if !r.body.is_empty() && !r.body.ends_with(b"\n") {
+                let _ = out.write_all(b"\n");
+            }
+        }
+    }
 }

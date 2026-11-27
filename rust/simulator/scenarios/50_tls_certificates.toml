@@ -1,0 +1,128 @@
+# TLS end to end with an in-game certificate authority (docs/TLS.md):
+# ca runs cad, web gets a certificate with cert and serves HTTPS with httpd,
+# client reaches it with curl once it trusts the authority.
+# Controls: a client that trusts no authority, a name the certificate is not
+# for, a certificate from an authority the client does not trust, and a
+# request for a name another computer answers at.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "ca"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "web"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[node]]
+name = "client"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.3/24"]
+
+[[link]]
+a = "ca:eth0"
+b = "sw1:eth0"
+
+[[link]]
+a = "web:eth0"
+b = "sw1:eth1"
+
+[[link]]
+a = "client:eth0"
+b = "sw1:eth2"
+
+[scenario]
+name = "tls-certificates"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+
+# The authority.
+send ca "cad"
+expect ca /not an authority yet/ within 10s
+wait_prompt ca
+send ca "cad init Lab Authority"
+expect ca /This computer is the authority "Lab Authority"/ within 10s
+wait_prompt ca
+send ca "cad &"
+expect ca /listening on port 8555/ within 10s
+
+# The web server: no certificate yet, so httpd --tls says how to get one.
+send web "echo hello-over-tls > hello.txt"
+wait_prompt web
+send web "httpd 443 --tls"
+expect web /get a certificate first: cert request/ within 10s
+wait_prompt web
+send web "cert show"
+expect web /no certificate in/ within 10s
+wait_prompt web
+# Control: a name another computer answers at is refused by the authority.
+send web "cert request 10.0.0.3 --ca 10.0.0.1"
+expect web /the authority refused: 10\.0\.0\.3/ within 30s
+wait_prompt web within 10s
+send web "cert trust 10.0.0.1"
+expect web /Now trusting "Lab Authority"/ within 15s
+wait_prompt web
+send web "cert request 10.0.0.2"
+expect web /Certificate installed/ within 30s
+expect web /signed by Lab Authority/
+wait_prompt web within 10s
+expect_any ca /signed 10\.0\.0\.2 until/
+send web "cert show"
+expect web /90 days left|89 days left/ within 10s
+wait_prompt web
+send web "cert renew"
+expect web /nothing to do/ within 10s
+wait_prompt web
+send web "httpd 443 --tls &"
+expect web /HTTPS server listening on port 443/ within 10s
+
+# Control: the client trusts no authority yet.
+send client "curl https://10.0.0.2/hello.txt"
+expect client /trusts no in-game authority/ within 15s
+wait_prompt client within 10s
+send client "cert authorities"
+expect client /trusts no in-game authority/ within 10s
+wait_prompt client
+# -k encrypts without checking.
+send client "curl -k https://10.0.0.2/hello.txt"
+expect client /^hello-over-tls$/ within 15s
+wait_prompt client within 10s
+send client "cert trust 10.0.0.1"
+expect client /Now trusting "Lab Authority"/ within 15s
+wait_prompt client
+send client "curl -v https://10.0.0.2/hello.txt"
+expect client /TLSv1\.3 connection to 10\.0\.0\.2/ within 15s
+expect client /^hello-over-tls$/ within 15s
+wait_prompt client within 10s
+expect_any web /GET \/hello\.txt/
+# Control: the certificate is for 10.0.0.2, not for a name pointing at it.
+send client "echo 10.0.0.2 shop.lab >> /etc/hosts"
+wait_prompt client
+send client "curl https://shop.lab/hello.txt"
+expect client /certificate is for another name/ within 15s
+wait_prompt client within 10s
+# Control: plain HTTP to the TLS port is not an answer.
+send client "curl http://10.0.0.2:443/hello.txt"
+wait_prompt client within 15s
+# Control: stop trusting the authority and the same server is refused again.
+send client "cert untrust Lab Authority"
+expect client /No longer trusting "Lab Authority"/ within 10s
+wait_prompt client
+send client "curl https://10.0.0.2/hello.txt"
+expect client /trusts no in-game authority/ within 15s
+'''

@@ -1,13 +1,18 @@
 //! `httpd` — an HTTP/1.0 server: static files, virtual hosts and CGI scripts
 //! (see lib.rs for the command line and the CGI protocol).
 //!
-//!   httpd <port> [dir] [--cgi <prefix>]
+//!   httpd <port> [dir] [--cgi <prefix>] [--tls | --cert <file> --key <file>]
 
 use ecm_host_abi::ipc;
 use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR};
 use httpd::{cgi_command, cgi_input, cgi_response, content_type, local, parse_args, response, site_root, Config, Request, CGI_TIMEOUT_MS};
+use ecm_http::sys::Socket;
 use std::fs;
+use std::io::{Read, Write};
 use std::time::{Duration, Instant};
+
+/// One client: the socket, or TLS over it.
+type Conn = Box<dyn ecm_http::Stream>;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -15,7 +20,8 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("httpd: {e}");
-            eprintln!("Usage: httpd <port> [dir] [--cgi <prefix>]   (dir: the folder to serve, default the computer's root)");
+            eprintln!("Usage: httpd <port> [dir] [--cgi <prefix>] [--tls | --cert <file> --key <file>]");
+            eprintln!("  dir: the folder to serve (default the computer's root); --tls: HTTPS with this computer's certificate (see: man cert)");
             std::process::exit(1);
         }
     };
@@ -24,6 +30,17 @@ fn main() {
         std::process::exit(1);
     }
     let port = cfg.port;
+    let identity = match &cfg.tls {
+        Some((cert, key)) => match ecm_tls::Identity::load(cert, key) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                eprintln!("httpd: {e}");
+                eprintln!("httpd: get a certificate first: cert request <this computer's name>");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
 
     let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
     if fd < 0 {
@@ -44,7 +61,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut banner = format!("HTTP server listening on port {port}");
+    let mut banner = format!("{} server listening on port {port}", if identity.is_some() { "HTTPS" } else { "HTTP" });
     if !cfg.root.is_empty() {
         banner.push_str(&format!(", serving {}", cfg.root));
     }
@@ -63,22 +80,34 @@ fn main() {
             eprintln!("Accept error");
             break;
         }
-        handle_connection(&cfg, conn, &peer.to_string());
+        // A client that connects and says nothing may hold the server for ten seconds, no longer.
+        let sock = Socket::from_fd(conn, Duration::from_secs(10));
+        let stream: Conn = match &identity {
+            Some(id) => match id.accept(sock) {
+                Ok(t) => Box::new(t),
+                Err(e) => {
+                    println!("{}: {e}", peer.to_string());
+                    continue;
+                }
+            },
+            None => Box::new(sock),
+        };
+        handle_connection(&cfg, stream, &peer.to_string());
     }
 
     socket::close(fd);
     println!("HTTP server stopped.");
 }
 
-fn read_request(conn: i32) -> Vec<u8> {
+fn read_request(conn: &mut Conn) -> Vec<u8> {
     let mut data = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
-        let n = socket::recv(conn, &mut buf, 0);
-        if n <= 0 {
+        let n = conn.read(&mut buf).unwrap_or(0);
+        if n == 0 {
             break;
         }
-        data.extend_from_slice(&buf[..n as usize]);
+        data.extend_from_slice(&buf[..n]);
         if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
             let head = String::from_utf8_lossy(&data[..end]).to_ascii_lowercase();
             let length = head
@@ -97,27 +126,20 @@ fn read_request(conn: i32) -> Vec<u8> {
     data
 }
 
-fn send(conn: i32, bytes: &[u8]) {
-    let mut rest = bytes;
-    while !rest.is_empty() {
-        let n = socket::send(conn, &rest[..rest.len().min(4096)], 0);
-        if n <= 0 {
-            break;
-        }
-        rest = &rest[n as usize..];
-    }
+/// Send the answer and hang up (dropping the connection closes its socket).
+fn send(mut conn: Conn, bytes: &[u8]) {
+    let _ = conn.write_all(bytes);
+    let _ = conn.flush();
     std::thread::sleep(Duration::from_millis(50));
-    socket::close(conn);
 }
 
-fn text(conn: i32, status: u16, reason: &str, body: &str) {
+fn text(conn: Conn, status: u16, reason: &str, body: &str) {
     send(conn, &response(status, reason, &[("Content-Type".into(), "text/plain".into())], body.as_bytes()));
 }
 
-fn handle_connection(cfg: &Config, conn: i32, peer: &str) {
-    let raw = read_request(conn);
+fn handle_connection(cfg: &Config, mut conn: Conn, peer: &str) {
+    let raw = read_request(&mut conn);
     if raw.is_empty() {
-        socket::close(conn);
         return;
     }
     let Some(req) = Request::parse(&raw) else {
@@ -140,7 +162,7 @@ fn handle_connection(cfg: &Config, conn: i32, peer: &str) {
     }
 }
 
-fn get(conn: i32, root: &str, path: &str) {
+fn get(conn: Conn, root: &str, path: &str) {
     let Some(file) = local(root, path) else {
         text(conn, 404, "Not Found", "File not found");
         return;
@@ -176,7 +198,7 @@ fn get(conn: i32, root: &str, path: &str) {
     }
 }
 
-fn post(conn: i32, root: &str, path: &str, body: &[u8]) {
+fn post(conn: Conn, root: &str, path: &str, body: &[u8]) {
     let Some(file) = local(root, path).filter(|f| !f.ends_with('/') && f != root) else {
         text(conn, 400, "Bad Request", "No filename specified");
         return;
@@ -188,7 +210,7 @@ fn post(conn: i32, root: &str, path: &str, body: &[u8]) {
 }
 
 /// Run the CGI script the request names and send what it printed.
-fn run_cgi(conn: i32, root: &str, req: &Request, peer: &str) {
+fn run_cgi(conn: Conn, root: &str, req: &Request, peer: &str) {
     let Some(script) = local(root, req.path()) else {
         text(conn, 404, "Not Found", "File not found");
         return;

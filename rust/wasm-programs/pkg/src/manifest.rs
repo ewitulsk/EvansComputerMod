@@ -31,10 +31,126 @@ pub const PERMISSIONS: [&str; 14] = [
     "phone",
     "sms",
 ];
-const KNOWN_KEYS: [&str; 12] = [
+const KNOWN_KEYS: [&str; 16] = [
     "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background", "open_with",
-    "hotkeys", "icon",
+    "hotkeys", "icon", "kind", "bin", "provides", "depends",
 ];
+
+/// What a package is (`kind`, default `app`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A launchable app in `/apps/<id>/` (needs `entry`).
+    App,
+    /// Commands for the shell: each `bin` file is installed as `/bin/<name>.wasm`.
+    Program,
+    /// Python and Lua modules: `python/` and `lua/` are installed into `/lib/python` and `/lib/lua`.
+    Library,
+    /// Plain code and files, unpacked into `/home/src/<id>/`.
+    Source,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 4] = [Kind::App, Kind::Program, Kind::Library, Kind::Source];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::App => "app",
+            Kind::Program => "program",
+            Kind::Library => "library",
+            Kind::Source => "source",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Kind> {
+        Kind::ALL.into_iter().find(|k| k.name() == s)
+    }
+
+    /// Runs with the whole computer in reach (no app sandbox): the store warns before installing.
+    pub fn unconfined(self) -> bool {
+        matches!(self, Kind::Program | Kind::Library)
+    }
+}
+
+/// How a dependency constrains the version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepOp {
+    Any,
+    AtLeast,
+    Exactly,
+}
+
+/// One `depends` entry: `id`, `id >= 1.2.0` or `id = 1.2.0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dep {
+    pub id: String,
+    pub op: DepOp,
+    /// Empty for [`DepOp::Any`].
+    pub version: String,
+}
+
+impl Dep {
+    pub fn parse(s: &str) -> Option<Dep> {
+        let mut parts = s.split_whitespace();
+        let id = parts.next()?;
+        if !valid_id(id) {
+            return None;
+        }
+        let dep = match (parts.next(), parts.next(), parts.next()) {
+            (None, _, _) => Dep { id: id.into(), op: DepOp::Any, version: String::new() },
+            (Some(op), Some(v), None) if valid_version(v) => {
+                let op = match op {
+                    ">=" => DepOp::AtLeast,
+                    "=" => DepOp::Exactly,
+                    _ => return None,
+                };
+                Dep { id: id.into(), op, version: v.into() }
+            }
+            _ => return None,
+        };
+        Some(dep)
+    }
+
+    /// Does `version` satisfy this dependency?
+    pub fn accepts(&self, version: &str) -> bool {
+        match self.op {
+            DepOp::Any => true,
+            DepOp::AtLeast => compare_versions(version, &self.version).is_ge(),
+            DepOp::Exactly => compare_versions(version, &self.version).is_eq(),
+        }
+    }
+}
+
+impl std::fmt::Display for Dep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.op {
+            DepOp::Any => write!(f, "{}", self.id),
+            DepOp::AtLeast => write!(f, "{} >= {}", self.id, self.version),
+            DepOp::Exactly => write!(f, "{} = {}", self.id, self.version),
+        }
+    }
+}
+
+/// A shell command name: 1..32 of `[a-z0-9_-]`, starting with a letter or digit.
+pub fn valid_command(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+        && name.as_bytes()[0].is_ascii_alphanumeric()
+}
+
+/// The command a `bin` file installs: its file name without `.wasm`.
+pub fn command_of(bin: &str) -> &str {
+    let file = bin.rsplit('/').next().unwrap_or(bin);
+    file.strip_suffix(".wasm").unwrap_or(file)
+}
+
+/// A module name both Python and Lua can import: an identifier of at most 64 characters.
+pub fn valid_module(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        && !name.as_bytes()[0].is_ascii_digit()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hotkey {
@@ -58,7 +174,33 @@ pub struct Manifest {
     pub open_with: Vec<String>,
     pub hotkeys: Vec<Hotkey>,
     pub icon: String,
+    pub kind: Kind,
+    /// Programs: the `.wasm` files that become shell commands.
+    pub bin: Vec<String>,
+    /// Libraries: the top-level module names under `python/` and `lua/`.
+    pub provides: Vec<String>,
+    /// Packages that must be installed first.
+    pub depends: Vec<Dep>,
 }
+
+impl Manifest {
+    /// The shell commands a program package installs.
+    pub fn commands(&self) -> Vec<&str> {
+        self.bin.iter().map(|b| command_of(b)).collect()
+    }
+
+    /// The package format level a client must understand (1: apps only, 2: kinds and dependencies).
+    pub fn level(&self) -> u32 {
+        if self.kind != Kind::App || !self.depends.is_empty() || self.entry.ends_with(".lua") {
+            2
+        } else {
+            1
+        }
+    }
+}
+
+/// The highest [`Manifest::level`] this client installs.
+pub const FORMAT_LEVEL: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManifestError {
@@ -230,13 +372,90 @@ pub fn from_table(t: &Table) -> Result<Manifest, ManifestError> {
     if !valid_version(&version) {
         return err("version", format!("'{}' is not MAJOR.MINOR.PATCH", version));
     }
+    let kind = match get("kind") {
+        Some(v) => {
+            let s = text("kind", v, 16, true)?;
+            match Kind::parse(&s) {
+                Some(k) => k,
+                None => return err("kind", format!("unknown kind '{}' (app, program, library, source)", s)),
+            }
+        }
+        None => Kind::App,
+    };
     let entry = match get("entry") {
         Some(v) => text("entry", v, 255, true)?,
-        None => return err("entry", "missing"),
+        None if kind == Kind::App => return err("entry", "missing"),
+        None => String::new(),
     };
-    if !safe_rel_path(&entry) || !(entry.ends_with(".wasm") || entry.ends_with(".py")) {
-        return err("entry", format!("'{}' must be a relative path to a .wasm or .py file", entry));
+    if !entry.is_empty() {
+        if kind != Kind::App {
+            return err("entry", format!("a {} has no entry", kind.name()));
+        }
+        if !safe_rel_path(&entry) || !(entry.ends_with(".wasm") || entry.ends_with(".py") || entry.ends_with(".lua")) {
+            return err("entry", format!("'{}' must be a relative path to a .wasm, .py or .lua file", entry));
+        }
     }
+    let bin = match get("bin") {
+        Some(v) => {
+            let b = str_list("bin", v)?;
+            if kind != Kind::Program {
+                return err("bin", format!("only a program has bin, not a {}", kind.name()));
+            }
+            for f in &b {
+                if !safe_rel_path(f) || !f.ends_with(".wasm") || !valid_command(command_of(f)) {
+                    return err("bin", format!("'{}' must be a relative path to a .wasm file named like a command", f));
+                }
+            }
+            for (i, f) in b.iter().enumerate() {
+                if b[..i].iter().any(|o| command_of(o) == command_of(f)) {
+                    return err("bin", format!("the command '{}' is listed twice", command_of(f)));
+                }
+            }
+            b
+        }
+        None => Vec::new(),
+    };
+    if kind == Kind::Program && bin.is_empty() {
+        return err("bin", "a program must list at least one .wasm file");
+    }
+    let provides = match get("provides") {
+        Some(v) => {
+            let p = str_list("provides", v)?;
+            if kind != Kind::Library {
+                return err("provides", format!("only a library has provides, not a {}", kind.name()));
+            }
+            if let Some(bad) = p.iter().find(|m| !valid_module(m)) {
+                return err("provides", format!("'{}' is not a module name", bad));
+            }
+            p
+        }
+        None => Vec::new(),
+    };
+    if kind == Kind::Library && provides.is_empty() {
+        return err("provides", "a library must list at least one module");
+    }
+    let depends = match get("depends") {
+        Some(v) => {
+            let mut out: Vec<Dep> = Vec::new();
+            for d in str_list("depends", v)? {
+                let Some(dep) = Dep::parse(&d) else {
+                    return err("depends", format!("'{}' must look like dev.you.lib or dev.you.lib >= 1.2.0", d));
+                };
+                if dep.id == id {
+                    return err("depends", "a package cannot depend on itself");
+                }
+                if out.iter().any(|o| o.id == dep.id) {
+                    return err("depends", format!("'{}' is listed twice", dep.id));
+                }
+                out.push(dep);
+            }
+            if out.len() > 32 {
+                return err("depends", "more than 32 dependencies");
+            }
+            out
+        }
+        None => Vec::new(),
+    };
     let summary = match get("summary") {
         Some(v) => text("summary", v, MAX_SUMMARY, false)?,
         None => String::new(),
@@ -368,6 +587,10 @@ pub fn from_table(t: &Table) -> Result<Manifest, ManifestError> {
         open_with,
         hotkeys,
         icon,
+        kind,
+        bin,
+        provides,
+        depends,
     })
 }
 
@@ -413,6 +636,42 @@ mod tests {
         assert!(m.permissions.contains(&"background:refresh".to_string()));
         assert!(m.permissions.contains(&"background:audio".to_string()));
         assert_eq!(m.sizes.len(), 3);
+    }
+
+    #[test]
+    fn kinds_and_dependencies() {
+        let base = "id='dev.me.x'\nname='X'\nversion='1.0.0'\n";
+        let p = parse(&format!("{base}kind='program'\nbin=['tools/hexdump.wasm','b64.wasm']\ndepends=['dev.me.lib >= 1.2.0','dev.me.other']")).unwrap();
+        assert_eq!((p.kind, p.commands()), (Kind::Program, vec!["hexdump", "b64"]));
+        assert_eq!(p.depends[0].to_string(), "dev.me.lib >= 1.2.0");
+        assert!(p.depends[0].accepts("1.2.0") && p.depends[0].accepts("2.0.0") && !p.depends[0].accepts("1.1.9"));
+        assert!(p.depends[1].accepts("0.0.1"));
+        assert_eq!(p.level(), 2);
+        let l = parse(&format!("{base}kind='library'\nprovides=['geometry']")).unwrap();
+        assert_eq!((l.kind, l.entry.as_str()), (Kind::Library, ""));
+        assert!(l.kind.unconfined());
+        let s = parse(&format!("{base}kind='source'")).unwrap();
+        assert!(!s.kind.unconfined());
+        let a = parse(&format!("{base}entry='main.lua'")).unwrap();
+        assert_eq!((a.kind, a.level()), (Kind::App, 2));
+        assert_eq!(parse(&format!("{base}entry='main.py'")).unwrap().level(), 1);
+        for (bad, field) in [
+            ("kind='gadget'\nentry='main.py'", "kind"),
+            ("kind='program'", "bin"),
+            ("kind='program'\nbin=['Tool.wasm']", "bin"),
+            ("kind='program'\nbin=['a/x.wasm','b/x.wasm']", "bin"),
+            ("entry='main.py'\nbin=['x.wasm']", "bin"),
+            ("kind='library'", "provides"),
+            ("kind='library'\nprovides=['9lives']", "provides"),
+            ("kind='library'\nprovides=['m']\nentry='main.py'", "entry"),
+            ("entry='main.py'\ndepends=['dev.me.x']", "depends"),
+            ("entry='main.py'\ndepends=['dev.me.y > 1.0.0']", "depends"),
+            ("entry='main.py'\ndepends=['dev.me.y','dev.me.y = 1.0.0']", "depends"),
+        ] {
+            assert_eq!(parse(&format!("{base}{bad}")).unwrap_err().field, field, "{bad}");
+        }
+        assert_eq!(Dep::parse("dev.a.b = 1.0.0").unwrap().op, DepOp::Exactly);
+        assert!(Dep::parse("nodots").is_none());
     }
 
     #[test]

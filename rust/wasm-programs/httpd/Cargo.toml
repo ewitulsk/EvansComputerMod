@@ -15,3 +15,7 @@ test = false
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-http = { workspace = true }
+ecm-tls = { workspace = true }

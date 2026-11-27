@@ -157,6 +157,11 @@ members = [
     "wasm-programs/messages",
     "wasm-programs/contacts",
     "wasm-programs/sms",
+    "crates/ecm-tls",
+    "crates/ecm-http",
+    "crates/ecm-ca",
+    "wasm-programs/cad",
+    "wasm-programs/cert",
 ]
 resolver = "2"
 
@@ -191,6 +196,9 @@ ecm-tel = { path = "crates/ecm-tel" }
 ecm-rtp = { path = "crates/ecm-rtp" }
 ecm-tel-net = { path = "crates/ecm-tel-net" }
 ecm-tel-ui = { path = "crates/ecm-tel-ui" }
+ecm-tls = { path = "crates/ecm-tls" }
+ecm-http = { path = "crates/ecm-http" }
+ecm-ca = { path = "crates/ecm-ca" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

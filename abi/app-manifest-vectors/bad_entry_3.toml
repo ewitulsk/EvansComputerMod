@@ -1,0 +1,6 @@
+id = "dev.you.x"
+name = "X"
+version = "1.0.0"
+kind = "library"
+provides = ["m"]
+entry = "main.py"

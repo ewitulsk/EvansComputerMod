@@ -1,0 +1,15 @@
+[package]
+name = "ecm-tls"
+version = "0.1.0"
+edition = "2021"
+description = "TLS for programs on a computer: rustls with pure-Rust (RustCrypto) cryptography, client and server, the real world's roots for public addresses and the computer's own /etc/ssl/certs for in-game ones, plus the small X.509 writer the in-game certificate authority uses. No host calls: it works over any Read + Write."
+
+[lib]
+name = "ecm_tls"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { version = "0.1.0-pre.0", default-features = false, features = ["std", "tls12", "zeroize"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+webpki-roots = "1"
+ecm-ssh-crypto = { workspace = true }

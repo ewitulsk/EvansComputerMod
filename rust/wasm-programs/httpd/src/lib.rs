@@ -3,8 +3,11 @@
 //! types, and the CGI protocol (what a script is handed on stdin and how its
 //! output becomes a response).
 //!
-//!   httpd <port> [dir] [--cgi <prefix>]
+//!   httpd <port> [dir] [--cgi <prefix>] [--tls | --cert <file> --key <file>]
 //!
+//! * `--tls`: serve HTTPS with this computer's certificate (`cert` gets one;
+//!   `/etc/ssl/server.crt` and `/etc/ssl/private/server.key`), or with the
+//!   files `--cert` and `--key` name.
 //! * `dir`: the folder served (default: the computer's root, as the village
 //!   web servers do). `/` is its `index.html`, or a listing.
 //! * Virtual hosting: a request whose `Host:` names a folder inside `dir`
@@ -27,11 +30,18 @@ pub struct Config {
     /// Empty: the computer's root.
     pub root: String,
     pub cgi: Option<String>,
+    /// HTTPS: (certificate file, key file).
+    pub tls: Option<(String, String)>,
 }
+
+/// Where `--tls` looks (the same paths as `ecm_tls::SERVER_CERT` / `SERVER_KEY`).
+pub const DEFAULT_CERT: &str = "/etc/ssl/server.crt";
+pub const DEFAULT_KEY: &str = "/etc/ssl/private/server.key";
 
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut c = Config::default();
     let mut port = None;
+    let (mut tls, mut cert, mut key) = (false, None, None);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -41,6 +51,16 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 let p = format!("/{}", p.trim_matches('/'));
                 c.cgi = Some(p);
             }
+            "--tls" => tls = true,
+            "--cert" => {
+                i += 1;
+                cert = Some(args.get(i).ok_or("--cert needs a file")?.clone());
+            }
+            "--key" => {
+                i += 1;
+                key = Some(args.get(i).ok_or("--key needs a file")?.clone());
+            }
+            a if a.starts_with("--") => return Err(format!("unknown option {a}")),
             a if port.is_none() => port = Some(a.parse::<u16>().map_err(|_| format!("bad port {a}"))?),
             a if c.root.is_empty() => c.root = a.trim_end_matches('/').to_string(),
             a => return Err(format!("unexpected argument {a}")),
@@ -48,6 +68,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         i += 1;
     }
     c.port = port.ok_or("no port")?;
+    if tls || cert.is_some() || key.is_some() {
+        if cert.is_some() != key.is_some() {
+            return Err("--cert and --key go together".into());
+        }
+        c.tls = Some((cert.unwrap_or_else(|| DEFAULT_CERT.into()), key.unwrap_or_else(|| DEFAULT_KEY.into())));
+    }
     Ok(c)
 }
 
@@ -260,8 +286,12 @@ mod tests {
 
     #[test]
     fn command_line() {
-        assert_eq!(parse_args(&args("80")).unwrap(), Config { port: 80, root: String::new(), cgi: None });
-        assert_eq!(parse_args(&args("80 /srv/www/ --cgi cgi")).unwrap(), Config { port: 80, root: "/srv/www".into(), cgi: Some("/cgi".into()) });
+        assert_eq!(parse_args(&args("80")).unwrap(), Config { port: 80, root: String::new(), cgi: None, tls: None });
+        assert_eq!(parse_args(&args("80 /srv/www/ --cgi cgi")).unwrap(), Config { port: 80, root: "/srv/www".into(), cgi: Some("/cgi".into()), tls: None });
+        assert_eq!(parse_args(&args("443 /srv/www --tls")).unwrap().tls, Some((DEFAULT_CERT.to_string(), DEFAULT_KEY.to_string())));
+        assert_eq!(parse_args(&args("443 --cert a.crt --key a.key")).unwrap().tls, Some(("a.crt".to_string(), "a.key".to_string())));
+        assert!(parse_args(&args("443 --cert a.crt")).unwrap_err().contains("go together"));
+        assert!(parse_args(&args("443 --tsl")).unwrap_err().contains("unknown option"));
         assert_eq!(parse_args(&args("--cgi /bin 8080 /x")).unwrap().cgi.as_deref(), Some("/bin"));
         assert!(parse_args(&args("eighty")).is_err());
         assert!(parse_args(&args("80 /a /b")).is_err());

@@ -1,0 +1,17 @@
+[package]
+name = "cad"
+version = "0.1.0"
+edition = "2021"
+description = "The in-game certificate authority daemon: signs certificates for computers that prove they answer at a name (docs/TLS.md)."
+
+[[bin]]
+name = "cad"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ca = { workspace = true }
+ecm-tls = { workspace = true }
+ecm-http = { workspace = true }
+ecm-host-abi = { workspace = true }
+httpd = { path = "../httpd" }

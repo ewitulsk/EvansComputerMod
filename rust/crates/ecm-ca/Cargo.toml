@@ -1,0 +1,13 @@
+[package]
+name = "ecm-ca"
+version = "0.1.0"
+edition = "2021"
+description = "The in-game certificate authority's protocol and rules, shared by cad (the authority) and cert (the client): orders, the HTTP challenge that proves a computer answers at a name, what names an authority may sign for, and issuing. No I/O: tested on the host."
+
+[lib]
+name = "ecm_ca"
+doctest = false
+
+[dependencies]
+ecm-tls = { workspace = true }
+ecm-ssh-crypto = { workspace = true }
