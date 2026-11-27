@@ -333,6 +333,7 @@ impl Kernel {
             Ui::RouterCli => self.router.leave_cli(),
             Ui::Prompt => {}
         }
+        self.con.reset_modes();
         Plane::Terminal.reset();
         self.editor.clear();
         self.ui = Ui::Prompt;
@@ -813,6 +814,42 @@ mod tests {
         assert!(k.ui != Ui::Program);
         k.resize_console(160, 50);
         assert!(input().is_empty(), "no reports after the program ended");
+        FILES.with(|f| f.borrow_mut().remove("server-bin/vim.wasm"));
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
+    }
+
+    /// Killing a full-screen program (Vim) with Ctrl+T immediately leaves the
+    /// alternate screen and resets its modes (?2048, ?7727, ?2004, ?1), even
+    /// before the child thread finishes exiting, and drops any stray output.
+    #[test]
+    fn ctrl_t_leaves_alternate_screen_and_resets_modes() {
+        use crate::hal::ffi::{CHILD_OUT, CHILD_RUNNING, FILES};
+        let _g = crate::hal::test_lock();
+        let mut k = Kernel::boot(0);
+        FILES.with(|f| f.borrow_mut().insert("server-bin/vim.wasm".into(), vec![0]));
+        CHILD_RUNNING.with(|r| *r.borrow_mut() = true);
+        CHILD_OUT.with(|o| o.borrow_mut().clear());
+
+        k.on_input(b"vim\n", 0);
+        assert!(k.ui == Ui::Program);
+        CHILD_OUT.with(|o| o.borrow_mut().extend_from_slice(b"\x1b[?1049h\x1b[?2048h\x1b[?7727h\x1b[?2004h\x1b[?1hvim buffer"));
+        k.on_tick(0);
+        let m = k.con.modes();
+        assert!(m.alternate && m.resize_reports && m.own_interrupt && m.bracketed_paste && m.app_cursor);
+
+        // Ctrl+T while the child is still winding down.
+        k.on_input(b"\x14", 0);
+        assert!(k.ui == Ui::Prompt);
+        let m = k.con.modes();
+        assert!(!m.alternate && !m.resize_reports && !m.own_interrupt && !m.bracketed_paste && !m.app_cursor);
+
+        // Stray escape sequences from the killed child before it exits must not re-dirty the console.
+        CHILD_OUT.with(|o| o.borrow_mut().extend_from_slice(b"\x1b[?1049h\x1b[?7727h"));
+        CHILD_RUNNING.with(|r| *r.borrow_mut() = false);
+        k.on_tick(0);
+        let m = k.con.modes();
+        assert!(!m.alternate && !m.own_interrupt && !m.resize_reports);
+
         FILES.with(|f| f.borrow_mut().remove("server-bin/vim.wasm"));
         framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
     }

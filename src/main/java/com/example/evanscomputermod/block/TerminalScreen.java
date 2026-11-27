@@ -87,11 +87,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private static final int FONT_CELL_WIDTH = 8;
     private static final int FONT_CELL_HEIGHT = 16;
     private static final int FONT_ASCENT = 14;  // from terminal.json — must match
-    // Vertical offset applied to fill() rectangles so they align with where
-    // drawString actually renders glyphs.  Minecraft's bitmap font renderer
-    // positions glyphs above the Y coordinate by an amount related to ascent.
-    // This value is tuned empirically to match the terminal font.
-    private static final int GLYPH_Y_OFFSET = 4;
+    // Minecraft's bitmap font renderer draws a glyph's top row at (y + 7 - ascent),
+    // so passing (rowY + FONT_TEXT_Y_OFFSET) places the 8x16 bitmap cell at exact
+    // [rowY, rowY + FONT_CELL_HEIGHT), aligning it pixel-for-pixel with cell
+    // background fills (Vim MatchParen/Visual/status), cursor, underline, and
+    // mouse selection without overflowing above row 0.
+    private static final int FONT_TEXT_Y_OFFSET = FONT_ASCENT - 7;
 
     // Dynamic dimensions (calculated in init())
     private int charWidth;
@@ -550,7 +551,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
 
         for (int row = 0; row < termHeight; row++) {
             int rowY = row * baseCharHeight;
-            int glyphY = rowY - GLYPH_Y_OFFSET;
+            int textY = rowY + FONT_TEXT_Y_OFFSET;
             for (int col = 0; col < termWidth; col++) {
                 byte ch = display.getCharAt(col, row);
                 byte attr = display.getAttrAt(col, row);
@@ -575,16 +576,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
                     g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, bg);
                 }
                 if (isCursor) {
-                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, cursorColor());
+                    g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, cursorColor());
                 }
                 if (hidden) continue;
 
                 int charColor = isCursor ? pal[0] : fg;
                 if (ch > 0x20 && ch < 0x7F) {
-                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, textY, charColor, false);
                 }
                 if ((flags & FLAG_UNDERLINE) != 0) {
-                    int lineY = glyphY + FONT_ASCENT;
+                    int lineY = rowY + FONT_ASCENT;
                     g.fill(cellX, lineY, cellX + baseCharWidth, lineY + 1, charColor);
                 }
             }
@@ -771,7 +772,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         }
         sendRawKey(256, shift ? modifiers & ~1 : modifiers, true);
         altTyped = false;
-        sendInput("\u001b");
+        // Shift+Esc sends plain Esc to console programs; Ctrl+Esc / Alt+Esc are chords (e.g. desktop launcher).
+        if (shift && !ctrl && !alt) {
+            sendInput("\u001b");
+        }
     }
 
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
@@ -798,8 +802,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             copySelection();
             return true;
         }
-        // Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert.
-        if ((ctrl && keyCode == 86) || (shift && keyCode == 260)) {
+        // Paste: Ctrl+Shift+V, Shift+Insert (plain Ctrl+V goes to console programs such as Vim Visual Block and edit).
+        if ((ctrl && shift && keyCode == 86) || (shift && keyCode == 260)) {
             pasteClipboard();
             return true;
         }
@@ -832,6 +836,18 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         int mod = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
         if (ctrl && !alt && keyCode >= 65 && keyCode <= 90) {
             return String.valueOf((char) (keyCode - 64));
+        }
+        if (ctrl && !alt) {
+            String ctrlPunct = switch (keyCode) {
+                case 50 -> "\u0000"; // Ctrl+2 / Ctrl+@
+                case 91 -> "\u001b"; // Ctrl+[ (Esc)
+                case 92 -> "\u001c"; // Ctrl+\
+                case 93 -> "\u001d"; // Ctrl+] (Vim tag jump)
+                case 54 -> "\u001e"; // Ctrl+6 / Ctrl+^ (Vim alternate buffer)
+                case 45 -> "\u001f"; // Ctrl+- / Ctrl+_
+                default -> null;
+            };
+            if (ctrlPunct != null) return ctrlPunct;
         }
         if (alt && !ctrl && keyCode >= 65 && keyCode <= 90) {
             char c = (char) (shift ? keyCode : keyCode + 32);

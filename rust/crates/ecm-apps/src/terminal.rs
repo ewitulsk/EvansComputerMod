@@ -309,6 +309,21 @@ pub fn key_bytes(key: u16, mods: u16) -> Option<Vec<u8>> {
         // Ctrl+A .. Ctrl+Z
         return Some(vec![(key - 0x04 + 1) as u8]);
     }
+    if ctrl && !alt {
+        // Standard xterm control punctuation chords (Ctrl+[ Esc, Ctrl+] tag jump, Ctrl+^ alternate file, etc.).
+        let ctrl_punct = match key {
+            0x1f => Some(0x00), // Ctrl+2 / Ctrl+@
+            0x2f => Some(0x1b), // Ctrl+[
+            0x31 => Some(0x1c), // Ctrl+\
+            0x30 => Some(0x1d), // Ctrl+]
+            0x23 => Some(0x1e), // Ctrl+6 / Ctrl+^
+            0x2d => Some(0x1f), // Ctrl+- / Ctrl+_
+            _ => None,
+        };
+        if let Some(b) = ctrl_punct {
+            return Some(vec![b]);
+        }
+    }
     let m = 1 + shift as u8 + 2 * alt as u8 + 4 * ctrl as u8;
     let csi = |fin: &str| if m == 1 { format!("\x1b[{fin}") } else { format!("\x1b[1;{m}{fin}") };
     let tilde = |n: &str| if m == 1 { format!("\x1b[{n}~") } else { format!("\x1b[{n};{m}~") };
@@ -624,6 +639,13 @@ mod tests {
         assert_eq!(key_bytes(keys::HOME, 0).unwrap(), b"\x1b[H");
         assert_eq!(key_bytes(0x3a, 0).unwrap(), b"\x1bOP", "F1");
         assert_eq!(key_bytes(0x45, 0).unwrap(), b"\x1b[24~", "F12");
+        assert_eq!(key_bytes(0x19, proto::mods::CTRL).unwrap(), vec![0x16], "Ctrl+V");
+        assert_eq!(key_bytes(0x2f, proto::mods::CTRL).unwrap(), vec![0x1b], "Ctrl+[");
+        assert_eq!(key_bytes(0x30, proto::mods::CTRL).unwrap(), vec![0x1d], "Ctrl+]");
+        assert_eq!(key_bytes(0x31, proto::mods::CTRL).unwrap(), vec![0x1c], "Ctrl+\\");
+        assert_eq!(key_bytes(0x23, proto::mods::CTRL).unwrap(), vec![0x1e], "Ctrl+^");
+        assert_eq!(key_bytes(0x1f, proto::mods::CTRL).unwrap(), vec![0x00], "Ctrl+@");
+        assert_eq!(key_bytes(0x2d, proto::mods::CTRL).unwrap(), vec![0x1f], "Ctrl+_");
     }
 
     #[test]

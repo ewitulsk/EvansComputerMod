@@ -46,6 +46,7 @@ rust/target/
 
 # WASM build artifacts (built from Rust source by copy-jar.sh)
 wasm-bin/
+.wasi-sdk/
 
 # Local configuration
 local.properties

@@ -32,7 +32,7 @@ public class DirFd implements WasiFileDescriptor {
                 stream.sorted().forEach(p -> {
                     String name = p.getFileName().toString();
                     byte type = Files.isDirectory(p) ? (byte) 3 : (byte) 4; // DIR=3, REG=4
-                    long inode = name.hashCode() & 0xFFFFFFFFL;
+                    long inode = WasiFunctions.inodeFor(p);
                     cachedEntries.add(new DirEntry(name, type, inode));
                 });
             } catch (IOException e) {

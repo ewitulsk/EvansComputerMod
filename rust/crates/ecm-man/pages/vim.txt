@@ -92,12 +92,16 @@ FILES
 
 KEYS
     The Terminal sends the keys Vim expects: the arrows, Home, End,
-    PgUp, PgDn, Insert, Delete, F1 to F12, Tab, Backspace and Enter.
+    PgUp, PgDn, Insert, Delete, F1 to F12, Tab, Backspace, Enter,
+    Ctrl+V (Visual block mode; paste at the Terminal is Ctrl+Shift+V or
+    Shift+Insert), Ctrl+] (follow :help and tag links), Ctrl+^
+    (alternate buffer), and Ctrl+[ (another way to send Esc).
     Esc: at the Terminal, plain Esc closes the screen (Vim keeps
-    running; right-click the Terminal to come back) and Shift+Esc sends
-    Esc to Vim: leave Insert mode with Shift+Esc (Ctrl+C leaves it
-    too). Ctrl+C (Vim's interrupt key: it stops a long search or tells
-    you how to quit), Ctrl+Z and the other Ctrl keys reach Vim.
+    running; right-click the Terminal to come back) and Shift+Esc or
+    Ctrl+[ sends Esc to Vim: leave Insert mode with Shift+Esc or Ctrl+[
+    (Ctrl+C leaves it too). Ctrl+C (Vim's interrupt key: it stops a
+    long search or tells you how to quit), Ctrl+Z and the other Ctrl
+    keys reach Vim.
 
     Ctrl+T is the computer's own key: it stops Vim at once, without
     saving, as it stops any program. Vim's Ctrl+T (pop the tag stack,

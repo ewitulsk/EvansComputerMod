@@ -30,7 +30,7 @@ public final class SharedFd {
     }
 
     /** One owner's view of the shared descriptor. */
-    public final class Handle implements WasiFileDescriptor {
+    public final class Handle implements WasiFileDescriptor, Pollable {
         private boolean closed;
 
         public SharedFd shared() {
@@ -62,6 +62,37 @@ public final class SharedFd {
         @Override
         public boolean isWritable() {
             return inner.isWritable();
+        }
+
+        @Override
+        public boolean readReady() {
+            if (closed) return true;
+            if (inner instanceof Pollable p) return p.readReady();
+            return inner.isReadable();
+        }
+
+        @Override
+        public int readable() {
+            if (closed) return 0;
+            if (inner instanceof Pollable p) return p.readable();
+            return inner.isReadable() ? 1 : 0;
+        }
+
+        @Override
+        public boolean hungUp() {
+            if (closed) return true;
+            if (inner instanceof Pollable p) return p.hungUp();
+            return false;
+        }
+
+        @Override
+        public void addWaiter(Object waiter) {
+            if (inner instanceof Pollable p) p.addWaiter(waiter);
+        }
+
+        @Override
+        public void removeWaiter(Object waiter) {
+            if (inner instanceof Pollable p) p.removeWaiter(waiter);
         }
     }
 }

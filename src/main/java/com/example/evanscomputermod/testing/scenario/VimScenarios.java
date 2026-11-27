@@ -157,6 +157,9 @@ public final class VimScenarios {
                 .waitMs(300, "Vim's Esc timeout (ttimeoutlen, 100 ms) passes")
                 .await(VimScenarios::normalMode, "Shift+Esc took effect: Normal mode", 5_000)
                 .await(r -> lines(r, "The quick brown fox", "jumps over the lazy dog", "say \"hello\" twice"), "the three lines", 10_000)
+                .note("hhhh: moving left emits BS (\\b); the text stays intact on screen")
+                .mutate(r -> type(r, "hhhh"), "hhhh")
+                .await(r -> lines(r, "The quick brown fox", "jumps over the lazy dog", "say \"hello\" twice"), "moving left kept the line intact", 5_000)
                 .note("Control: Ctrl+C is Vim's key here: Vim says how to quit and keeps running")
                 .mutate(r -> ctrl(r, 'c'), "press Ctrl+C")
                 .await(r -> shows(r, "Type  :qa!  and press <Enter> to abandon all changes and exit Vim"), "Vim's own Ctrl+C message", 10_000)
@@ -351,6 +354,13 @@ public final class VimScenarios {
                 .mutate(r -> ctrl(r, 'z'), "press Ctrl+Z")
                 .await(r -> shows(r, "E9998: Vim can't be suspended on this computer"), "the suspend error", 10_000)
                 .await(r -> absent(r, "Stopped"), "control: no stopped job", 1_000)
+                .note("Relative path inside /server-bin still opens read-only (st_dev == 2)")
+                .mutate(r -> {
+                    ex(r, "cd /server-bin/vim");
+                    ex(r, "e vimrc");
+                    ex(r, "echo 'ro=' .. &readonly");
+                }, ":cd /server-bin/vim, :e vimrc, :echo 'ro=' .. &readonly")
+                .await(r -> shows(r, "^ro=1 "), "system vimrc is read-only even by relative path", 10_000)
                 .mutate(r -> ex(r, "q"), ":q")
                 .await(r -> shows(r, LIVE_PROMPT), "back at the shell", 10_000)
                 .timeLimit(60_000)

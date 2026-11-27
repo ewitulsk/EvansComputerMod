@@ -106,9 +106,11 @@ COPY AND PASTE
     click selects a word, triple click a line). Ctrl+C or Ctrl+Shift+C
     or Ctrl+Insert copies the selection to your real clipboard; a right
     click copies the selection, or pastes when nothing is selected.
-    Ctrl+V, Ctrl+Shift+V and Shift+Insert paste. Pasted text is typed as
-    text: a Tab in it never completes, and each line break enters the
-    line. In the Terminal app copy is Ctrl+Shift+C (see terminal-app).
+    Ctrl+Shift+V and Shift+Insert paste (plain Ctrl+V goes to console
+    programs such as vim and edit; GUI apps still use Ctrl+V). Pasted
+    text is typed as text: a Tab in it never completes, and each line
+    break enters the line. In the Terminal app copy is Ctrl+Shift+C
+    (see terminal-app).
 
 SCROLLING
     The terminal keeps the last 500 lines that scrolled off the top (the

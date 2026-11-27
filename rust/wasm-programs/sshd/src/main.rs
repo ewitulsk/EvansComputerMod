@@ -106,6 +106,7 @@ fn handle_connection(conn: i32) {
     let mut peer_kexinit: Vec<u8> = Vec::new();
     let mut service_requested = false;
     let mut ipc_session: Option<i32> = None;
+    let mut pending_pty_size: Option<(u16, u16)> = None;
     let mut active_remote_channel_id: Option<u32> = None;
 
     // Load host key
@@ -277,7 +278,14 @@ fn handle_connection(conn: i32) {
                         packet::msg::CHANNEL_REQUEST if authenticated => {
                             if let Some(req) = channel::parse_channel_request(&payload) {
                                 match req {
-                                    channel::ChannelRequest::PtyReq { recipient_channel, want_reply, .. } => {
+                                    channel::ChannelRequest::PtyReq { recipient_channel, want_reply, width_chars, height_rows, .. } => {
+                                        if width_chars > 0 && height_rows > 0 {
+                                            let sz = (width_chars.min(u16::MAX as u32) as u16, height_rows.min(u16::MAX as u32) as u16);
+                                            pending_pty_size = Some(sz);
+                                            if let Some(sid) = ipc_session {
+                                                ipc::session_resize(sid, sz.0, sz.1);
+                                            }
+                                        }
                                         if want_reply {
                                             if let Some(ch) = channels.get(recipient_channel) {
                                                 let pkt = transport.encode_packet(
@@ -290,6 +298,9 @@ fn handle_connection(conn: i32) {
                                     channel::ChannelRequest::Shell { recipient_channel, want_reply } => {
                                         let session_id = ipc::spawn_shell(&username);
                                         if session_id >= 0 {
+                                            if let Some((w, h)) = pending_pty_size {
+                                                ipc::session_resize(session_id, w, h);
+                                            }
                                             ipc_session = Some(session_id);
                                             if let Some(ch) = channels.get(recipient_channel) {
                                                 active_remote_channel_id = Some(ch.remote_id);

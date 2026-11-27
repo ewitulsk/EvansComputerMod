@@ -223,9 +223,15 @@ pub struct ModeScanner {
     state: u8,
     num: u16,
     nums: Vec<u16>,
+    resize_requested: bool,
 }
 
 impl ModeScanner {
+    /// True if `?2048h` (in-band resize reports) was set since the last call.
+    pub fn take_resize_requested(&mut self) -> bool {
+        std::mem::take(&mut self.resize_requested)
+    }
+
     pub fn feed(&mut self, data: &[u8]) {
         for &b in data {
             self.state = match (self.state, b) {
@@ -247,8 +253,12 @@ impl ModeScanner {
                 }
                 (3, b'h' | b'l') => {
                     self.nums.push(self.num);
+                    let on = b == b'h';
                     for &m in &self.nums {
-                        self.modes.set(m, b == b'h');
+                        if m == MODE_RESIZE_REPORTS && on {
+                            self.resize_requested = true;
+                        }
+                        self.modes.set(m, on);
                     }
                     0
                 }
@@ -758,14 +768,13 @@ impl Vte {
             }
             b'\r' => self.cursor_x = 0,
             0x08 => {
-                // Backspace
+                // Backspace (BS): move one column left without erasing, as VT100/xterm
+                // specifies (Vim's builtin xterm termcap uses \b for cursor-left, T_LE).
                 if self.cursor_x >= self.width {
                     self.cursor_x = self.width - 1;
                 }
                 if self.cursor_x > 0 {
                     self.cursor_x -= 1;
-                    // Erase the character at the new cursor position
-                    self.put_cell(self.cursor_x, self.cursor_y, b' ', self.current_attr, 0);
                 }
             }
             b'\t' => {
@@ -1475,5 +1484,24 @@ mod tests {
         v.resize(10, 4);
         assert_eq!((row(&v, 0), row(&v, 1)), ("abcdefghij".into(), "klmno".into()));
         assert!(v.scrollback().is_empty());
+    }
+
+    #[test]
+    fn backspace_moves_left_without_erasing_and_mode_scanner_tracks_resize_requests() {
+        let mut v = Vte::new_virtual(10, 2);
+        v.write(b"hello\x08\x08");
+        assert_eq!(row(&v, 0), "hello", "BS must not erase characters (Vim T_LE uses \\b)");
+        assert_eq!(v.cursor(), (3, 0));
+        v.write(b"X");
+        assert_eq!(row(&v, 0), "helXo");
+
+        let mut ms = ModeScanner::default();
+        ms.feed(b"\x1b[?2048h");
+        assert!(ms.modes.resize_reports);
+        assert!(ms.take_resize_requested());
+        assert!(!ms.take_resize_requested());
+        ms.feed(b"\x1b[?2048l");
+        assert!(!ms.modes.resize_reports);
+        assert!(!ms.take_resize_requested());
     }
 }
