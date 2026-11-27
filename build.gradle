@@ -179,7 +179,11 @@ neoForge {
                 providers.gradleProperty('gameTestNamespaces').getOrElse('ecm_network')
             // -PgameTestOnly=a,b: only those tests of the namespaces (1.21.1, testing/v1211/GameTestFilter)
             systemProperty 'ecm.gametest.only', providers.gradleProperty('gameTestOnly').getOrElse('')
-            jvmArgument '-Xmx2G'
+            // 3 GiB: a namespace that places Tech Villages keeps some seventy computers
+            // running, and the runtime holds every loaded program's parsed code (python
+            // alone is hundreds of MiB). 2 GiB was 89% full in ecm_browser before the
+            // programs that speak TLS grew by about 190 MiB in all, and then ran out.
+            jvmArgument '-Xmx3G'
             programArgument '--nogui'
         }
 

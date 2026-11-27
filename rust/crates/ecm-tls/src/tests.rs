@@ -1,4 +1,5 @@
 use super::*;
+use std::io::{self, Read, Write};
 use std::collections::VecDeque;
 use std::sync::{Arc as A, Mutex};
 use x509::SubjectName;

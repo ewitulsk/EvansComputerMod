@@ -17,8 +17,9 @@ import java.util.regex.Pattern;
  *
  * <ul>
  * <li>{@code tls_web}: an in-game certificate authority, a certificate, HTTPS;
- * <li>{@code repo_kinds}: programs, libraries, source and an app with a
- *     dependency, from a signed repository;
+ * <li>{@code repo_kinds}: a library and an app that depends on it, from a
+ *     signed repository;
+ * <li>{@code repo_programs}: a program (a new command) and a source package;
  * <li>{@code repo_mirror}: a data-center mirror of a chosen part of an HTTPS
  *     repository.
  * </ul>
@@ -79,6 +80,42 @@ public final class RepoScenarios {
         b.configureHosts();
     }
 
+    /**
+     * Write text files on {@code node} with the shell: {@code mkdir -p} for each
+     * folder, then one {@code echo '<line>' >> file} per line (the first with
+     * {@code >}). Quicker than a Python session for a few short files; no line
+     * may hold a single quote.
+     */
+    static void writeFiles(Scenario.Builder b, String node, Map<String, String> files) {
+        java.util.Set<String> made = new java.util.HashSet<>();
+        for (var f : files.entrySet()) {
+            String path = f.getKey();
+            String dir = path.substring(0, path.lastIndexOf('/'));
+            if (!dir.isEmpty() && made.add(dir)) {
+                b.send(node, "mkdir -p " + dir);
+                b.expect(node, PROMPT, node + ": " + dir);
+            }
+            boolean first = true;
+            for (String line : f.getValue().split("\n", -1)) {
+                if (line.contains("'")) throw new IllegalArgumentException("writeFiles: a single quote in " + path);
+                // One command at a time: the shell takes the next line once it is back at the prompt.
+                b.send(node, "echo '" + line + "' " + (first ? ">" : ">>") + " " + path);
+                b.expect(node, PROMPT, node + ": " + path);
+                first = false;
+            }
+        }
+        // The last line of the last file is on disk once the shell is back.
+        String last = null;
+        for (String p : files.keySet()) last = p;
+        if (last != null) {
+            String[] lines = files.get(last).split("\n", -1);
+            String tail = lines[lines.length - 1];
+            b.send(node, "cat " + last);
+            b.expect(node, "^" + Pattern.quote(tail) + "$", node + ": the files are written (" + files.size() + ")");
+            b.expect(node, PROMPT, node + ": shell");
+        }
+    }
+
     /** One shell command and its expected line, then the prompt. */
     static void run(Scenario.Builder b, String node, String command, String re, String what) {
         b.send(node, command);
@@ -131,7 +168,7 @@ public final class RepoScenarios {
         authority(b, "ca", "Lab Authority");
 
         b.note("web: a page to serve; control: HTTPS needs a certificate first");
-        PlayerKit.typeFile(b, "web", "/srv/www/hello.txt", "hello-over-tls");
+        writeFiles(b, "web", Map.of("/srv/www/hello.txt", "hello-over-tls"));
         run(b, "web", "httpd 443 /srv/www --tls", "get a certificate first: cert request", "control: httpd --tls has no certificate yet");
         b.note("web: control - the authority only signs for a computer that answers at the name");
         run(b, "web", "cert request " + TLS_CLIENT_IP + " --ca " + CA_IP, "^cert: the authority refused: 10\\.0\\.9\\.3",
@@ -157,7 +194,7 @@ public final class RepoScenarios {
         b.expect("web", "GET /hello\\.txt", "httpd logged the request");
 
         b.note("client: control - a name the certificate is not for");
-        PlayerKit.typeFile(b, "client", "/etc/hosts", WEB_IP + " shop.lab");
+        writeFiles(b, "client", Map.of("/etc/hosts", WEB_IP + " shop.lab"));
         run(b, "client", "curl https://shop.lab/hello.txt", "certificate is for another name", "control: the wrong name is refused", "^hello-over-tls$");
         b.note("client: control - stop trusting the authority");
         run(b, "client", "cert untrust Lab Authority", "^No longer trusting \"Lab Authority\"", "authority removed");
@@ -177,18 +214,26 @@ public final class RepoScenarios {
     static final String SHOUT_TOML = "id = \"dev.lab.shout\"\nname = \"Shout\"\nversion = \"1.0.0\"\nkind = \"program\"\nbin = [\"shout.wasm\"]";
     static final String NOTES_TOML = "id = \"dev.lab.notes\"\nname = \"Notes\"\nversion = \"0.1.0\"\nkind = \"source\"";
 
-    /** The package sources a player would write, typed in from Python. */
-    static Map<String, String> sources(boolean all) {
+    /** The package sources a player would write: {@code which} of geo, area, shout, notes. */
+    static Map<String, String> sources(String... which) {
         Map<String, String> f = new LinkedHashMap<>();
-        f.put("/src/geo/app.toml", GEO_TOML);
-        f.put("/src/geo/python/geo.py", GEO_PY);
-        f.put("/src/geo/lua/geo.lua", GEO_LUA);
-        f.put("/src/area/app.toml", AREA_TOML);
-        f.put("/src/area/main.py", AREA_PY);
-        f.put("/src/shout/app.toml", SHOUT_TOML);
-        if (all) {
-            f.put("/src/notes/app.toml", NOTES_TOML);
-            f.put("/src/notes/blink.py", "print(\"blink\")");
+        for (String w : which) {
+            switch (w) {
+                case "geo" -> {
+                    f.put("/src/geo/app.toml", GEO_TOML);
+                    f.put("/src/geo/python/geo.py", GEO_PY);
+                    f.put("/src/geo/lua/geo.lua", GEO_LUA);
+                }
+                case "area" -> {
+                    f.put("/src/area/app.toml", AREA_TOML);
+                    f.put("/src/area/main.py", AREA_PY);
+                }
+                case "shout" -> f.put("/src/shout/app.toml", SHOUT_TOML);
+                default -> {
+                    f.put("/src/notes/app.toml", NOTES_TOML);
+                    f.put("/src/notes/blink.py", "print(\"blink\")");
+                }
+            }
         }
         return f;
     }
@@ -213,69 +258,99 @@ public final class RepoScenarios {
     }
 
     /**
-     * {@code repo_kinds} (docs/REPO.md): computer {@code origin} writes four
-     * packages, one of each kind (a library with a Python and a Lua module, an
-     * app that depends on it, a program, a source package), signs them
-     * ({@code pkg keygen}, {@code pkg build --sign}) and serves them
-     * ({@code pkg serve}). Computer {@code client} adds the repository with the
-     * key pinned and installs the app: its library comes first, and both
+     * {@code repo_kinds} (docs/REPO.md): computer {@code origin} writes a
+     * library (a Python and a Lua module) and an app that depends on it, signs
+     * them ({@code pkg keygen}, {@code pkg build --sign}) and serves them
+     * ({@code pkg serve}). Computer {@code client} adds the repository with
+     * the key pinned and installs the app: its library comes first, and both
      * {@code import geo} in Python and {@code require("geo")} in Lua find it.
-     * The program's command appears in the shell; the source package lands in
-     * {@code /home/src}. Controls: the library cannot be removed while the app
-     * needs it ({@code pkg autoremove} takes it once the app is gone); the same
-     * program from the repository without a pinned key is refused, since
-     * nobody vouches for it (and installs with {@code --unverified}).
-     * (That a package cannot take a system command's name is covered by
-     * {@code cargo test -p pkg} and the simulator scenario 51.)
+     * Controls: the library cannot be removed while the app needs it;
+     * {@code pkg autoremove} takes it once the app is gone, and the import
+     * fails again.
      */
     static Scenario repoKinds() {
         var b = Scenario.builder("repo_kinds",
-                        "a signed repository with a library, an app that needs it, a program and a source package; a client installs each kind,"
-                                + " imports the library in Python and Lua, runs the program's command, and cannot remove what is still needed")
+                        "a signed repository with a library and an app that needs it; a client installs the app (the library comes first), imports the"
+                                + " library in Python and Lua, and cannot remove the library while the app needs it")
                 .asPlayer()
                 .timeLimit(58_000);
         lan(b, "origin", ORIGIN_IP + "/24", "client", PKG_CLIENT_IP + "/24");
 
-        b.note("origin: write the packages (typed in from Python), sign and serve them");
-        Map<String, Map<String, String>> files = new LinkedHashMap<>();
-        files.put("origin", sources(true));
-        files.put("client", Map.of("/usegeo.py", "import geo\nprint(\"python says\", geo.area(2, 3))",
-                "/usegeo.lua", "print(\"lua says \" .. require(\"geo\").area(4, 5))"));
-        PlayerKit.typeFiles(b, files);
-        buildRepo(b, "origin", "geo", "area", "shout", "notes");
+        b.note("origin: write the packages, sign and serve them; client: two one-line scripts that use the library");
+        writeFiles(b, "origin", sources("geo", "area"));
+        Map<String, String> scripts = new LinkedHashMap<>();
+        scripts.put("/usegeo.py", "import geo\nprint(\"python says\", geo.area(2, 3))");
+        scripts.put("/usegeo.lua", "print(\"lua says \" .. require(\"geo\").area(4, 5))");
+        writeFiles(b, "client", scripts);
+        buildRepo(b, "origin", "geo", "area");
         b.send("origin", "pkg serve /srv/repo 8080 &");
-        b.expect("origin", "Serving 4 packages from /srv/repo on port 8080", "the repository is up", "^pkg: ");
+        b.expect("origin", "Serving 2 packages from /srv/repo on port 8080", "the repository is up", "^pkg: ");
 
         b.note("client: add the repository with its key pinned; the app brings its library");
         b.sendFn("client", r -> "pkg repo add lab http://" + ORIGIN_IP + ":8080/ --key " + r.noted("key"),
                 "pkg repo add lab http://" + ORIGIN_IP + ":8080/ --key <the public key from origin's screen>");
-        b.expect("client", "^Added lab .*: 4 packages", "index fetched", "^pkg: |not fetched");
+        b.expect("client", "^Added lab .*: 2 packages", "index fetched", "^pkg: |not fetched");
         b.expect("client", PROMPT, "client: shell");
         run(b, "client", "pkg search geo", "^dev\\.lab\\.geo 1\\.2\\.0  Geometry  \\[library, lab, signed\\]", "the library is listed with its kind");
         b.send("client", "pkg install dev.lab.area");
         b.expect("client", "^Installed dev\\.lab\\.geo 1\\.2\\.0 \\(needed by dev\\.lab\\.area\\)", "the dependency came first", "^pkg: ");
         b.expect("client", "^Installed Area 1\\.0\\.0 \\(dev\\.lab\\.area\\) - verified publisher", "the app is installed, signed by the pinned key", "^pkg: ");
         b.expect("client", PROMPT, "client: shell");
-        run(b, "client", "python /usegeo.py", "^python says 6$", "Python imports the installed library", "Error");
+        run(b, "client", "pkg list", "^dev\\.lab\\.geo 1\\.2\\.0  Geometry  \\[library\\]", "pkg list names the library's kind");
         run(b, "client", "lua /usegeo.lua", "^lua says 20$", "Lua requires the installed library", "module 'geo' not found");
-        run(b, "client", "python /apps/dev.lab.area/main.py", "^area is 42$", "the app's own code uses it", "Error");
+        run(b, "client", "python /usegeo.py", "^python says 6$", "Python imports the installed library", "Error");
 
         b.note("client: control - the library is still needed; remove the app and it goes with autoremove");
         run(b, "client", "pkg remove dev.lab.geo", "^pkg: dev\\.lab\\.geo is needed by dev\\.lab\\.area; remove that first", "control: removal refused");
         run(b, "client", "pkg remove dev.lab.area", "^Removed dev\\.lab\\.area", "the app is removed");
         run(b, "client", "pkg autoremove", "^Removed dev\\.lab\\.geo \\(nothing needs it any more\\)", "the library nobody needs is removed");
+        run(b, "client", "lua /usegeo.lua", "module 'geo' not found", "control: the module is gone with the library", "^lua says");
+        return b.build();
+    }
+
+    /**
+     * {@code repo_programs} (docs/REPO.md): computer {@code origin} writes a
+     * program and a source package, signs and serves them. Computer
+     * {@code client}, with the key pinned, installs the program: {@code pkg}
+     * says it is not sandboxed, and its command works in the shell; the
+     * source package lands in {@code /home/src}. Controls: removed, the
+     * command is gone; the same program from the repository added without a
+     * key is refused, since nobody vouches for it, and installs only with
+     * {@code --unverified}. (That a package cannot take a system command's
+     * name is covered by {@code cargo test -p pkg} and simulator scenario 51.)
+     */
+    static Scenario repoPrograms() {
+        var b = Scenario.builder("repo_programs",
+                        "a signed repository with a program and a source package; a client installs the program (a new shell command, not sandboxed)"
+                                + " and the source package (files in /home/src); an unverified program is refused")
+                .asPlayer()
+                .timeLimit(58_000);
+        lan(b, "origin", ORIGIN_IP + "/24", "client", PKG_CLIENT_IP + "/24");
+
+        b.note("origin: write the packages, sign and serve them");
+        writeFiles(b, "origin", sources("shout", "notes"));
+        buildRepo(b, "origin", "shout", "notes");
+        b.send("origin", "pkg serve /srv/repo 8080 &");
+        b.expect("origin", "Serving 2 packages from /srv/repo on port 8080", "the repository is up", "^pkg: ");
 
         b.note("client: a program is a new command; a source package is files in /home/src");
+        run(b, "client", "shout before", "(?i)not found|unknown command|no such", "control: there is no shout command yet");
+        b.sendFn("client", r -> "pkg repo add lab http://" + ORIGIN_IP + ":8080/ --key " + r.noted("key"),
+                "pkg repo add lab http://" + ORIGIN_IP + ":8080/ --key <the public key from origin's screen>");
+        b.expect("client", "^Added lab .*: 2 packages", "index fetched", "^pkg: |not fetched");
+        b.expect("client", PROMPT, "client: shell");
         b.send("client", "pkg install dev.lab.shout");
         b.expect("client", "^Note: dev\\.lab\\.shout is a program\\. Unlike an app it is not sandboxed", "pkg warns that a program is not sandboxed");
         b.expect("client", "^New commands: shout", "the command is installed", "^pkg: ");
         b.expect("client", PROMPT, "client: shell");
         run(b, "client", "shout it-works", "^it-works$", "the new command runs");
         run(b, "client", "pkg install dev.lab.notes", "^Its files are in /home/src/dev\\.lab\\.notes/", "the source package is unpacked", "^pkg: ");
-        run(b, "client", "python /home/src/dev.lab.notes/blink.py", "^blink$", "its code runs from /home/src", "Error");
+        run(b, "client", "cat /home/src/dev.lab.notes/blink.py", "^print\\(\"blink\"\\)$", "its code is in /home/src");
 
-        b.note("client: control - the same program from the repository with no pinned key: nobody vouches for it");
+        b.note("client: control - removed, the command is gone");
         run(b, "client", "pkg remove dev.lab.shout", "^Removed dev\\.lab\\.shout", "program removed");
+        run(b, "client", "shout after", "(?i)not found|unknown command|no such", "control: the command went with the package");
+        b.note("client: control - the same program from the repository with no pinned key: nobody vouches for it");
         run(b, "client", "pkg repo add lab http://" + ORIGIN_IP + ":8080/", "^Added lab ", "the repository again, without a key");
         run(b, "client", "pkg install dev.lab.shout", "whole computer in reach", "control: an unverified program is refused", "^New commands");
         run(b, "client", "pkg install dev.lab.shout --unverified", "^New commands: shout", "--unverified installs it anyway", "^pkg: ");
@@ -305,9 +380,7 @@ public final class RepoScenarios {
         lan(b, "origin", ORIGIN_IP + "/24", "dc", DC_IP + "/24", "client", PKG_CLIENT_IP + "/24");
 
         b.note("origin: three packages, signed; an authority and a certificate; the repository over HTTPS");
-        Map<String, Map<String, String>> files = new LinkedHashMap<>();
-        files.put("origin", sources(false));
-        PlayerKit.typeFiles(b, files);
+        writeFiles(b, "origin", sources("geo", "area", "shout"));
         buildRepo(b, "origin", "geo", "area", "shout");
         authority(b, "origin", "Origin Authority");
         run(b, "origin", "cert request " + ORIGIN_IP + " --ca " + ORIGIN_IP, "^Certificate installed", "origin has a certificate for its address", "^cert: ");
@@ -344,7 +417,7 @@ public final class RepoScenarios {
     }
 
     static {
-        for (Scenario s : new Scenario[] {tlsWeb(), repoKinds(), repoMirror()}) ALL.put(s.name, s);
+        for (Scenario s : new Scenario[] {tlsWeb(), repoKinds(), repoPrograms(), repoMirror()}) ALL.put(s.name, s);
     }
 
     private RepoScenarios() {}

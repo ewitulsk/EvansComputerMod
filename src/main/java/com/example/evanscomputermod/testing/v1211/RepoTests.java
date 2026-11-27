@@ -23,7 +23,13 @@ public final class RepoTests {
         TestDriver.scenario(h, NS, RepoScenarios.ALL.get("tls_web"), true);
     }
 
-    /** A library, an app needing it, a program and a source package: installed, used from Python and Lua, held while needed. */
+    /** A program installs a shell command (with a warning); a source package lands in /home/src; an unverified program is refused. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".repo_programs")
+    public static void repo_programs(GameTestHelper h) {
+        TestDriver.scenario(h, NS, RepoScenarios.ALL.get("repo_programs"), true);
+    }
+
+    /** A library and an app needing it: installed together, used from Python and Lua, held while needed. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".repo_kinds")
     public static void repo_kinds(GameTestHelper h) {
         TestDriver.scenario(h, NS, RepoScenarios.ALL.get("repo_kinds"), true);

@@ -7,6 +7,7 @@
 //! the computer's network, [`native::Native`] the host's (tests and tools).
 
 pub mod probe;
+pub mod tls;
 pub mod url;
 
 #[cfg(target_os = "wasi")]
@@ -380,8 +381,13 @@ pub fn read_response(stream: &mut dyn Read, method: &str, transfer: &mut Transfe
     Ok((head, body.out, body.got))
 }
 
+/// Wraps a connected stream in TLS: (the stream, `TLSv1.3` or `TLSv1.2`). [`tls::secure`] is the one.
+pub type Secure = fn(&mut Option<Trust>, Check, Box<dyn Stream>, &str, [u8; 4]) -> Result<(Box<dyn Stream>, &'static str), TlsError>;
+
 pub struct Client<C: Connector> {
     pub connector: C,
+    /// How https is done; None in a client that only speaks plain http.
+    pub secure: Option<Secure>,
     /// The in-game authorities trusted; read from `/etc/ssl/certs` on first use when unset.
     pub trust: Option<Trust>,
     pub check: Check,
@@ -390,8 +396,15 @@ pub struct Client<C: Connector> {
 }
 
 impl<C: Connector> Client<C> {
+    /// A client for http:// and https://.
     pub fn new(connector: C) -> Client<C> {
-        Client { connector, trust: None, check: Check::Full, user_agent: "ecm-http/1".into(), max_redirects: MAX_REDIRECTS }
+        Client { secure: Some(tls::secure), ..Client::plain(connector) }
+    }
+
+    /// A client for plain http:// only. A program that only uses this one
+    /// carries no TLS code (about 1.2 MiB less).
+    pub fn plain(connector: C) -> Client<C> {
+        Client { connector, secure: None, trust: None, check: Check::Full, user_agent: "ecm-http/1".into(), max_redirects: MAX_REDIRECTS }
     }
 
     pub fn agent(mut self, user_agent: &str) -> Client<C> {
@@ -406,6 +419,11 @@ impl<C: Connector> Client<C> {
 
     /// One exchange, no redirects followed.
     pub fn exchange(&mut self, req: &Request, transfer: &mut Transfer) -> Result<Response, HttpError> {
+        // https: only a client made with TLS has it (see `tls`). One without never links the
+        // TLS code at all, which keeps small programs small.
+        if req.url.https && self.secure.is_none() {
+            return Err(HttpError::Tls(TlsError::Config(format!("this program does not speak https ({})", req.url))));
+        }
         let (mut stream, peer) = self.connector.connect(&req.url.host, req.url.port)?;
         let bytes = req.encode(&self.user_agent);
         if !req.url.https {
@@ -413,13 +431,10 @@ impl<C: Connector> Client<C> {
             let (head, body, length) = read_response(&mut *stream, &req.method, transfer)?;
             return Ok(Response { url: req.url.clone(), version: head.version, status: head.status, reason: head.reason, headers: head.headers, body, length, tls: None, peer, redirects: 0 });
         }
-        let check = self.check;
-        let trust = self.trust.get_or_insert_with(|| Trust::load(ecm_tls::CERTS_DIR));
-        let mut tls = trust.connect(stream, &req.url.host, peer, check).map_err(HttpError::Tls)?;
+        let Some(secure) = self.secure else { unreachable!("checked before connecting") };
+        let (mut tls, version) = secure(&mut self.trust, self.check, stream, &req.url.host, peer).map_err(HttpError::Tls)?;
         tls.write_all(&bytes).and_then(|_| tls.flush()).map_err(|e| io_err("the connection broke while sending", e))?;
-        let version = tls.version();
-        let (head, body, length) = read_response(&mut tls, &req.method, transfer)?;
-        tls.close();
+        let (head, body, length) = read_response(&mut *tls, &req.method, transfer)?;
         Ok(Response { url: req.url.clone(), version: head.version, status: head.status, reason: head.reason, headers: head.headers, body, length, tls: Some(version), peer, redirects: 0 })
     }
 

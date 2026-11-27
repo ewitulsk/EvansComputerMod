@@ -75,7 +75,8 @@ fn prove(name: &SubjectName, token: &str, want: &str) -> Result<(), String> {
         return Err(why);
     }
     let url = format!("http://{name}{}{token}", ecm_ca::CHALLENGE_PREFIX);
-    let mut client = ecm_http::Client::new(ecm_http::sys::Sockets { idle: Duration::from_secs(8) }).agent("cad/1");
+    // The check is plain http on port 80: this program has no TLS in it.
+    let mut client = ecm_http::sys::plain_client("cad/1", Duration::from_secs(8));
     let req = Fetch::get(&url).map_err(|e| e.to_string())?;
     let r = client.exchange(&req, &mut Transfer { max_body: 4096, ..Transfer::default() }).map_err(|e| format!("{name}: {e} (the authority asks port 80 of that name for the challenge)"))?;
     if r.status != 200 {

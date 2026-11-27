@@ -90,6 +90,10 @@ fn content_length_chunked_and_until_close() {
     // Nothing listens on port 1.
     assert!(matches!(c.get("http://127.0.0.1:1/"), Err(HttpError::Connect(_))));
     assert!(matches!(c.get("ftp://x/"), Err(HttpError::BadUrl(_))));
+    // A plain client says so instead of trying (and carries no TLS code).
+    let mut plain = Client::plain(Native::default());
+    assert_eq!(plain.get(&format!("{base}/len")).unwrap().text(), "hello");
+    assert!(matches!(plain.get("https://127.0.0.1:1/"), Err(HttpError::Tls(TlsError::Config(m))) if m.contains("does not speak https")));
 }
 
 #[test]

@@ -301,6 +301,10 @@ pub struct CertInfo {
     pub not_after: u64,
     pub names: Vec<SubjectName>,
     pub is_ca: bool,
+    /// The subject Name and the SubjectPublicKeyInfo, each without its outer
+    /// SEQUENCE header: what a trust anchor is made of.
+    pub subject_der: Vec<u8>,
+    pub spki_der: Vec<u8>,
 }
 
 /// Read the subject, issuer, dates and names of a certificate (any issuer's, not just ours).
@@ -317,8 +321,10 @@ pub fn describe(der: &[u8]) -> Option<CertInfo> {
     let (tag1, v1, v) = take(validity)?;
     let (tag2, v2, _) = take(v)?;
     let (0x30, subject, t) = take(t)? else { return None };
-    let (_, _, mut t) = take(t)?; // SPKI
+    let (0x30, spki, mut t) = take(t)? else { return None };
     let mut info = CertInfo {
+        subject_der: subject.to_vec(),
+        spki_der: spki.to_vec(),
         subject: common_name(subject),
         issuer: common_name(issuer),
         not_before: read_time(tag1, v1)?,

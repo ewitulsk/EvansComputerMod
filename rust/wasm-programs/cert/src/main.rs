@@ -37,8 +37,10 @@ fn write(path: &str, data: &str) -> Result<(), String> {
     std::fs::write(path, data).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// The authority speaks plain http (nothing in the exchange is secret, and the
+/// certificate that comes back is checked): this program has no TLS in it.
 fn client() -> ecm_http::Client<ecm_http::sys::Sockets> {
-    ecm_http::Client::new(ecm_http::sys::Sockets { idle: Duration::from_secs(30) }).agent("cert/1")
+    ecm_http::sys::plain_client("cert/1", Duration::from_secs(30))
 }
 
 fn fetch(req: &Request) -> Result<ecm_http::Response, String> {

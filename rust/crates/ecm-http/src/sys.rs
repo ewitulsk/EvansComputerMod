@@ -109,9 +109,14 @@ impl Connector for Sockets {
     }
 }
 
-/// A client on the computer's network.
+/// A client on the computer's network, for http:// and https://.
 pub fn client(user_agent: &str) -> crate::Client<Sockets> {
     crate::Client::new(Sockets::default()).agent(user_agent)
+}
+
+/// A client for plain http:// only (see [`Client::plain`](crate::Client::plain)).
+pub fn plain_client(user_agent: &str, idle: Duration) -> crate::Client<Sockets> {
+    crate::Client::plain(Sockets { idle }).agent(user_agent)
 }
 
 fn json_str<'a>(obj: &'a str, key: &str) -> Option<&'a str> {
