@@ -85,7 +85,7 @@ pub fn download_path(url: &Url) -> String {
 /// The `localStorage` file of a page's host (`file:` pages share one).
 fn storage_name(url: &Url) -> String {
     let h = match url.scheme {
-        Scheme::Http => format!("{}_{}", url.host, url.port),
+        Scheme::Http | Scheme::Https => format!("{}_{}", url.host, url.port),
         _ => "local".into(),
     };
     h.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect()
@@ -527,7 +527,7 @@ impl<T: Transport + 'static> BrowserApp<T> {
                 } else if ct == "image/png" && !attachment {
                     let src = final_url.to_string();
                     Page::parse(final_url.clone(), &format!("<html><head><title>{}</title></head><body><img src=\"{src}\"></body></html>", final_url.file_name()))
-                } else if resp.status == 200 && final_url.scheme == Scheme::Http {
+                } else if resp.status == 200 && matches!(final_url.scheme, Scheme::Http | Scheme::Https) {
                     // Anything else from a server is a download.
                     let path = download_path(&final_url);
                     let saved = self.fetcher.borrow_mut().transport.save_file(&path, &resp.body);

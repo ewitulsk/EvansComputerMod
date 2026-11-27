@@ -1,0 +1,20 @@
+[package]
+name = "auth-api"
+version.workspace = true
+edition.workspace = true
+description = "Accounts, sessions, API keys and the device flow for the package repository."
+
+[dependencies]
+backend-common = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+argon2 = { workspace = true }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+reqwest = { workspace = true, features = ["cookies"] }

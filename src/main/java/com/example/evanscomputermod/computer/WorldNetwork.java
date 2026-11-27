@@ -232,6 +232,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         return 1 + (int) Math.floorMod(new SplittableRandom(seed ^ 0x4348415453455256L).nextLong(), 10L);
     }
 
+    /** The ring's package server (the data center of the chat village): its computer, fixed by the seed. */
+    public static UUID packageServer(long seed) {
+        return UUID.nameUUIDFromBytes((seed + ":" + chatVillage(seed) + ":" + REPO).getBytes(StandardCharsets.UTF_8));
+    }
+
     public int chatVillage() {
         return chat;
     }
@@ -797,7 +802,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * mrfd. The marker also records where the resolvers run ({@link DnsConfig}); a change of that
      * re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 9;
+    public static final int PROVISION_VERSION = 10;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
@@ -991,6 +996,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         Map<String, String> files = new HashMap<>();
         if (dns != null && DnsPlan.isDnsRole(role)) {
             if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
+            if (repo != null) files.put(VillageRepo.ANCHOR_FILE, repo.anchorFile());
             files.put("network.cfg", dns.serverNetwork(i, DnsPlan.host(role)));
             files.put("etc/resolv.conf", dns.resolvConf(i));
             files.put("services.cfg", dns.services(i, role));
@@ -999,6 +1005,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             return files;
         }
         if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
+        if (repo != null) files.put(VillageRepo.ANCHOR_FILE, repo.anchorFile());
         if (cells != null && (role.equals(CORE) || role.equals(CellPlan.STORE_ROLE) || CellPlan.spanK(role) > 0)) {
             cellConfigs(i, role, chat, cells, files);
             if (dns != null && files.containsKey("network.cfg"))
@@ -1044,7 +1051,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put(
                     "network.cfg",
                     "iface eth1 100." + oct + ".0." + VillageRepo.HOST + "/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
-            files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            // It is also the ring's authority (cad) and, when the server's repo.access is datacenter,
+            // the data center that offers a copy of the official repository (docs/REPO.md).
+            files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n"
+                    + VillageRepo.authorityCommands() + "\n" + VillageRepo.mirrorCommand() + "\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-repo"));
         } else if (role.endsWith(".router")) {
             files.put("services.cfg", "router on\n" + VillageDiscovery.SERVE + "\n");

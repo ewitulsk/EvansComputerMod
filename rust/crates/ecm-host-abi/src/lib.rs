@@ -29,6 +29,9 @@ pub mod tun;
 pub mod wifi;
 pub mod ui;
 pub mod apps;
+pub mod repo;
+pub mod keystore;
+pub mod player;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

@@ -167,6 +167,60 @@ public class ChildHostBridge {
         return parent.bridgeUploadCancel(ticket);
     }
 
+    // --- The server's repository link, the secret store and player prompts (docs/REPO.md) ---
+
+    public int repoSupported() {
+        return parent.bridgeRepoSupported();
+    }
+
+    public int repoBegin(byte[] request) {
+        return parent.bridgeRepoBegin(request);
+    }
+
+    public com.example.evanscomputermod.computer.repo.RepoPort.Progress repoPoll(int ticket) {
+        return parent.bridgeRepoPoll(ticket);
+    }
+
+    public int repoRead(int ticket, byte[] buf) {
+        return parent.bridgeRepoRead(ticket, buf);
+    }
+
+    public String repoError(int ticket) {
+        return parent.bridgeRepoError(ticket);
+    }
+
+    public int repoClose(int ticket) {
+        return parent.bridgeRepoClose(ticket);
+    }
+
+    public byte[] keystoreGet(String name, int[] err) {
+        return parent.bridgeKeystoreGet(name, err);
+    }
+
+    public int keystorePut(String name, byte[] value) {
+        return parent.bridgeKeystorePut(name, value);
+    }
+
+    public int keystoreDelete(String name) {
+        return parent.bridgeKeystoreDelete(name);
+    }
+
+    public byte[] keystorePublic(String name, boolean make, int[] err) {
+        return parent.bridgeKeystorePublic(name, make, err);
+    }
+
+    public byte[] keystoreSign(String name, byte[] message, int[] err) {
+        return parent.bridgeKeystoreSign(name, message, err);
+    }
+
+    public int keystoreConfirm(String text, int timeoutMs) {
+        return parent.bridgeKeystoreConfirm(text, timeoutMs);
+    }
+
+    public int playerLink(String url, String text) {
+        return parent.bridgePlayerLink(url, text);
+    }
+
     /** Bytes in one decoded frame, -1 for an unknown handle. */
     public int videoFrameBytes(int handle) {
         return parent.bridgeVideoFrameBytes(handle);

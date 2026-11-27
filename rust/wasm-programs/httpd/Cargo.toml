@@ -15,3 +15,8 @@ test = false
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+# Only the socket wrapper of ecm-http (no client); ecm-tls is the server half of TLS for --tls.
+ecm-http = { workspace = true }
+ecm-tls = { workspace = true }

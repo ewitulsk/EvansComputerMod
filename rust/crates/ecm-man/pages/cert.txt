@@ -1,0 +1,76 @@
+NAME
+    cert - certificates for this computer, and the authorities it trusts
+
+SYNOPSIS
+    cert trust <authority>
+    cert trust --key <hex> <name>
+    cert untrust <name>
+    cert authorities
+    cert request <name>... [--ca <authority>] [--webroot <dir>]
+    cert renew [--force]
+    cert show [file]
+
+DESCRIPTION
+    Manages what https needs on this computer (man tls): the
+    authorities it trusts for servers in the game, and its own
+    certificate.
+
+COMMANDS
+    trust authority
+        Trust the authority running at that name or address (cad, port
+        8555 unless you add :port). cert asks it for its key and name,
+        saves them in /etc/ssl/certs and prints the key: compare it
+        with what cad show prints on the authority if it matters who
+        it is. It also becomes the authority cert request asks.
+
+    trust --key hex name
+        Trust an authority by its key, typed in, without asking it.
+
+    untrust name
+        Stop trusting an authority.
+
+    authorities
+        List the trusted authorities.
+
+    request name... [--ca authority] [--webroot dir]
+        Get a certificate for this computer's name or address (several
+        can be given). cert makes a key, asks the authority, and proves
+        this computer answers at each name: the authority fetches a
+        page from port 80 of the name. cert answers that itself; if a
+        web server already uses port 80 here, give the folder it
+        serves with --webroot and cert puts the page there. The
+        certificate lasts 90 days.
+
+        --ca asks another authority than the one last trusted (the
+        default, when none was trusted, is the name ca).
+
+    renew [--force]
+        Ask again for the same names when fewer than 30 days are left
+        (or always, with --force).
+
+    show [file]
+        Who a certificate is for, who signed it and how long it is
+        good (this computer's, or the one in file).
+
+FILES
+    /etc/ssl/certs
+        Trusted authorities.
+
+    /etc/ssl/server.crt, /etc/ssl/private/server.key
+        This computer's certificate and key.
+
+    /etc/ssl/server.req
+        What was asked for, for cert renew.
+
+    /etc/ssl/ca.conf
+        The authority to ask.
+
+EXAMPLES
+      cert trust 10.0.0.1
+      cert request 10.0.0.2
+      cert request shop.ecm --webroot /srv/www
+      cert show
+      httpd 443 /srv/www --tls &
+
+SEE ALSO
+    tls, cad, httpd, pkg, curl

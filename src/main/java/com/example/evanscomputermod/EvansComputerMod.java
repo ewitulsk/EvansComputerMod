@@ -177,6 +177,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.CardsServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.command.RepoCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.computer.repo.PlayerPrompts.register(event.getDispatcher());
         com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());
     }
 

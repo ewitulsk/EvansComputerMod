@@ -534,6 +534,14 @@ mod net_module {
         do_http_request("GET", url.as_str(), None, vm)
     }
 
+    /// Is `url` reachable from this computer? "online", or the step that fails:
+    /// "no-link", "no-address", "no-route", "no-dns", "unreachable",
+    /// "certificate", "not-allowed", "failed".
+    #[pyfunction]
+    fn online(url: PyStrRef) -> String {
+        ecm_http::sys::online(url.as_str()).code().to_string()
+    }
+
     /// HTTP POST request.
     #[pyfunction(name = "http_post")]
     fn http_post_fn(
@@ -718,6 +726,20 @@ fn do_http_request(
     body: Option<&[u8]>,
     vm: &VirtualMachine,
 ) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+    // https:// goes through the shared client (TLS, certificates checked; see `man tls`).
+    if url.starts_with("https://") {
+        let (status, headers, body) = ecm_http::sys::simple_request(method, url, body).map_err(|e| vm.new_runtime_error(e))?;
+        // The same shape as an http:// answer: status, body (text), headers (lower-case names).
+        let h = vm.ctx.new_dict();
+        for (k, v) in headers {
+            let _ = h.set_item(&*k.to_lowercase(), vm.new_pyobj(v), vm);
+        }
+        let dict = vm.ctx.new_dict();
+        dict.set_item("status", vm.new_pyobj(status as i32), vm)?;
+        dict.set_item("body", vm.new_pyobj(String::from_utf8_lossy(&body).to_string()), vm)?;
+        dict.set_item("headers", h.into(), vm)?;
+        return Ok(dict.into());
+    }
     // Parse URL: http://host[:port]/path
     let url = if url.starts_with("http://") { &url[7..] } else { url };
     let (host_port, path) = match url.find('/') {

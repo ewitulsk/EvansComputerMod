@@ -1,0 +1,16 @@
+[package]
+name = "cert"
+version = "0.1.0"
+edition = "2021"
+description = "Certificates for this computer: trust an in-game authority, get a certificate from it, renew it, look at one (docs/TLS.md)."
+
+[[bin]]
+name = "cert"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ca = { workspace = true }
+ecm-tls = { workspace = true }
+ecm-http = { workspace = true }
+ecm-host-abi = { workspace = true }

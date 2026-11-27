@@ -1,4 +1,4 @@
-//! Addresses: `http://host[:port]/path?query#fragment`, `file:///path` and the
+//! Addresses: `http://host[:port]/path?query#fragment` (and `https://`), `file:///path` and the
 //! browser's own `about:` pages. Parsing, resolving a link against the page's
 //! address, and what the address bar makes of typed text.
 
@@ -7,6 +7,8 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scheme {
     Http,
+    /// HTTP over TLS (port 443 unless given).
+    Https,
     File,
     /// `about:blank`, `about:home`, …: pages the browser makes itself.
     About,
@@ -31,8 +33,10 @@ impl Url {
     pub fn parse(s: &str) -> Option<Url> {
         let s = s.trim();
         let (scheme, rest) = s.split_once(':')?;
-        match scheme.to_ascii_lowercase().as_str() {
-            "http" => {
+        let scheme = scheme.to_ascii_lowercase();
+        match scheme.as_str() {
+            "http" | "https" => {
+                let (kind, default_port) = if scheme == "https" { (Scheme::Https, 443) } else { (Scheme::Http, 80) };
                 let rest = rest.strip_prefix("//")?;
                 let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
                 let (authority, tail) = rest.split_at(end);
@@ -40,13 +44,13 @@ impl Url {
                 let authority = authority.rsplit('@').next().unwrap_or("");
                 let (host, port) = match authority.rsplit_once(':') {
                     Some((h, p)) if !p.is_empty() => (h, p.parse::<u16>().ok().filter(|p| *p > 0)?),
-                    Some((h, _)) => (h, 80),
-                    None => (authority, 80),
+                    Some((h, _)) => (h, default_port),
+                    None => (authority, default_port),
                 };
                 if host.is_empty() {
                     return None;
                 }
-                let mut u = Url { scheme: Scheme::Http, host: host.to_ascii_lowercase(), port, path: String::new(), query: None, fragment: None };
+                let mut u = Url { scheme: kind, host: host.to_ascii_lowercase(), port, path: String::new(), query: None, fragment: None };
                 u.set_tail(tail);
                 Some(u)
             }
@@ -82,12 +86,8 @@ impl Url {
             return None;
         }
         let lower = s.to_ascii_lowercase();
-        if lower.starts_with("http:") || lower.starts_with("file:") || lower.starts_with("about:") {
+        if lower.starts_with("http:") || lower.starts_with("https:") || lower.starts_with("file:") || lower.starts_with("about:") {
             return Url::parse(s);
-        }
-        if lower.starts_with("https:") {
-            // No TLS in the game: the same address over http.
-            return Url::parse(&format!("http:{}", &s[6..]));
         }
         if s.starts_with('/') {
             return Url::parse(&format!("file://{s}"));
@@ -133,6 +133,7 @@ impl Url {
         if let Some(rest) = href.strip_prefix("//") {
             return match self.scheme {
                 Scheme::Http => Url::parse(&format!("http://{rest}")),
+                Scheme::Https => Url::parse(&format!("https://{rest}")),
                 _ => Url::parse(&format!("file://{rest}")),
             };
         }
@@ -160,7 +161,7 @@ impl Url {
 
     /// `host` or `host:port` (the `Host:` header).
     pub fn authority(&self) -> String {
-        if self.port == 80 {
+        if self.port == if self.scheme == Scheme::Https { 443 } else { 80 } {
             self.host.clone()
         } else {
             format!("{}:{}", self.host, self.port)
@@ -202,6 +203,7 @@ impl fmt::Display for Url {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.scheme {
             Scheme::Http => write!(f, "http://{}{}", self.authority(), self.request_target())?,
+            Scheme::Https => write!(f, "https://{}{}", self.authority(), self.request_target())?,
             Scheme::File => write!(f, "file://{}", self.request_target())?,
             Scheme::About => write!(f, "about:{}", self.path)?,
         }
@@ -311,7 +313,12 @@ mod tests {
     fn address_bar_input() {
         assert_eq!(Url::from_input("100.66.0.10").unwrap().to_string(), "http://100.66.0.10/");
         assert_eq!(Url::from_input("/home/a.html").unwrap().to_string(), "file:///home/a.html");
-        assert_eq!(Url::from_input("https://x/y").unwrap().to_string(), "http://x/y");
+        let s = Url::from_input("https://x/y").unwrap();
+        assert_eq!((s.scheme.clone(), s.port, s.to_string().as_str()), (Scheme::Https, 443, "https://x/y"));
+        assert_eq!(Url::parse("https://x:8443/y").unwrap().authority(), "x:8443");
+        assert_eq!(s.join("/z").unwrap().to_string(), "https://x/z");
+        assert_eq!(s.join("//cdn/z").unwrap().to_string(), "https://cdn/z");
+        assert_eq!(s.join("http://plain/").unwrap().scheme, Scheme::Http);
         assert!(Url::from_input("two words").is_none());
         assert_eq!(Url::from_input("about:blank").unwrap().scheme, Scheme::About);
     }

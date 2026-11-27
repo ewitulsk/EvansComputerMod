@@ -1,33 +1,63 @@
 //! Just enough HTTP/1.0 for repositories: URLs, GET requests and responses, and
 //! the request line a tiny server needs. Pure; sockets live in the binary.
 
+/// How a repository is reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scheme {
+    /// Plain HTTP over the computer's network (a repository in the game: `pkg serve`).
+    Http,
+    /// HTTPS over the computer's network.
+    Https,
+    /// The server's own link to the official repository, when the server
+    /// offers it to this computer: no network needed. `host://repo/r/stable/`.
+    Host,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Url {
+    pub scheme: Scheme,
     pub host: String,
     pub port: u16,
     /// Base path, always ending in '/'.
     pub path: String,
 }
 
+/// The only host a `host://` address may name.
+pub const HOST_REPO: &str = "repo";
+
 impl Url {
     pub fn parse(s: &str) -> Result<Url, String> {
-        let rest = s.strip_prefix("http://").ok_or_else(|| format!("{}: only http:// URLs are supported", s))?;
+        let (scheme, rest, default_port) = if let Some(r) = s.strip_prefix("http://") {
+            (Scheme::Http, r, 80)
+        } else if let Some(r) = s.strip_prefix("https://") {
+            (Scheme::Https, r, 443)
+        } else if let Some(r) = s.strip_prefix("host://") {
+            (Scheme::Host, r, 0)
+        } else {
+            return Err(format!("{}: a repository address starts with http://, https:// or host://", s));
+        };
         let (hp, path) = match rest.find('/') {
             Some(i) => (&rest[..i], &rest[i..]),
             None => (rest, "/"),
         };
         let (host, port) = match hp.rfind(':') {
             Some(i) => (&hp[..i], hp[i + 1..].parse::<u16>().map_err(|_| format!("{}: bad port", s))?),
-            None => (hp, 80),
+            None => (hp, default_port),
         };
         if host.is_empty() || !host.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-') {
             return Err(format!("{}: bad host", s));
+        }
+        if scheme == Scheme::Host && (host != HOST_REPO || port != 0) {
+            return Err(format!("{}: the only host:// address is host://{}/...", s, HOST_REPO));
+        }
+        if path.bytes().any(|c| c <= b' ' || c == 0x7F || c == b'?' || c == b'#') {
+            return Err(format!("{}: bad path", s));
         }
         let mut path = path.to_string();
         if !path.ends_with('/') {
             path.push('/');
         }
-        Ok(Url { host: host.to_string(), port, path })
+        Ok(Url { scheme, host: host.to_ascii_lowercase(), port, path })
     }
 
     /// A file in this directory.
@@ -35,12 +65,24 @@ impl Url {
         format!("{}{}", self.path, file)
     }
 
-    pub fn display(&self) -> String {
-        if self.port == 80 {
-            format!("http://{}{}", self.host, self.path)
-        } else {
-            format!("http://{}:{}{}", self.host, self.port, self.path)
+    /// `scheme://host[:port]`, without a path: where the repository's API lives.
+    pub fn origin(&self) -> String {
+        match self.scheme {
+            Scheme::Http if self.port == 80 => format!("http://{}", self.host),
+            Scheme::Http => format!("http://{}:{}", self.host, self.port),
+            Scheme::Https if self.port == 443 => format!("https://{}", self.host),
+            Scheme::Https => format!("https://{}:{}", self.host, self.port),
+            Scheme::Host => format!("host://{}", self.host),
         }
+    }
+
+    pub fn display(&self) -> String {
+        format!("{}{}", self.origin(), self.path)
+    }
+
+    /// Bytes travel encrypted, or never leave the server (signing in needs one of the two).
+    pub fn private(&self) -> bool {
+        self.scheme != Scheme::Http
     }
 }
 
@@ -153,11 +195,19 @@ mod tests {
     #[test]
     fn urls() {
         let u = Url::parse("http://10.0.7.1:8080/repo").unwrap();
-        assert_eq!((u.host.as_str(), u.port, u.path.as_str()), ("10.0.7.1", 8080, "/repo/"));
+        assert_eq!((u.scheme, u.host.as_str(), u.port, u.path.as_str()), (Scheme::Http, "10.0.7.1", 8080, "/repo/"));
         assert_eq!(u.join("index.json"), "/repo/index.json");
         assert_eq!(Url::parse("http://apps.ecm").unwrap().display(), "http://apps.ecm/");
-        assert!(Url::parse("https://x").is_err());
-        assert!(Url::parse("http://a b/").is_err());
+        let s = Url::parse("https://Repo.EvanWitulski.com/r/stable").unwrap();
+        assert_eq!((s.scheme, s.port, s.display().as_str()), (Scheme::Https, 443, "https://repo.evanwitulski.com/r/stable/"));
+        assert_eq!(s.origin(), "https://repo.evanwitulski.com");
+        assert!(s.private() && !u.private());
+        assert_eq!(Url::parse("https://h:8443/").unwrap().origin(), "https://h:8443");
+        let h = Url::parse("host://repo/r/community/").unwrap();
+        assert_eq!((h.scheme, h.display().as_str(), h.origin().as_str()), (Scheme::Host, "host://repo/r/community/", "host://repo"));
+        for bad in ["ftp://x/", "http://a b/", "host://elsewhere/r/", "host://repo:80/", "http://h/a?b", "x"] {
+            assert!(Url::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

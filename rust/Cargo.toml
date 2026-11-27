@@ -157,6 +157,11 @@ members = [
     "wasm-programs/messages",
     "wasm-programs/contacts",
     "wasm-programs/sms",
+    "crates/ecm-tls",
+    "crates/ecm-http",
+    "crates/ecm-ca",
+    "wasm-programs/cad",
+    "wasm-programs/cert",
 ]
 resolver = "2"
 
@@ -191,6 +196,9 @@ ecm-tel = { path = "crates/ecm-tel" }
 ecm-rtp = { path = "crates/ecm-rtp" }
 ecm-tel-net = { path = "crates/ecm-tel-net" }
 ecm-tel-ui = { path = "crates/ecm-tel-ui" }
+ecm-tls = { path = "crates/ecm-tls" }
+ecm-http = { path = "crates/ecm-http" }
+ecm-ca = { path = "crates/ecm-ca" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -227,9 +235,10 @@ opt-level = 2
 [profile.release.package.terminal-os]
 opt-level = "s"
 
-# The Browser (with QuickJS) must stay under the runtime's 2 MiB compile-before-run limit
-# (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES): a bigger module starts interpreted, and an open
-# Browser stays interpreted, far too slow for typing into a page.
+# The Browser (with QuickJS and TLS) must stay under the runtime's 4 MiB compile-before-run
+# limit (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES; scripts/stage-wasm.sh holds it to 3.5 MiB):
+# a bigger module starts interpreted, and an open Browser stays interpreted, far too slow
+# for typing into a page.
 [profile.release.package.browser]
 opt-level = "s"
 strip = "symbols"
@@ -256,6 +265,54 @@ opt-level = "s"
 
 [profile.release.package.miniz_oxide]
 opt-level = "s"
+
+# TLS (ecm-tls: rustls with RustCrypto) is in every program that speaks https://, and
+# those must stay under the compile-before-run limit: the protocol, certificate and
+# public-key code is built for size. The bulk ciphers and hashes (chacha20, aes, sha2,
+# x25519, ed25519) keep the default: they carry every byte of a download.
+[profile.release.package.rustls]
+opt-level = "s"
+
+[profile.release.package.rustls-webpki]
+opt-level = "s"
+
+[profile.release.package.rustls-rustcrypto]
+opt-level = "s"
+
+[profile.release.package.rsa]
+opt-level = "s"
+
+[profile.release.package.p256]
+opt-level = "s"
+
+[profile.release.package.p384]
+opt-level = "s"
+
+[profile.release.package.ecdsa]
+opt-level = "s"
+
+[profile.release.package.elliptic-curve]
+opt-level = "s"
+
+[profile.release.package.crypto-bigint]
+opt-level = "s"
+
+[profile.release.package.der]
+opt-level = "s"
+
+[profile.release.package.webpki-roots]
+opt-level = "s"
+
+[profile.release.package.ecm-tls]
+opt-level = "s"
+
+[profile.release.package.ecm-http]
+opt-level = "s"
+
+# Lua (the C interpreter, mlua and TLS for net.http_get on https://) sits close to the
+# 4 MiB compile-before-run limit: drop the name section.
+[profile.release.package.lua]
+strip = "symbols"
 
 # Music (Symphonia MP3 decoding + the UI toolkit) stays well under the 2 MiB compile-before-run limit.
 [profile.release.package.music]

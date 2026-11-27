@@ -8,8 +8,12 @@
 //! - [`http`]: URLs and HTTP/1.0 messages
 //! - [`Repo`]: the `/etc/pkg/repos` list
 //! - [`client`]: the repository client (catalog, install, update, remove) shared by `pkg` and the App Store
+//! - [`account`]: signing in to a repository with accounts; publishing, likes and favorites
+//! - [`mirror`]: copying a repository (or a chosen part of it) into a folder to serve
 
+pub mod account;
 pub mod client;
+pub mod mirror;
 pub mod http;
 pub mod manifest;
 pub mod package;
@@ -28,6 +32,21 @@ pub mod paths {
     pub const ORIGIN_FILE: &str = ".pkg-origin";
     /// Published next to index.json by `pkg build --sign`.
     pub const PUBLISHER_KEY_FILE: &str = "publisher.pub";
+    /// What is installed besides apps (programs, libraries, source): `<id>/` with
+    /// the unpacked package, `.pkg-origin` and `.pkg-files` (what it put elsewhere).
+    pub const DB_DIR: &str = "/var/lib/pkg/db";
+    pub const FILES_FILE: &str = ".pkg-files";
+    /// Where a program's commands go (the shell looks here before the built-in ones).
+    pub const BIN_DIR: &str = "/bin";
+    /// Built-in commands; a package may not take one of their names.
+    pub const SYSTEM_BIN_DIR: &str = "/server-bin";
+    /// Where `import` (Python) and `require` (Lua) find installed libraries.
+    pub const PYTHON_LIB_DIR: &str = "/lib/python";
+    pub const LUA_LIB_DIR: &str = "/lib/lua";
+    /// Where source packages are unpacked: `/home/src/<id>/`.
+    pub const SOURCE_DIR: &str = "/home/src";
+    /// The repository sign-in when the computer has no secret store (docs/REPO.md).
+    pub const ACCOUNT_FILE: &str = "/etc/pkg/account";
 }
 
 /// One configured repository: `<name> <url> [<pinned key hex>]` per line.

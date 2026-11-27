@@ -24,5 +24,10 @@ ecm-web = { workspace = true }
 ecm-js = { workspace = true }
 ecm-host-abi = { workspace = true }
 
+# https:// pages (the program only; the app library stays free of sockets).
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-http = { workspace = true }
+ecm-tls = { workspace = true }
+
 [dev-dependencies]
 ecm-dns = { workspace = true }

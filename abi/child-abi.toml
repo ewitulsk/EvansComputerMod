@@ -125,6 +125,51 @@ upload_begin     = { params = ["i32", "i32"], results = ["i32"], doc = "(dir, le
 upload_poll      = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(ticket, out, cap) -> 0 picking, 1 receiving, 2 done; -1 unknown ticket, -5 interrupted, -10 cancelled, -11 too large, -12 storage full, -13 not permitted, -14 transfer failed, -15 no player with the add-on. out (cap >= 20): u64 received, u64 total, u32 path length, then the path of the new file (when done)" }
 upload_cancel    = { params = ["i32"], results = ["i32"], doc = "(ticket) stop waiting; the player's game stops sending -> 0, -1 unknown" }
 
+# --- the server's link to the package repository ------------------------------------
+# The Minecraft server makes HTTPS requests to the one package repository it is
+# configured for (server config repo.url) and hands the answers to a program: packages
+# without any in-game network. Offered to every computer, to repository servers only, or
+# to none (server config repo.access; docs/REPO.md). Needs the optional
+# evanscomputermod-internet mod on the server. A request is bytes:
+#   "<METHOD> <path>\n" then "<Name>: <value>\n" lines, a blank line, the body.
+# The path is under the repository's origin; only Authorization, Content-Type and
+# X-Ecm-* headers are passed on. At most 4 requests per computer at a time; they
+# belong to the program that began them and end when it exits.
+# Rust wrapper: ecm_host_abi::repo. Program: pkg (host://repo/... repositories).
+[imports.repo]
+repo_supported = { params = [], results = ["i32"], doc = "0 the server has no link (or the repository is off), 1 ready, 2 the link is kept for repository servers and this computer is not one" }
+repo_begin     = { params = ["i32", "i32"], results = ["i32"], doc = "(request, len) -> ticket > 0; -1 bad request, -2 too many at once, -4 no link, -5 interrupted, -13 not this computer" }
+repo_poll      = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(ticket, out, cap) -> 0 connecting, 1 answered (the body is arriving), 2 done; -1 unknown ticket, -5 interrupted, -14 failed (repo_error says why). out (cap >= 20): i32 HTTP status, u64 body bytes received, u64 body length (all ones: unknown)" }
+repo_read      = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(ticket, buf, cap) -> body bytes copied; 0 none right now (or the end, once repo_poll says done)" }
+repo_error     = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(ticket, buf, cap) -> length of the reason a request failed (UTF-8)" }
+repo_close     = { params = ["i32"], results = ["i32"], doc = "(ticket) forget a request -> 0" }
+
+# --- secret store ------------------------------------------------------------------
+# Secrets kept by the server, outside the computer's files, so no program reads them off
+# the disk. A secret belongs to the player who stored it (whoever last typed or clicked
+# on the computer) and is handed only to the system's own programs: a process whose
+# module was loaded from /server-bin, started from the shell or as a system app. Other
+# programs get -13. Signing keys (ed25519) never leave the store: a program asks for a
+# signature. keystore_confirm asks that player a yes/no question in their chat; only
+# their own click answers it.
+# Names: 1..64 of [a-z0-9._-]. Values: at most 4096 bytes; 64 names per player per
+# computer. The simulator has no store: -4 (callers fall back to files).
+# Rust wrapper: ecm_host_abi::keystore. Program: pkg (the repository sign-in and the
+# author's signing key).
+[imports.keystore]
+keystore_get     = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc = "(name, len, out, cap) -> value length (min(len, cap) bytes written); -2 nothing stored, -4 no store, -13 not permitted" }
+keystore_put     = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc = "(name, len, value, len) -> 0; -1 bad name or too large, -4 no store, -12 full, -13 not permitted" }
+keystore_delete  = { params = ["i32", "i32"], results = ["i32"], doc = "(name, len) -> 0 (also when there was nothing); -4, -13" }
+keystore_keygen  = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(name, len, out32) make an ed25519 key under name unless there is one; writes its public key -> 0; -1, -4, -12, -13" }
+keystore_public  = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(name, len, out32) the public key of the signing key under name -> 0; -2 none, -4, -13" }
+keystore_sign    = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(name, len, msg, len, out64) ed25519 signature over msg (at most 4096 bytes) -> 0; -2 no such key, -4, -13" }
+keystore_confirm = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(text, len, timeout_ms <= 120000) ask the player using the computer; blocks -> 1 yes, 0 no or no answer in time; -4 no store, -5 interrupted, -13 not permitted or nobody is using the computer" }
+
+# --- the player outside the game -----------------------------------------------------
+# Rust wrapper: ecm_host_abi::player. Program: pkg login.
+[imports.player]
+player_link = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc = "(url, len, text, len) put a clickable link in the chat of the player using the computer (Minecraft asks before opening their browser) -> 0; -4 nobody is using it, -13 the address is not under the package repository's origin (the only links the server shows), -52 not supported" }
+
 # --- mouse (Terminal GUI, graphics mode) -------------------------------------
 [imports.mouse]
 mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }

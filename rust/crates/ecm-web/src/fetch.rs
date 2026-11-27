@@ -1,4 +1,4 @@
-//! Fetching: `http://` as HTTP/1.0 with `Host:` (Content-Length, chunked
+//! Fetching: `http://` and `https://` as HTTP/1.0 with `Host:` (Content-Length, chunked
 //! bodies, redirects 301/302/303/307/308 up to five, form posts, per-host
 //! session cookies) and `file://`, over a [`Transport`]: the computer's
 //! sockets and disk in the program, a scripted one in tests.
@@ -24,6 +24,8 @@ pub enum FetchError {
     NotAllowed,
     /// The answer wasn't HTTP.
     Protocol(String),
+    /// An `https://` server's certificate was refused, or TLS failed: why.
+    Certificate(String),
     TooManyRedirects,
     /// A file that isn't there.
     NoFile(String),
@@ -47,10 +49,14 @@ impl FetchError {
             FetchError::NoNetwork => ("No network".into(), "This computer isn't connected to a network. Plug in a cable, join Wi-Fi or get a cellular signal.".into()),
             FetchError::NotAllowed => ("Not allowed".into(), "The Browser isn't allowed to use the network. Allow it in Settings > Apps > Browser.".into()),
             FetchError::Protocol(m) => ("Bad answer".into(), format!("The server's answer isn't HTTP: {m}")),
+            FetchError::Certificate(m) => (
+                "Can't make a private connection".into(),
+                format!("This https:// page was not loaded: {m}. Nothing was sent to the server."),
+            ),
             FetchError::TooManyRedirects => ("Too many redirects".into(), format!("The server redirected more than {MAX_REDIRECTS} times.")),
             FetchError::NoFile(p) => ("File not found".into(), format!("There is no file {p} on this computer.")),
             FetchError::Io(m) => ("Can't load the page".into(), m.clone()),
-            FetchError::Unsupported(s) => ("Can't open this address".into(), format!("The Browser opens http:// and file:// addresses, not {s}.")),
+            FetchError::Unsupported(s) => ("Can't open this address".into(), format!("The Browser opens http://, https:// and file:// addresses, not {s}.")),
         }
     }
 }
@@ -60,6 +66,10 @@ pub trait Transport {
     /// Send `request` to `host:port` over TCP and return everything the
     /// server sends back until it closes the connection.
     fn exchange(&mut self, host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, FetchError>;
+    /// The same over TLS (`https://`), the server's certificate checked.
+    fn exchange_tls(&mut self, host: &str, _port: u16, _request: &[u8]) -> Result<Vec<u8>, FetchError> {
+        Err(FetchError::Unsupported(format!("https://{host}/ (no TLS here)")))
+    }
     /// The bytes of a local file (a directory: its `index.html`).
     fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FetchError>;
     /// A folder's entries: (name, is a folder), sorted; None if it isn't one.
@@ -281,11 +291,15 @@ impl<T: Transport> Fetcher<T> {
                     return Ok(Response { url, status: 200, reason: "OK".into(), headers: vec![("Content-Type".into(), ct)], body: data, redirects });
                 }
                 Scheme::About => return Err(FetchError::Unsupported(url.to_string())),
-                Scheme::Http => {}
+                Scheme::Http | Scheme::Https => {}
             }
             let cookie = self.cookies.header(&url.host);
             let req = build_request(&method, &url, body.as_ref().map(|(c, b)| (c.as_str(), b.as_slice())), cookie.as_deref());
-            let mut raw = self.transport.exchange(&url.host, url.port, &req)?;
+            let mut raw = if url.scheme == Scheme::Https {
+                self.transport.exchange_tls(&url.host, url.port, &req)?
+            } else {
+                self.transport.exchange(&url.host, url.port, &req)?
+            };
             raw.truncate(MAX_BODY);
             let (status, reason, headers, data) = parse_response(&raw)?;
             for (k, v) in &headers {
@@ -414,5 +428,54 @@ mod tests {
         assert_eq!(f.get(&Url::parse("file:///home/my%20site/style.css").unwrap()).unwrap().content_type(), "text/css");
         assert_eq!(f.get(&Url::parse("file:///nope.html").unwrap()), Err(FetchError::NoFile("/nope.html".into())));
         assert!(f.transport.sent.is_empty());
+    }
+
+    /// A transport that only speaks TLS on 443 and plain on 80, noting which was asked.
+    #[derive(Default)]
+    struct Both {
+        asked: Vec<String>,
+        refuse: bool,
+    }
+
+    impl Transport for Both {
+        fn exchange(&mut self, host: &str, port: u16, _request: &[u8]) -> Result<Vec<u8>, FetchError> {
+            self.asked.push(format!("plain {host}:{port}"));
+            Ok(b"HTTP/1.0 302 Found\r\nLocation: https://secure.test/in\r\n\r\n".to_vec())
+        }
+        fn exchange_tls(&mut self, host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, FetchError> {
+            self.asked.push(format!("tls {host}:{port} {}", String::from_utf8_lossy(request).lines().next().unwrap_or("")));
+            if self.refuse {
+                return Err(FetchError::Certificate("certificate not trusted: no public authority signed it".into()));
+            }
+            Ok(b"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<p>private</p>".to_vec())
+        }
+        fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FetchError> {
+            Err(FetchError::NoFile(path.into()))
+        }
+    }
+
+    #[test]
+    fn https_goes_over_tls_and_says_why_when_refused() {
+        let mut f = Fetcher::new(Both::default());
+        // A plain page that redirects to https: the second hop is TLS on 443.
+        let r = f.get(&Url::parse("http://plain.test/").unwrap()).unwrap();
+        assert_eq!((r.status, r.url.to_string().as_str(), r.text().as_str()), (200, "https://secure.test/in", "<p>private</p>"));
+        assert_eq!(f.transport.asked, vec!["plain plain.test:80", "tls secure.test:443 GET /in HTTP/1.0"]);
+        f.transport.refuse = true;
+        let e = f.get(&Url::parse("https://secure.test:8443/x").unwrap()).unwrap_err();
+        let (title, text) = e.explain();
+        assert_eq!(title, "Can't make a private connection");
+        assert!(text.contains("no public authority signed it") && text.contains("Nothing was sent"), "{text}");
+        // A transport without TLS says so instead of quietly using http.
+        struct Plain;
+        impl Transport for Plain {
+            fn exchange(&mut self, _: &str, _: u16, _: &[u8]) -> Result<Vec<u8>, FetchError> {
+                panic!("https must never fall back to plain http")
+            }
+            fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FetchError> {
+                Err(FetchError::NoFile(path.into()))
+            }
+        }
+        assert!(matches!(Fetcher::new(Plain).get(&Url::parse("https://x/").unwrap()), Err(FetchError::Unsupported(_))));
     }
 }

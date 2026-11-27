@@ -47,6 +47,53 @@ pub struct IndexEntry {
     /// [`MAX_SCREENSHOTS`]), served like the icon.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub screenshots: Vec<String>,
+    /// `app` (the default, left out), `program`, `library` or `source`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// The manifest's `depends`, as written there (`id`, `id >= 1.2.0`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<String>,
+    /// Programs: the shell commands the package installs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+    /// Libraries: the modules the package installs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<String>,
+    /// The format level a client needs ([`manifest::FORMAT_LEVEL`]); 0 or 1 = any client.
+    #[serde(default, skip_serializing_if = "is_legacy_level")]
+    pub level: u32,
+    /// Hex ed25519 key of the author, when the author signed the package
+    /// (a repository with many publishers signs with its own key as well).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_key: Option<String>,
+    /// The author's signature over [`signed_message`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_signature: Option<String>,
+}
+
+fn is_legacy_level(l: &u32) -> bool {
+    *l <= 1
+}
+
+impl IndexEntry {
+    pub fn kind(&self) -> manifest::Kind {
+        manifest::Kind::parse(&self.kind).unwrap_or(manifest::Kind::App)
+    }
+
+    pub fn deps(&self) -> Vec<manifest::Dep> {
+        self.depends.iter().filter_map(|d| manifest::Dep::parse(d)).collect()
+    }
+
+    /// Can this client install it?
+    pub fn installable(&self) -> bool {
+        self.level <= manifest::FORMAT_LEVEL
+    }
+
+    /// The author's key when the author's signature over this entry checks out.
+    pub fn author(&self) -> Option<&str> {
+        let (k, sig) = (self.author_key.as_deref()?, self.author_signature.as_deref()?);
+        crate::sign::verify(k, &signed_message(&self.id, &self.version, &self.sha256), sig).then_some(k)
+    }
 }
 
 /// Most screenshots an index entry lists.
@@ -120,13 +167,54 @@ pub fn open(bytes: &[u8]) -> Result<Package, String> {
     }
     let text = std::str::from_utf8(&first.data).map_err(|_| "app.toml is not UTF-8")?;
     let m = manifest::parse(text).map_err(|e| e.to_string())?;
-    if !entries.iter().any(|e| !e.is_dir && e.path == m.entry) {
-        return Err(format!("entry {} is not in the package", m.entry));
+    let has = |p: &str| entries.iter().any(|e| !e.is_dir && e.path == p);
+    match m.kind {
+        manifest::Kind::App => {
+            if !has(&m.entry) {
+                return Err(format!("entry {} is not in the package", m.entry));
+            }
+        }
+        manifest::Kind::Program => {
+            if let Some(b) = m.bin.iter().find(|b| !has(b)) {
+                return Err(format!("bin {} is not in the package", b));
+            }
+        }
+        manifest::Kind::Library => {
+            for module in &m.provides {
+                if library_files(&entries, module).next().is_none() {
+                    return Err(format!("module {} is not in the package (python/{0}.py, python/{0}/, lua/{0}.lua or lua/{0}/)", module));
+                }
+            }
+            for e in entries.iter().filter(|e| !e.is_dir) {
+                if let Some((_, module)) = library_member(&e.path) {
+                    if !m.provides.iter().any(|p| p == module) {
+                        return Err(format!("{} belongs to module {}, which provides does not list", e.path, module));
+                    }
+                }
+            }
+        }
+        manifest::Kind::Source => {}
     }
     if !m.icon.is_empty() && !entries.iter().any(|e| !e.is_dir && e.path == m.icon) {
         return Err(format!("icon {} is not in the package", m.icon));
     }
     Ok(Package { manifest: m, entries, sha256: sha256_hex(bytes) })
+}
+
+/// For a library file `python/<module>...` or `lua/<module>...`: (language, top-level module).
+pub fn library_member(path: &str) -> Option<(&str, &str)> {
+    let (lang, rest) = path.split_once('/')?;
+    if lang != "python" && lang != "lua" {
+        return None;
+    }
+    let top = rest.split('/').next()?;
+    let module = if rest.contains('/') { top } else { top.strip_suffix(if lang == "python" { ".py" } else { ".lua" })? };
+    Some((lang, module))
+}
+
+/// The files of one module of a library package.
+pub fn library_files<'a>(entries: &'a [Entry], module: &'a str) -> impl Iterator<Item = &'a Entry> {
+    entries.iter().filter(move |e| !e.is_dir && library_member(&e.path).map(|(_, m)| m) == Some(module))
 }
 
 /// Build a package from files (relative path, bytes). `app.toml` must be among
@@ -169,6 +257,13 @@ pub fn index_entry(p: &Package, file: &str, size: u64, signature: Option<String>
         publisher: p.manifest.publisher.clone(),
         icon: p.manifest.icon.clone(),
         screenshots: screenshots(p),
+        kind: if p.manifest.kind == manifest::Kind::App { String::new() } else { p.manifest.kind.name().to_string() },
+        depends: p.manifest.depends.iter().map(|d| d.to_string()).collect(),
+        commands: p.manifest.commands().into_iter().map(str::to_string).collect(),
+        provides: p.manifest.provides.clone(),
+        level: if p.manifest.level() <= 1 { 0 } else { p.manifest.level() },
+        author_key: None,
+        author_signature: None,
     }
 }
 
@@ -183,6 +278,16 @@ pub fn parse_index(text: &str) -> Result<Index, String> {
         }
         if !manifest::safe_rel_path(&e.file) || e.file.contains('/') {
             return Err(format!("index.json: bad file name {}", e.file));
+        }
+        if !e.kind.is_empty() && manifest::Kind::parse(&e.kind).is_none() && e.installable() {
+            return Err(format!("index.json: bad kind '{}' in {}", e.kind, e.id));
+        }
+        if e.installable()
+            && (e.depends.iter().any(|d| manifest::Dep::parse(d).is_none())
+                || e.commands.iter().any(|c| !manifest::valid_command(c))
+                || e.provides.iter().any(|m| !manifest::valid_module(m)))
+        {
+            return Err(format!("index.json: bad dependency, command or module in {}", e.id));
         }
         let png = |m: &str| manifest::safe_rel_path(m) && m.ends_with(".png");
         if (!e.icon.is_empty() && !png(&e.icon))
@@ -341,6 +446,49 @@ mod tests {
         assert!(parse_index(bad).is_err());
         let bad_icon = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00","icon":"main.py"}]}"#;
         assert!(parse_index(bad_icon).is_err());
+    }
+
+    #[test]
+    fn kinds_in_packages_and_the_index() {
+        let toml = |rest: &str| format!("id = \"dev.me.x\"\nname = \"X\"\nversion = \"1.0.0\"\n{rest}").into_bytes();
+        // A program needs its bin files.
+        let prog = toml("kind = \"program\"\nbin = [\"hexdump.wasm\"]\ndepends = [\"dev.me.lib >= 1.0.0\"]\n");
+        assert!(build(vec![("app.toml".into(), prog.clone())]).unwrap_err().contains("bin hexdump.wasm"));
+        let (p, bytes) = build(vec![("app.toml".into(), prog), ("hexdump.wasm".into(), vec![0])]).unwrap();
+        let e = index_entry(&p, "x.ecmpkg", bytes.len() as u64, None);
+        assert_eq!((e.kind.as_str(), e.commands.clone(), e.level), ("program", vec!["hexdump".to_string()], 2));
+        assert_eq!(e.deps()[0].id, "dev.me.lib");
+        assert!(e.installable());
+        // A library needs every module it provides, and nothing else under python/ or lua/.
+        let lib = toml("kind = \"library\"\nprovides = [\"geo\", \"shapes\"]\n");
+        let files = vec![("app.toml".to_string(), lib.clone()), ("python/geo.py".to_string(), vec![1]), ("lua/geo/init.lua".to_string(), vec![2])];
+        assert!(build(files.clone()).unwrap_err().contains("module shapes"));
+        let mut ok = files.clone();
+        ok.push(("python/shapes/__init__.py".into(), vec![3]));
+        ok.push(("README.md".into(), vec![4]));
+        let (p, _) = build(ok.clone()).unwrap();
+        assert_eq!(library_files(&p.entries, "geo").count(), 2);
+        ok.push(("python/os.py".into(), vec![5]));
+        assert!(build(ok).unwrap_err().contains("module os"));
+        assert_eq!(library_member("python/a/b/c.py"), Some(("python", "a")));
+        assert_eq!(library_member("lua/a.lua"), Some(("lua", "a")));
+        assert_eq!(library_member("python/notes.txt"), None);
+        assert_eq!(library_member("docs/a.py"), None);
+        // Source needs nothing; an index entry from a newer format is listed but not installable.
+        build(vec![("app.toml".into(), toml("kind = \"source\"\n")), ("a.py".into(), vec![1])]).unwrap();
+        let newer = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00","kind":"hologram","level":9}]}"#;
+        assert!(!parse_index(newer).unwrap().packages[0].installable());
+        let bad = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00","kind":"hologram"}]}"#;
+        assert!(parse_index(bad).is_err());
+        // The author's signature travels in the entry.
+        let (pk, sk) = crate::sign::keypair_from_seed(&[5u8; 32]);
+        let mut e = e;
+        assert_eq!(e.author(), None);
+        e.author_key = Some(pk.clone());
+        e.author_signature = Some(crate::sign::sign(&sk, &signed_message(&e.id, &e.version, &e.sha256)));
+        assert_eq!(e.author(), Some(pk.as_str()));
+        e.version = "1.0.1".into();
+        assert_eq!(e.author(), None);
     }
 
     #[test]

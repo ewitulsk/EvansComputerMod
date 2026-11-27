@@ -1,0 +1,15 @@
+[package]
+name = "ecm-http"
+version = "0.1.0"
+edition = "2021"
+description = "The HTTP client programs on a computer share: http:// and https:// (ecm-tls), HTTP/1.1 with Content-Length and chunked bodies, redirects, bodies streamed to a file with progress, and the staged connectivity check. The protocol is tested on the host; sockets are the computer's (sys) or the host's (native, for tests and tools)."
+
+[lib]
+name = "ecm_http"
+doctest = false
+
+[dependencies]
+ecm-tls = { path = "../ecm-tls" }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-host-abi = { workspace = true }

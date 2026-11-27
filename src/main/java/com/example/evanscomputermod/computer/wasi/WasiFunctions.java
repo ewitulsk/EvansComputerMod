@@ -962,6 +962,129 @@ public class WasiFunctions {
         addEnv(sink, "upload_cancel", I32, RET_I32, (inst, args) ->
                 retI32(childBridge == null ? -1 : childBridge.uploadCancel((int) args[0])));
 
+        // === The server's link to the package repository (abi/child-abi.toml [imports.repo]) ===
+        // An app needs `network` (it reaches a server) and, to publish or sign in, `packages`.
+
+        addEnv(sink, "repo_supported", NO_PARAMS, RET_I32, (inst, args) ->
+                retI32(childBridge == null ? 0 : childBridge.repoSupported()));
+
+        addEnv(sink, "repo_begin", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int len = (int) args[1];
+            if (len <= 0 || len > 9 * 1024 * 1024) return retI32(-1);
+            if (!allowed(state, "network")) return retI32(EACCES);
+            byte[] req = state.mem().readBytes((int) args[0], len);
+            if (state.sandbox != null && !(req.length > 3 && req[0] == 'G' && req[1] == 'E' && req[2] == 'T' && req[3] == ' ')
+                    && !allowed(state, "packages")) return retI32(EACCES);
+            return retI32(childBridge.repoBegin(req));
+        });
+
+        // (ticket, out, cap) -> 0 connecting, 1 answered, 2 done; out: i32 status, u64 received, u64 total.
+        addEnv(sink, "repo_poll", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            var p = childBridge.repoPoll((int) args[0]);
+            if ((int) args[2] >= 20) {
+                WasmMemory mem = state.mem();
+                int out = (int) args[1];
+                mem.writeInt(out, p.status());
+                mem.writeLong(out + 4, p.received());
+                mem.writeLong(out + 12, p.total() < 0 ? -1L : p.total());
+            }
+            return retI32(p.state());
+        });
+
+        addEnv(sink, "repo_read", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            int cap = (int) args[2];
+            if (cap <= 0) return retI32(0);
+            byte[] buf = new byte[Math.min(cap, 64 * 1024)];
+            int n = childBridge.repoRead((int) args[0], buf);
+            if (n > 0) state.mem().writeBytes((int) args[1], buf, 0, n);
+            return retI32(Math.max(n, 0));
+        });
+
+        addEnv(sink, "repo_error", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(0);
+            byte[] e = childBridge.repoError((int) args[0]).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            int n = Math.min(e.length, Math.max((int) args[2], 0));
+            if (n > 0) state.mem().writeBytes((int) args[1], e, 0, n);
+            return retI32(e.length);
+        });
+
+        addEnv(sink, "repo_close", I32, RET_I32, (inst, args) ->
+                retI32(childBridge == null ? 0 : childBridge.repoClose((int) args[0])));
+
+        // === The secret store (abi/child-abi.toml [imports.keystore]) ===
+        // Answers the system's own programs only (ComputerInstance.keystoreUser); -4 where there is none.
+
+        addEnv(sink, "keystore_get", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            String name = state.mem().readString((int) args[0], Math.min((int) args[1], 256));
+            int[] err = new int[1];
+            byte[] v = childBridge.keystoreGet(name, err);
+            if (v == null) return retI32(err[0]);
+            int n = Math.min(v.length, Math.max((int) args[3], 0));
+            if (n > 0) state.mem().writeBytes((int) args[2], v, 0, n);
+            return retI32(v.length);
+        });
+
+        addEnv(sink, "keystore_put", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int len = (int) args[3];
+            if (len < 0 || len > com.example.evanscomputermod.computer.repo.KeyStore.MAX_VALUE) return retI32(-1);
+            String name = state.mem().readString((int) args[0], Math.min((int) args[1], 256));
+            return retI32(childBridge.keystorePut(name, state.mem().readBytes((int) args[2], len)));
+        });
+
+        addEnv(sink, "keystore_delete", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            return retI32(childBridge.keystoreDelete(state.mem().readString((int) args[0], Math.min((int) args[1], 256))));
+        });
+
+        addEnv(sink, "keystore_keygen", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int[] err = new int[1];
+            byte[] k = childBridge.keystorePublic(state.mem().readString((int) args[0], Math.min((int) args[1], 256)), true, err);
+            if (k == null) return retI32(err[0]);
+            state.mem().writeBytes((int) args[2], k, 0, 32);
+            return retI32(0);
+        });
+
+        addEnv(sink, "keystore_public", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int[] err = new int[1];
+            byte[] k = childBridge.keystorePublic(state.mem().readString((int) args[0], Math.min((int) args[1], 256)), false, err);
+            if (k == null) return retI32(err[0]);
+            state.mem().writeBytes((int) args[2], k, 0, 32);
+            return retI32(0);
+        });
+
+        addEnv(sink, "keystore_sign", I32x5, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int len = (int) args[3];
+            if (len < 0 || len > 4096) return retI32(-1);
+            int[] err = new int[1];
+            byte[] sig = childBridge.keystoreSign(state.mem().readString((int) args[0], Math.min((int) args[1], 256)),
+                    state.mem().readBytes((int) args[2], len), err);
+            if (sig == null) return retI32(err[0]);
+            state.mem().writeBytes((int) args[4], sig, 0, 64);
+            return retI32(0);
+        });
+
+        addEnv(sink, "keystore_confirm", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            String text = state.mem().readString((int) args[0], Math.min(Math.max((int) args[1], 0), 300));
+            return retI32(childBridge.keystoreConfirm(text, (int) args[2]));
+        });
+
+        // === A link for the player outside the game (abi/child-abi.toml [imports.player]) ===
+        addEnv(sink, "player_link", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-52);
+            String url = state.mem().readString((int) args[0], Math.min(Math.max((int) args[1], 0), 600));
+            String text = state.mem().readString((int) args[2], Math.min(Math.max((int) args[3], 0), 200));
+            return retI32(childBridge.playerLink(url, text));
+        });
+
         // 1 when the server can decode video (the optional evanscomputermod-ffmpeg sidecar), else 0.
         addEnv(sink, "video_supported", NO_PARAMS, RET_I32, (inst, args) ->
                 retI32(childBridge != null && childBridge.videoSupported() ? 1 : 0));

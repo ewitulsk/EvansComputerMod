@@ -12,3 +12,4 @@ test = false
 ecm-apps-ui = { path = "../../crates/ecm-apps-ui" }
 ecm-ui = { workspace = true }
 ecm-pkg = { package = "pkg", path = "../pkg" }
+ecm-host-abi = { workspace = true }

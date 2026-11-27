@@ -1,0 +1,6 @@
+id = "dev.you.tools"
+name = "Tools"
+version = "1.2.0"
+kind = "program"
+bin = ["bin/hexdump.wasm", "b64.wasm"]
+depends = ["dev.you.geometry >= 1.0.0", "dev.you.other"]

@@ -15,6 +15,10 @@ _original_import = builtins.__import__
 import shell as _terminal_module
 
 
+# Where `import` looks on the computer, in order.
+_IMPORT_ROOTS = ('', 'lib/python/')
+
+
 def _virtual_fs_import(name, globals=None, locals=None, fromlist=(), level=0):
     """Custom __import__ that checks virtual filesystem first."""
 
@@ -22,16 +26,16 @@ def _virtual_fs_import(name, globals=None, locals=None, fromlist=(), level=0):
     if level > 0 or name in sys.modules:
         return _original_import(name, globals, locals, fromlist, level)
 
-    # Check if module exists in virtual filesystem
-    module_file = name.replace('.', '/') + '.py'
-    if _terminal_module.file_exists(module_file):
-        # Load from virtual filesystem
-        return _load_virtual_module(name, module_file, False)
-
-    # Check for package
-    package_init = name.replace('.', '/') + '/__init__.py'
-    if _terminal_module.file_exists(package_init):
-        return _load_virtual_module(name, package_init, True)
+    # The computer's own files first (from its root), then installed
+    # libraries (pkg puts library packages in /lib/python).
+    base = name.replace('.', '/')
+    for root in _IMPORT_ROOTS:
+        module_file = root + base + '.py'
+        if _terminal_module.file_exists(module_file):
+            return _load_virtual_module(name, module_file, False)
+        package_init = root + base + '/__init__.py'
+        if _terminal_module.file_exists(package_init):
+            return _load_virtual_module(name, package_init, True)
 
     # Fall back to original import
     return _original_import(name, globals, locals, fromlist, level)

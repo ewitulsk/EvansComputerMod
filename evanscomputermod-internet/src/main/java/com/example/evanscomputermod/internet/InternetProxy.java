@@ -18,15 +18,30 @@ import java.util.function.Consumer;
  * "this network" never, and private/LAN ranges (10/8, 172.16/12, 192.168/16,
  * 100.64/10) only when the proxy was made with {@code allowLan} (the server's
  * {@code -Devanscomputermod.internet.allowLan=true}). A {@link TestSite}'s own
- * address and port are always reachable while it is open.
+ * address and port are always reachable while it is open. Addresses in
+ * {@link #BLOCKED} are refused whatever else is allowed (the package repository,
+ * when the server keeps it for its repository servers: {@link RepoBlock}).
+ *
+ * <p>Downloads are windowed: up to {@link #WINDOW} bytes (and never more than
+ * the computer's own receive window) travel before the first is acknowledged,
+ * so a transfer is limited by the game's network and the optional
+ * {@code maxKbps} cap, not by one segment per acknowledgement.
  */
 public final class InternetProxy implements InternetUplink {
     public static final byte[] MAC = InternetUplinks.GATEWAY_MAC;
     private static final int GATEWAY = 0x0a000001, MAX_FLOWS = 256, MAX_BUFFER = 65536;
+    /** Bytes per segment towards a computer. */
+    static final int SEGMENT = 1400;
+    /** The most unacknowledged bytes in flight towards a computer. */
+    static final int WINDOW = 32 * SEGMENT;
+    /** Addresses computers may not reach through any proxy (see {@link RepoBlock}). */
+    static volatile Set<Integer> BLOCKED = Set.of();
     /** (address << 16 | port) of open {@link TestSite}s, reachable even with the LAN blocked. */
     static final Set<Long> EXEMPT = ConcurrentHashMap.newKeySet();
     private final Consumer<byte[]> output;
     private final boolean allowLan;
+    /** Download bytes one connection may be sent per tick (10 ms); 0 = no cap. */
+    private final int bytesPerTick;
     private final ScheduledExecutorService worker =
             Executors.newSingleThreadScheduledExecutor(
                     r -> {
@@ -49,6 +64,15 @@ public final class InternetProxy implements InternetUplink {
         byte[] pending;
         int pendingFlags, retries;
         byte[] writing = new byte[0];
+        /** Data segments sent and not yet acknowledged, oldest first; {@code seq} is the first one's. */
+        final ArrayDeque<byte[]> unacked = new ArrayDeque<>();
+        int inFlight;
+        /** The computer's receive window, from its last segment. */
+        int peerWindow = 8 * SEGMENT;
+        /** The host's side has ended; FIN goes out once everything is acknowledged. */
+        boolean eof;
+        /** Download allowance left this tick (with a cap). */
+        long tokens;
 
         void close() {
             try {
@@ -59,8 +83,15 @@ public final class InternetProxy implements InternetUplink {
     }
 
     public InternetProxy(Consumer<byte[]> output, boolean allowLan) {
+        this(output, allowLan, 0);
+    }
+
+    /** @param maxKbps the most one connection may download, in kilobytes per second (0 = no cap) */
+    public InternetProxy(Consumer<byte[]> output, boolean allowLan, int maxKbps) {
         this.output = output;
         this.allowLan = allowLan;
+        // kB/s over 100 ticks a second; at least one small segment per tick so a low cap still moves.
+        this.bytesPerTick = maxKbps <= 0 ? 0 : Math.max(maxKbps * 10, 64);
         worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.MILLISECONDS);
     }
 
@@ -123,12 +154,43 @@ public final class InternetProxy implements InternetUplink {
                                 sendTcp(f, f.pendingFlags, f.pending, false);
                             }
                         } else if (!f.fin) {
-                            ByteBuffer b = ByteBuffer.allocate(1400);
-                            int count = tcp.read(b);
-                            if (count > 0) {
-                                f.touched = now;
-                                sendTcp(f, 24, Arrays.copyOf(b.array(), count), true);
-                            } else if (count < 0) {
+                            // Nothing acknowledged for a second: send the oldest segment again.
+                            if (f.inFlight > 0 && now - f.lastSent > 1000) {
+                                if (f.retries++ >= 10) {
+                                    f.close();
+                                    it.remove();
+                                    continue;
+                                }
+                                sendData(f, f.seq, f.unacked.peekFirst());
+                                f.lastSent = now;
+                            }
+                            if (bytesPerTick > 0) f.tokens = Math.min(f.tokens + bytesPerTick, Math.max(bytesPerTick, SEGMENT));
+                            int window = Math.min(WINDOW, Math.max(f.peerWindow, SEGMENT));
+                            while (!f.eof && f.inFlight < window) {
+                                int room = Math.min(SEGMENT, window - f.inFlight);
+                                if (bytesPerTick > 0) {
+                                    if (f.tokens <= 0) break;
+                                    room = (int) Math.min(room, f.tokens);
+                                }
+                                ByteBuffer b = ByteBuffer.allocate(room);
+                                int count = tcp.read(b);
+                                if (count > 0) {
+                                    f.touched = now;
+                                    byte[] data = Arrays.copyOf(b.array(), count);
+                                    sendData(f, (f.seq + f.inFlight) & 0xffffffffL, data);
+                                    if (f.inFlight == 0) {
+                                        f.lastSent = now;
+                                        f.retries = 0;
+                                    }
+                                    f.unacked.addLast(data);
+                                    f.inFlight += count;
+                                    f.tokens -= count;
+                                } else {
+                                    if (count < 0) f.eof = true;
+                                    break;
+                                }
+                            }
+                            if (f.eof && f.inFlight == 0) {
                                 f.fin = true;
                                 sendTcp(f, 17, new byte[0], true);
                             }
@@ -253,6 +315,26 @@ public final class InternetProxy implements InternetUplink {
             }
             if (f == null) return;
             f.touched = System.currentTimeMillis();
+            f.peerWindow = u16(frame, offset + 14);
+            if ((flags & 16) != 0 && f.pending == null && f.inFlight > 0) {
+                // A cumulative acknowledgement: drop what it covers.
+                long acked = (ack - f.seq) & 0xffffffffL;
+                if (acked > 0 && acked <= f.inFlight) {
+                    f.seq = ack;
+                    f.inFlight -= (int) acked;
+                    f.lastSent = f.touched;
+                    f.retries = 0;
+                    while (acked > 0 && !f.unacked.isEmpty()) {
+                        byte[] first = f.unacked.pollFirst();
+                        if (first.length <= acked) {
+                            acked -= first.length;
+                        } else {
+                            f.unacked.addFirst(Arrays.copyOfRange(first, (int) acked, first.length));
+                            acked = 0;
+                        }
+                    }
+                }
+            }
             if ((flags & 16) != 0 && f.pending != null) {
                 long end =
                         (f.seq + f.pending.length + ((f.pendingFlags & 3) != 0 ? 1 : 0))
@@ -283,6 +365,7 @@ public final class InternetProxy implements InternetUplink {
 
     /** Whether computers may reach {@code ip:port} through this proxy (see the class comment). */
     boolean routable(int ip, int port) {
+        if (BLOCKED.contains(ip)) return false;
         int first = ip >>> 24;
         if (first == 0 || first >= 224 || first == 127 || (ip & 0xffff0000) == 0xa9fe0000) return false;
         if (allowLan || !isLan(ip)) return true;
@@ -351,6 +434,21 @@ public final class InternetProxy implements InternetUplink {
             f.retries = 0;
         }
         if (pending || flags == f.pendingFlags) f.lastSent = System.currentTimeMillis();
+        output.accept(ip(f.mac, f.key.target, f.key.source, 6, tcp));
+    }
+
+    /** One data segment at {@code seq} (not the flow's own: several may be in flight). */
+    private void sendData(Flow f, long seq, byte[] payload) {
+        byte[] tcp = new byte[20 + payload.length];
+        put16(tcp, 0, f.key.dport);
+        put16(tcp, 2, f.key.sport);
+        put32(tcp, 4, (int) seq);
+        put32(tcp, 8, (int) f.receive);
+        tcp[12] = 0x50;
+        tcp[13] = 24;
+        put16(tcp, 14, MAX_BUFFER - f.writing.length - 1);
+        System.arraycopy(payload, 0, tcp, 20, payload.length);
+        put16(tcp, 16, transportChecksum(f.key.target, f.key.source, 6, tcp));
         output.accept(ip(f.mac, f.key.target, f.key.source, 6, tcp));
     }
 

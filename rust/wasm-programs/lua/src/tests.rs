@@ -972,6 +972,14 @@ fn require_finds_the_computers_files_and_modules_are_globals() {
     std::fs::write(d.join("lib/pkg/init.lua"), "return 'pkg'").unwrap();
     std::fs::write(d.join("apps/demo/helper.lua"), "return 42").unwrap();
     std::fs::write(d.join("bad.lua"), "return (").unwrap();
+    // Installed libraries (pkg puts library packages in /lib/lua).
+    std::fs::create_dir_all(d.join("lib/lua/shapes")).unwrap();
+    std::fs::write(d.join("lib/lua/geo.lua"), "return { area = function(w, h) return w * h end }").unwrap();
+    std::fs::write(d.join("lib/lua/shapes/init.lua"), "return { sides = function(n) return n end }").unwrap();
+    std::fs::write(d.join("lib/lua/shapes/square.lua"), "return 4").unwrap();
+    // A file of the computer's own wins over an installed library of the same name.
+    std::fs::write(d.join("lib/lua/own.lua"), "return 'library'").unwrap();
+    std::fs::write(d.join("own.lua"), "return 'mine'").unwrap();
     let l = lua();
     set(&l, "DIR", p(&d));
     run(
@@ -985,6 +993,9 @@ package.loaded.shell = { read_file = function(path)
 end }
 assert(require("lib.greet").hello("ann") == "hi ann")
 assert(require("lib.pkg") == "pkg")
+assert(require("geo").area(2, 3) == 6)
+assert(require("shapes").sides(5) == 5 and require("shapes.square") == 4)
+assert(require("own") == "mine")
 arg = { [0] = "apps/demo/main.lua" }
 assert(require("helper") == 42)
 local ok, e = pcall(require, "missing.mod")

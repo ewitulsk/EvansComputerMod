@@ -1,0 +1,6 @@
+id = "dev.you.luaapp"
+name = "Lua App"
+version = "1.0.0"
+kind = "app"
+entry = "main.lua"
+depends = ["dev.you.geometry = 1.0.0"]

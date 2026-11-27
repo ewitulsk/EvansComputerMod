@@ -83,6 +83,13 @@ public final class UploadPort {
         operatorSupport = b == null ? SUPPORT_NONE : support(b, player);
     }
 
+    /** The player who last used this computer, if they are still around. Any thread. */
+    public ServerPlayer operator() {
+        var o = operator;
+        ServerPlayer p = o == null ? null : o.get();
+        return p == null || p.isRemoved() ? null : p;
+    }
+
     /** Is {@code player} already the operator noted through {@code via}? Any thread (input off the server thread checks it). */
     public boolean isOperator(ServerPlayer player, IComputerHost via) {
         var o = operator;

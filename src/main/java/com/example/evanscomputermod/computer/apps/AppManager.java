@@ -195,6 +195,7 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
                     try {
                         AppManifest m = AppManifest.parse(Files.readString(toml, StandardCharsets.UTF_8));
                         if (!m.id().equals(folder)) throw new AppManifest.ManifestException("id", "'" + m.id() + "' is installed in /apps/" + folder);
+                        if (!m.isApp()) throw new AppManifest.ManifestException("kind", "a " + m.kind() + " is not an app (pkg installs it elsewhere)");
                         if (!Files.isRegularFile(d.resolve(m.entry()))) throw new AppManifest.ManifestException("entry", m.entry() + " is missing");
                         found.put(m.id(), m);
                     } catch (AppManifest.ManifestException | IOException e) {
@@ -291,10 +292,11 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         String entry = "apps/" + m.id() + "/" + m.entry();
         Path program;
         List<String> argv = new ArrayList<>();
-        if (m.isPython()) {
-            program = programResolver.apply("python");
-            if (program == null || !Files.isRegularFile(program)) throw new AppException(AppException.NOT_FOUND, "python is not available");
-            argv.add("python");
+        if (m.isPython() || m.isLua()) {
+            String interpreter = m.isPython() ? "python" : "lua";
+            program = programResolver.apply(interpreter);
+            if (program == null || !Files.isRegularFile(program)) throw new AppException(AppException.NOT_FOUND, interpreter + " is not available");
+            argv.add(interpreter);
             argv.add("/" + entry);
         } else {
             program = root.resolve(entry);

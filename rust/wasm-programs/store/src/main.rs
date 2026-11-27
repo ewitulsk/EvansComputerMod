@@ -62,6 +62,12 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // The sign-in lives in the computer's secret store; the sign-in page's link goes to the player's chat.
+    app.secrets = Box::new(ecm_pkg::account::HostSecrets::new(""));
+    app.show_link = |url, text| {
+        let _ = ecm_host_abi::player::show_link(url, text);
+    };
+    app.process();
     if let Some(id) = arg(&args, "--app") {
         app.show(&id);
     }

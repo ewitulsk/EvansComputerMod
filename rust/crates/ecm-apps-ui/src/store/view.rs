@@ -10,6 +10,7 @@
 //! sidebar) lists the repositories with Remove, and adds one by its URL.
 
 use super::{Action, Card, Detail, JobKind, Store, Tab};
+use ecm_pkg::manifest::Kind;
 use crate::appctl::PermState;
 use crate::widgets::{icon, pill, progress_bar, size_text, trust_badge, GREEN, RED};
 use ecm_ui::element::{button, column, grid, image, label, list, panel, row, scroll_view, spacer, tabs, text_field, Element};
@@ -33,7 +34,45 @@ pub fn view(s: &S, cx: &ViewCtx) -> Element {
 
 fn tab_titles(st: &Store) -> Vec<String> {
     let n = st.updates().len();
-    vec![TABS[0].to_string(), if n > 0 { format!("Updates ({n})") } else { TABS[1].to_string() }, TABS[2].to_string()]
+    let mut t = vec![TABS[0].to_string(), if n > 0 { format!("Updates ({n})") } else { TABS[1].to_string() }, TABS[2].to_string()];
+    // Favorites belong to an account: the tab is there while signed in.
+    if st.account.is_some() {
+        t.push("Favorites".to_string());
+    }
+    t
+}
+
+/// The account at the repository that has them: sign in (a code for the browser), or who is signed in.
+fn account_section(s: &S, st: &Store) -> Element {
+    let mut c = column().gap(6).child(label("Account").style("title"));
+    let Some(repo) = &st.account_repo else { return c.child(label("No repository here has accounts.").style("caption")) };
+    if let Some(l) = &st.login {
+        let cancel = s.clone();
+        return c
+            .child(label("Open this page in your browser and enter the code:"))
+            .child(label(l.url.clone()).id("login_url"))
+            .child(label(l.code.clone()).style("title").id("login_code"))
+            .child(label("A link is in your chat too. This page updates by itself once you approve.").style("caption"))
+            .child(row().child(spacer()).child(button("Cancel").id("cancel_sign_in").on_click(move |_, _| cancel.borrow_mut().cancel_sign_in())));
+    }
+    match &st.account {
+        Some(handle) => {
+            let out = s.clone();
+            c = c.child(
+                row()
+                    .gap(6)
+                    .child(label(format!("Signed in to {} as {}", repo.name, handle)).grow(1).id("signed_in_as"))
+                    .child(button("Sign out").id("sign_out").on_click(move |_, _| out.borrow_mut().sign_out())),
+            );
+        }
+        None => {
+            let inn = s.clone();
+            c = c
+                .child(label(format!("Anyone can install from {}. Sign in to like and favorite, and to publish with pkg publish.", repo.name)).style("caption"))
+                .child(row().child(spacer()).child(button("Sign in").style("primary").id("sign_in").on_click(move |_, _| inn.borrow_mut().sign_in())));
+        }
+    }
+    c
 }
 
 fn header(s: &S, compact: bool) -> Element {
@@ -53,6 +92,9 @@ fn repos_page(s: &S, st: &Store, back: bool, h: i32) -> Element {
     if back {
         let b = s.clone();
         c = c.child(row().child(button("< Back").id("repos_back").on_click(move |_, _| b.borrow_mut().close_repos())));
+    }
+    if st.account_repo.is_some() {
+        c = c.child(account_section(s, st));
     }
     c = c.child(label("Repositories").style("title"));
     if st.repos.is_empty() {
@@ -156,6 +198,8 @@ fn action_button_as(s: &S, card: &Card, prefix: &str) -> Element {
             let s = s.clone();
             button("Open").id(key).on_click(move |_, _| s.borrow_mut().act(&id))
         }
+        Action::Installed => button("Installed").id(key).enabled(false),
+        Action::NotOffered => button("Not offered here").id(key).enabled(false),
         Action::Busy { label: l, .. } => button(l.clone()).id(key).enabled(false),
         Action::Refused => button("Unsigned").id(key).enabled(false),
     }
@@ -181,14 +225,18 @@ fn app_row(s: &S, st: &Store, cx: &ViewCtx, card: &Card) -> Element {
                 .gap(2)
                 .grow(1)
                 .child(open_link(s, card, label(card.name.clone()).wrap(false)))
-                .child(label(card.summary.clone()).style("caption")),
+                .child(label(if card.kind == Kind::App { card.summary.clone() } else { format!("{}: {}", card.kind.name(), card.summary) }).style("caption")),
         )
         .child(action_button(s, card))
 }
 
 /// A card (medium, wide).
 fn app_card(s: &S, st: &Store, cx: &ViewCtx, card: &Card) -> Element {
-    let pub_line = if card.publisher.is_empty() { format!("v{}", card.version) } else { format!("{} · v{}", card.publisher, card.version) };
+    let mut pub_line = if card.publisher.is_empty() { format!("v{}", card.version) } else { format!("{} · v{}", card.publisher, card.version) };
+    // Apps are the usual case and are not labelled; the other kinds say what they are.
+    if card.kind != Kind::App {
+        pub_line.push_str(&format!(" · {}", card.kind.name()));
+    }
     panel().fill(cx.theme.surface).radius(6).padding(8).border(1, cx.theme.border).child(
         column()
             .gap(6)
@@ -227,6 +275,7 @@ fn empty_text(st: &Store) -> &'static str {
         Tab::Discover => "No apps yet. Add a repository under Repos.",
         Tab::Updates => "Everything is up to date.",
         Tab::Installed => "No apps installed.",
+        Tab::Favorites => "No favorites yet. Open a package's page and choose Favorite.",
     }
 }
 
@@ -283,6 +332,18 @@ fn detail(s: &S, st: &Store, cx: &ViewCtx, d: &Detail, back: bool, shots_w: i32,
     if let Some(r) = &d.repo {
         facts.push(format!("from {r}"));
     }
+    if card.kind != Kind::App {
+        facts.insert(0, match card.kind {
+            Kind::Program => "Program",
+            Kind::Library => "Library",
+            _ => "Source",
+        }
+        .to_string());
+    }
+    if let Some(so) = &d.social {
+        facts.push(format!("{} {}", so.likes, if so.likes == 1 { "like" } else { "likes" }));
+        facts.push(format!("{} {}", so.downloads, if so.downloads == 1 { "download" } else { "downloads" }));
+    }
     c = c.child(
         row()
             .gap(10)
@@ -298,9 +359,28 @@ fn detail(s: &S, st: &Store, cx: &ViewCtx, d: &Detail, back: bool, shots_w: i32,
                     .child(label(facts.join(" · ")).style("caption")),
             ),
     );
+    // Like and Favorite: for a signed-in player, on a package of the repository with accounts.
+    if let (true, Some(so)) = (d.signed_in, &d.social) {
+        let (l, f) = (s.clone(), s.clone());
+        let (id1, id2) = (card.id.clone(), card.id.clone());
+        let (liked, fav) = (so.liked, so.favorited);
+        buttons = buttons
+            .child(button(if liked { "Liked" } else { "Like" }).id("like").on_click(move |_, _| l.borrow_mut().mark(&id1, "like", !liked)))
+            .child(button(if fav { "In favorites" } else { "Favorite" }).id("favorite").on_click(move |_, _| f.borrow_mut().mark(&id2, "favorite", !fav)));
+    }
     c = c.child(buttons);
+    if let Some(w) = &d.warning {
+        c = c.child(panel().border(1, RED).radius(4).padding(6).child(label(w.clone()).id("warning")));
+    }
     if !card.summary.is_empty() {
         c = c.child(label(card.summary.clone()));
+    }
+    if !d.depends.is_empty() {
+        c = c.child(label(format!("Needs: {} (installed with it)", d.depends.join(", "))).style("caption").id("depends"));
+    }
+    if card.kind != Kind::App {
+        // Permissions are an app's: the other kinds are not sandboxed (the warning above says so).
+        return scroll_view(c).id("detail").height(h.max(60));
     }
     // Permissions in plain words.
     c = c.child(label("Permissions").style("title"));
@@ -351,8 +431,8 @@ fn badge_text(card: &Card) -> String {
 fn tabbed(s: &S, st: &Store, body: Element) -> Element {
     let t = s.clone();
     let titles = tab_titles(st);
-    let sel = st.tab() as usize;
-    let mut pages: Vec<Element> = (0..3).map(|_| spacer()).collect();
+    let sel = (st.tab() as usize).min(titles.len() - 1);
+    let mut pages: Vec<Element> = (0..titles.len()).map(|_| spacer()).collect();
     pages[sel] = body;
     tabs(titles).id("tabs").selected(sel).grow(1).children(pages).on_select(move |cx, _| {
         let i = cx.selected("tabs").unwrap_or(0);

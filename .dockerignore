@@ -1,0 +1,41 @@
+# Build context of the backend image:
+#   docker build -f backend/Dockerfile .
+# (.github/workflows/backend.yml; the context is the repository root because
+# the backend depends on rust/wasm-programs/pkg by path).
+#
+# This is an allow-list: everything is excluded, then the few paths the image
+# needs are let back in. That keeps .git, build/, rust/target/, versions/,
+# wasm-bin/, runs/, src/, docs/, the jars, the Gradle and node caches and
+# every other directory out of the context without naming each one, and stays
+# correct when new top-level directories appear.
+#
+# What cargo needs to resolve `pkg` from outside the rust/ workspace (tested
+# with a copy holding only these paths, see docs/DEPLOY.md, "Build context"):
+#   - rust/Cargo.toml: pkg inherits `workspace = true` dependencies, so cargo
+#     must read the workspace root manifest. It does NOT load the other ~150
+#     members for this, so their directories are not needed.
+#   - rust/wasm-programs/pkg and the crates it depends on by path
+#     (ecm-host-abi, ecm-ssh-crypto, ecm-disco), all under rust/crates/.
+# If the backend ever becomes a member of the rust/ workspace, or cargo is run
+# from inside rust/, every member's Cargo.toml is required and this file must
+# change.
+
+*
+
+!backend
+!rust/Cargo.toml
+!rust/Cargo.lock
+!rust/crates
+!rust/wasm-programs/pkg
+
+# Never part of the image, wherever they are.
+**/target
+**/.git
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.jar
+**/node_modules

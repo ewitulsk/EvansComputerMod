@@ -1,51 +1,75 @@
 NAME
-    pkg - install, run and publish apps
+    pkg - install, run and publish apps, programs and libraries
 
 SYNOPSIS
     pkg command [args]
 
 DESCRIPTION
-    The package manager. Apps come in .ecmpkg files from repositories:
-    plain HTTP servers with an index.json (pkg serve is one). Installed
-    apps live in /apps/<id>/ and keep their data in /var/apps/<id>/.
-    After an install or removal pkg tells the app manager, which also
-    launches apps and keeps track of their permissions. The App Store on
-    the desktop uses the same repositories. Run pkg with no command for
-    a short list.
+    The package manager. Packages come in .ecmpkg files from
+    repositories: web servers with an index.json. pkg serve makes this
+    computer one; the official repository on the internet is another
+    (see man repo). The App Store on the desktop uses the same
+    repositories. Run pkg with no command for a short list.
+
+    A package is one of four kinds:
+
+      app      opens from the desktop; lives in /apps/<id>/, keeps its
+               data in /var/apps/<id>/, and is sandboxed: it only gets
+               the permissions you grant
+      program  one or more new shell commands, put in /bin
+      library  modules for Python (import) and Lua (require), put in
+               /lib/python and /lib/lua
+      source   plain code and files, unpacked into /home/src/<id>/
+
+    Programs and libraries are not sandboxed: they can read and change
+    everything on this computer. pkg says so before installing one, and
+    refuses one nobody vouches for (see TRUST).
+
+    A package can need others (depends in its app.toml): they are
+    installed first, and cannot be removed while something needs them.
 
 COMMANDS
     repo add name url [--key hex]
-        Add a repository. With --key (the publisher's public key) its
-        packages must be signed with that key.
+        Add a repository: http://, https:// or host:// (man repo). With
+        --key (the repository's public key) its packages must be signed
+        with that key.
 
     repo list
     repo remove name
         List the repositories, or remove one.
 
     update
-        Refresh every repository's index and upgrade the installed apps
-        that have a newer version.
+        Refresh every repository's index and upgrade what is installed
+        and has a newer version.
 
     search [term]
-        Find apps in the repositories: id, version, name, repository,
-        signed or unsigned, summary and the permissions they ask for.
+        Find packages: id, version, name, kind, repository, signed or
+        unsigned, summary, what they need and the permissions they ask
+        for.
 
-    install id [--force]
+    install id [--force] [--unverified]
     install file.ecmpkg
-        Install an app from a repository, or from a package file. An app
-        already installed at the same or a newer version is skipped
-        unless --force is given.
+        Install a package from a repository (with what it needs), or
+        from a file. One already installed at the same or a newer
+        version is skipped unless --force is given. --unverified
+        installs a program or library nobody vouches for.
 
-    remove id [--purge]
-        Uninstall an app. --purge also deletes its data in
-        /var/apps/<id>.
+    remove id [--purge] [--force]
+        Uninstall. --purge also deletes an app's data in /var/apps/<id>
+        (or a source package's files in /home/src). Refused while
+        another package needs it, unless --force.
+
+    autoremove
+        Remove packages that were only installed because something
+        needed them, and that nothing needs any more.
 
     list
-        The installed apps.
+        What is installed.
 
     info id
-        An installed app's manifest, where it came from, the
-        permissions it asks for and your decisions about them.
+        An installed package's manifest, where it came from, what it
+        needs and what needs it; for an app, the permissions it asks
+        for and your decisions about them.
 
     run id [args]
         Launch an app and show its output until it exits. If it was
@@ -61,33 +85,99 @@ COMMANDS
 
     build dir [out-dir] [--sign keyfile]
         Make <id>-<version>.ecmpkg from a folder holding an app.toml and
-        the app's files (hidden files are skipped), in out-dir (default
-        the current directory). --sign also writes a .sig file and
-        publisher.pub next to it.
+        the package's files (hidden files are skipped), in out-dir
+        (default the current directory). --sign also writes a .sig file
+        and publisher.pub next to it.
 
     keygen [file]
         Make a signing key (default /etc/pkg/signing.key) and print its
         public key.
 
-    serve dir [port] [--name name]
+    serve dir [port] [--name name] [--tls] [--mirror repo]
         Host dir as a repository on port 8080 (or port): pkg writes its
         index.json from the .ecmpkg files there and answers requests.
         With disco serve running on this computer it is found on the
-        network.
+        network. --tls serves HTTPS (port 8443) with this computer's
+        certificate (man cert). --mirror copies all of repo into dir
+        first (as pkg mirror repo dir does), each time it starts: the
+        line for /services.cfg on a data center.
+
+    mirror repo dir [--only id,id] [--list file] [--kind kind] [--prune]
+        Copy a repository into dir, to serve it from here: everything,
+        or only the packages named (--only, or one id per line in
+        --list; what they need comes along), or only one kind. The
+        copies keep their signatures, so computers that pin the
+        original's key trust them as they would the original. --prune
+        deletes packages in dir that are no longer chosen.
 
     discover
         List the repositories found on the network, with the repo add
         command for each new one.
 
+    online [repo]
+        Say whether this computer can reach its repositories, and if
+        not, what is in the way: no cable, no address, no route, a name
+        that does not resolve, a server that does not answer, or a
+        certificate that is not trusted.
+
+ACCOUNTS
+    Anyone can download. With an account at a repository that has them
+    (the official one) you can also publish, like and favorite.
+
+    login [repo] [--key apikey]
+        Sign in. pkg shows a short code and a web address: open it in
+        your real browser (a link appears in your chat), sign in there
+        and enter the code. Or make an API key on your account page and
+        give it with --key. Your password is never typed in the game.
+
+    logout [repo]
+    whoami [repo]
+        Sign out, or show who is signed in. Signing out ends a sign-in
+        made with a code; an API key is only forgotten by this computer
+        (revoke it on your account page).
+
+    publish dir|file.ecmpkg [repo]
+        Upload a package under your name. You are asked to confirm in
+        chat. The first upload of an id makes it yours; a version can
+        be published once.
+
+    yank id version [repo]
+        Take one of your versions out of the listings.
+
+    like id, unlike id, favorite id, unfavorite id
+    favorites, mine
+        Like or favorite a package; list your favorites, or what you
+        published.
+
+TRUST
+    Every download is checked against the size and hash in the index.
+    A repository added with --key must sign its packages with that
+    key: such a package is from a verified publisher. Without a key,
+    apps still install (they are sandboxed), but a program or library
+    is refused unless you add --unverified.
+
+    A package can also carry its author's signature. Once you installed
+    one, an update signed by anybody else is refused.
+
+    A package may not install a command that has the name of one of
+    the system's own (ls, pkg, ...).
+
 FILES
     /etc/pkg/repos
-        The repositories added with repo add.
+        The repositories, one per line: name, url, pinned key. The
+        official repository's lines are kept up to date by the server.
 
     /etc/pkg/signing.key
         The default signing key made by keygen.
 
     /apps, /var/apps
         Installed apps and their data.
+
+    /var/lib/pkg/db
+        Installed programs, libraries and source packages.
+
+    /bin, /lib/python, /lib/lua, /home/src
+        Where their commands, modules and files go.
 
 EXAMPLES
       pkg repo add village http://10.0.0.5:8080/
@@ -97,6 +187,9 @@ EXAMPLES
       pkg perm grant dev.example.notes network
       pkg build /home/myapp
       pkg serve /home/repo &
+      pkg mirror official /srv/repo --only dev.example.notes
+      pkg login
+      pkg publish /home/myapp
 
 SEE ALSO
-    disco, gui, filesystem
+    repo, store, cert, tls, disco, gui, filesystem

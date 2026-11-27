@@ -37,3 +37,7 @@ mlua = { version = "0.12", features = ["lua52", "vendored"] }
 ecm-cards = { workspace = true }
 # The address book phone.lua writes must be what Contacts (ecm_tel::vcard) reads.
 ecm-tel = { workspace = true }
+
+# https:// for net.http_get / http_post, and net.online (on a computer only).
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-http = { workspace = true }

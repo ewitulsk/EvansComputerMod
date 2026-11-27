@@ -1,0 +1,197 @@
+# Production stack of the package repository (docs/DEPLOY.md).
+# Lives in /opt/ecm-repo on the droplet, next to .env (see .env.example).
+# Start and update it with ./deploy.sh, not with "docker compose up" directly:
+# deploy.sh also logs in to the registry, validates and waits for health.
+#
+# Start order, enforced by depends_on:
+#   data-init                      make /data writable for the app user
+#   restore-auth, restore-repo     fetch a database from the bucket if the
+#                                  file is missing and a replica exists
+#   auth-api, repo-api             the services; each must pass its health
+#                                  check (`<binary> healthcheck`) before the next
+#   litestream                     continuous replication to the bucket
+#   caddy                          TLS and routing
+
+name: ecm-repo
+
+x-app: &app
+  image: ${IMAGE:?set IMAGE in .env}:${IMAGE_TAG:?set IMAGE_TAG in .env}
+  user: "${APP_UID:-10001}:${APP_GID:-10001}"
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  volumes:
+    - ./data:/data
+  networks:
+    - internal
+  stop_grace_period: 20s
+
+x-litestream: &litestream
+  image: litestream/litestream:0.5.18
+  user: "${APP_UID:-10001}:${APP_GID:-10001}"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  environment:
+    LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:?set LITESTREAM_ACCESS_KEY_ID in .env}
+    LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:?set LITESTREAM_SECRET_ACCESS_KEY in .env}
+    LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:?set LITESTREAM_BUCKET in .env}
+    LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT:?set LITESTREAM_ENDPOINT in .env}
+    LITESTREAM_REGION: ${LITESTREAM_REGION:?set LITESTREAM_REGION in .env}
+    # Recreates the container when litestream.yml changes (set by deploy.sh).
+    CONFIG_SHA256: ${LITESTREAM_CONFIG_SHA256:-}
+  volumes:
+    - ./data:/data
+    - ./litestream.yml:/etc/litestream.yml:ro
+  networks:
+    - internal
+
+services:
+  data-init:
+    image: litestream/litestream:0.5.18
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - chown "${APP_UID:-10001}:${APP_GID:-10001}" /data && chmod 0750 /data
+    volumes:
+      - ./data:/data
+    network_mode: none
+    restart: "no"
+
+  # Restore only when the database file does not exist yet (a new droplet)
+  # and the bucket holds a replica. Otherwise these exit 0 without doing
+  # anything. If the bucket cannot be read they fail and the services do not
+  # start, which is intended: starting empty would lose the old data.
+  restore-auth:
+    <<: *litestream
+    command: ["restore", "-if-replica-exists", "-if-db-not-exists", "/data/auth.db"]
+    restart: "no"
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+
+  restore-repo:
+    <<: *litestream
+    command: ["restore", "-if-replica-exists", "-if-db-not-exists", "/data/repo.db"]
+    restart: "no"
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+
+  auth-api:
+    <<: *app
+    command: ["auth-api"]
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}
+      LISTEN: 0.0.0.0:8081
+      DATABASE_PATH: /data/auth.db
+      INTERNAL_SECRET: ${INTERNAL_SECRET:?set INTERNAL_SECRET in .env}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:?set EMAIL_PROVIDER in .env}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:?set EMAIL_FROM in .env}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Behind Caddy: the client address is the last entry of X-Forwarded-For.
+      TRUST_PROXY: "true"
+    healthcheck:
+      test: ["CMD", "auth-api", "healthcheck"]
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      restore-auth:
+        condition: service_completed_successfully
+
+  repo-api:
+    <<: *app
+    command: ["repo-api"]
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}
+      LISTEN: 0.0.0.0:8082
+      DATABASE_PATH: /data/repo.db
+      INTERNAL_SECRET: ${INTERNAL_SECRET:?set INTERNAL_SECRET in .env}
+      AUTH_INTERNAL_URL: http://auth-api:8081
+      STORAGE: ${STORAGE:-s3}
+      STORAGE_DIR: /data/blobs
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_PATH_STYLE: ${S3_PATH_STYLE:-auto}
+      REPO_SIGNING_KEY: ${REPO_SIGNING_KEY:?set REPO_SIGNING_KEY in .env}
+      MAX_PACKAGE_BYTES: ${MAX_PACKAGE_BYTES:-8388608}
+      ACCOUNT_QUOTA_BYTES: ${ACCOUNT_QUOTA_BYTES:-209715200}
+      TRUST_PROXY: "true"
+    healthcheck:
+      test: ["CMD", "repo-api", "healthcheck"]
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      restore-repo:
+        condition: service_completed_successfully
+      auth-api:
+        condition: service_healthy
+
+  litestream:
+    <<: *litestream
+    command: ["replicate"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      restore-auth:
+        condition: service_completed_successfully
+      restore-repo:
+        condition: service_completed_successfully
+      auth-api:
+        condition: service_healthy
+      repo-api:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      PUBLISH_BODY_LIMIT: ${PUBLISH_BODY_LIMIT:-8454144}
+      # Recreates the container when the Caddyfile changes (set by deploy.sh).
+      CONFIG_SHA256: ${CADDYFILE_SHA256:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+    depends_on:
+      auth-api:
+        condition: service_healthy
+      repo-api:
+        condition: service_healthy
+
+networks:
+  internal:
+
+volumes:
+  # Certificates and the ACME account. Losing this volume only means new
+  # certificates are requested on the next start.
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,15 @@
+[package]
+name = "backend-common"
+version.workspace = true
+edition.workspace = true
+description = "Shared pieces of auth-api and repo-api: errors, configuration, rate limiting, tokens, SQLite setup, page layout."
+
+[dependencies]
+axum = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+time = { workspace = true }

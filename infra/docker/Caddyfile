@@ -1,0 +1,149 @@
+# Caddy in front of auth-api and repo-api (docs/REPO_API.md, docs/DEPLOY.md).
+# Environment: DOMAIN, ACME_EMAIL, PUBLISH_BODY_LIMIT (docker-compose.yml).
+#
+# Check a change before deploying it:
+#   docker run --rm -e DOMAIN=repo.example.com -e ACME_EMAIL=you@example.com \
+#     -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 \
+#     caddy validate --config /etc/caddy/Caddyfile
+{
+	email {$ACME_EMAIL}
+
+	# Let's Encrypt certificate with an ECDSA P-256 key (also Caddy's default).
+	key_type p256
+
+	servers {
+		# The in-game client speaks HTTP/1.1; browsers get HTTP/2. No HTTP/3,
+		# so no UDP port is open.
+		protocols h1 h2
+
+		timeouts {
+			read_header 10s
+			read_body 5m
+			idle 2m
+		}
+	}
+}
+
+# Shared reverse_proxy settings.
+(upstream) {
+	# Caddy talks to the services directly, so the client address it sees is
+	# the real one. It discards any X-Forwarded-For sent by the client and
+	# sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host itself;
+	# the services run with TRUST_PROXY=true. If a CDN or load balancer is
+	# ever put in front of Caddy, add "trusted_proxies" to the servers block.
+
+	health_uri /healthz
+	health_interval 10s
+	health_timeout 3s
+
+	# Ride out the second or two a service takes to restart during a deploy.
+	lb_try_duration 10s
+	lb_try_interval 250ms
+
+	transport http {
+		dial_timeout 3s
+		response_header_timeout 60s
+	}
+}
+
+# Plain HTTP, any host name: redirect to HTTPS and nothing else. (Caddy still
+# answers Let's Encrypt's HTTP-01 challenge on this port by itself.)
+http:// {
+	redir https://{$DOMAIN}{uri} permanent
+}
+
+{$DOMAIN} {
+	# --- Headers ---------------------------------------------------------
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# The HTML pages: everything that is not one of the API or download
+	# trees. "?" sets a header only when the service did not set it itself.
+	@pages not path /v1/* /r/* /auth/v1/*
+	header @pages {
+		?Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "no-referrer"
+		?Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=()"
+		?Cross-Origin-Opener-Policy "same-origin"
+	}
+
+	# Compression only for the pages. /v1/*, /r/* and /auth/v1/* are passed
+	# through untouched so that every response keeps the Content-Length the
+	# service sent (old in-game clients cannot read chunked bodies).
+	encode @pages zstd gzip
+
+	# --- Routes (the table in docs/REPO_API.md) ----------------------------
+	# /internal/* exists only between the containers.
+	@internal path /internal /internal/*
+	handle @internal {
+		header Content-Type "application/json"
+		respond `{"error":"not_found","message":"not found"}` 404
+	}
+
+	@auth path /auth/* /account* /signin /signup /signout /verify /forgot /reset /device /static/auth/*
+	handle @auth {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy auth-api:8081 {
+			import upstream
+		}
+	}
+
+	# Uploads: the service enforces MAX_PACKAGE_BYTES (8 MiB) and answers
+	# with its own JSON error; this limit sits just above it (8 MiB + 64 KiB)
+	# and only stops bodies that are far too large from being read at all.
+	@publish path /v1/publish
+	handle @publish {
+		request_body {
+			max_size {$PUBLISH_BODY_LIMIT:8454144}
+		}
+		reverse_proxy repo-api:8082 {
+			import upstream
+		}
+	}
+
+	handle {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy repo-api:8082 {
+			import upstream
+		}
+	}
+
+	# Errors made here (body too large, service down) in the contract's shape.
+	handle_errors {
+		header Content-Type "application/json"
+
+		@too_large expression `{err.status_code} == 413`
+		handle @too_large {
+			respond `{"error":"too_large","message":"request body too large"}` 413
+		}
+
+		handle {
+			respond `{"error":"internal","message":"{err.status_text}"}` {err.status_code}
+		}
+	}
+
+	# --- Access log --------------------------------------------------------
+	# JSON on stdout (docker compose logs caddy). One-time tokens travel in
+	# query strings (/verify?token=, /reset?token=, /device?code=): keep them
+	# out of the log. Caddy already redacts Authorization and Cookie.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace token REDACTED
+					replace code REDACTED
+				}
+			}
+		}
+	}
+}

@@ -36,9 +36,12 @@ public final class SocketUplinkProvider implements InternetUplinkProvider {
         List<InternetUplink> parts = new ArrayList<>();
         if (Boolean.parseBoolean(System.getProperty("evanscomputermod.internetProxy", "true"))) {
             boolean allowLan = Boolean.getBoolean("evanscomputermod.internet.allowLan");
-            parts.add(new InternetProxy(injector, allowLan));
-            InternetSidecarMod.LOGGER.info("Internet Gateway socket proxy enabled at 10.0.0.1 ({})",
-                    allowLan ? "LAN destinations allowed" : "LAN destinations blocked");
+            int maxKbps = com.example.evanscomputermod.EcmConfig.internetMaxKbps();
+            parts.add(new InternetProxy(injector, allowLan, maxKbps));
+            InternetSidecarMod.LOGGER.info("Internet Gateway socket proxy enabled at 10.0.0.1 ({}; {})",
+                    allowLan ? "LAN destinations allowed" : "LAN destinations blocked",
+                    maxKbps > 0 ? "downloads capped at " + maxKbps + " kB/s per connection" : "no download cap");
+            RepoBlock.start();
         }
         String tap = System.getProperty("evanscomputermod.tap", "none");
         if (!"none".equals(tap)) {

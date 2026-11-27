@@ -1,0 +1,5 @@
+id = "dev.you.examples"
+name = "Examples"
+version = "0.1.0"
+kind = "source"
+summary = "Example scripts"

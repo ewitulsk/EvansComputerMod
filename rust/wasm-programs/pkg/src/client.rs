@@ -7,8 +7,8 @@
 //! a temporary folder in tests); the network is the [`Net`] trait
 //! ([`SocketNet`] on a computer, a fake in tests).
 
-use crate::http::Url;
-use crate::manifest::{self, Manifest};
+use crate::http::{Scheme, Url};
+use crate::manifest::{self, Kind, Manifest};
 use crate::package::{self, Index, IndexEntry, Trust};
 use crate::{paths, Repo};
 use std::cmp::Ordering;
@@ -24,9 +24,82 @@ pub trait Net {
     /// after every chunk.
     fn get(&mut self, base: &Url, file: &str, progress: Progress) -> Result<Vec<u8>, String>;
 
+    /// One call to the repository's own API (`/v1/...`, `/auth/v1/...`) at the
+    /// origin of `base`: the answer's status and body, whatever the status.
+    fn call(&mut self, base: &Url, call: &Call) -> Result<Reply, String> {
+        let _ = call;
+        Err(format!("{} has no accounts (it is a plain repository)", base.origin()))
+    }
+
     /// Repositories (`pkg serve`) found on the network (docs/DISCOVERY.md). None by default.
     fn discover(&mut self) -> Vec<ecm_disco::Found> {
         Vec::new()
+    }
+}
+
+/// A request to a repository's API.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Call {
+    pub method: String,
+    /// Path and query under the origin, starting with `/`.
+    pub path: String,
+    /// The sign-in token, sent as `Authorization: Bearer`.
+    pub token: Option<String>,
+    pub headers: Vec<(String, String)>,
+    pub content_type: String,
+    pub body: Vec<u8>,
+}
+
+impl Call {
+    pub fn get(path: &str) -> Call {
+        Call { method: "GET".into(), path: path.into(), ..Call::default() }
+    }
+
+    pub fn json(method: &str, path: &str, body: &serde_json::Value) -> Call {
+        Call { method: method.into(), path: path.into(), content_type: "application/json".into(), body: body.to_string().into_bytes(), ..Call::default() }
+    }
+
+    pub fn token(mut self, token: Option<&str>) -> Call {
+        self.token = token.map(str::to_string);
+        self
+    }
+
+    /// Every header to send (the token and content type included).
+    pub fn all_headers(&self) -> Vec<(String, String)> {
+        let mut h = self.headers.clone();
+        if let Some(t) = &self.token {
+            h.push(("Authorization".into(), format!("Bearer {t}")));
+        }
+        if !self.content_type.is_empty() {
+            h.push(("Content-Type".into(), self.content_type.clone()));
+        }
+        h
+    }
+}
+
+/// The answer to a [`Call`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Reply {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+impl Reply {
+    pub fn ok(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::from_slice(&self.body).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The repository's error text (`{"error","message"}`), or the status.
+    pub fn error(&self) -> String {
+        let v = self.json();
+        match v.get("message").and_then(|m| m.as_str()) {
+            Some(m) if !m.is_empty() => m.to_string(),
+            _ => format!("HTTP {}", self.status),
+        }
     }
 }
 
@@ -72,19 +145,36 @@ pub struct Origin {
     pub sha256: String,
     /// [`Trust::label`] at install time.
     pub trust: String,
+    /// The author's key when the package carried the author's signature. An
+    /// update signed by another author is refused.
+    pub author: String,
+    /// Installed because another package needs it, not because it was asked for.
+    pub auto: bool,
 }
 
 impl Origin {
     pub fn to_json(&self) -> String {
-        serde_json::json!({ "origin": self.origin, "version": self.version, "sha256": self.sha256, "trust": self.trust })
-            .to_string()
-            + "\n"
+        let mut v = serde_json::json!({ "origin": self.origin, "version": self.version, "sha256": self.sha256, "trust": self.trust });
+        if !self.author.is_empty() {
+            v["author"] = self.author.clone().into();
+        }
+        if self.auto {
+            v["auto"] = true.into();
+        }
+        v.to_string() + "\n"
     }
 
     pub fn parse(text: &str) -> Option<Origin> {
         let v: serde_json::Value = serde_json::from_str(text).ok()?;
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        Some(Origin { origin: s("origin"), version: s("version"), sha256: s("sha256"), trust: s("trust") })
+        Some(Origin {
+            origin: s("origin"),
+            version: s("version"),
+            sha256: s("sha256"),
+            trust: s("trust"),
+            author: s("author"),
+            auto: v.get("auto").and_then(|x| x.as_bool()).unwrap_or(false),
+        })
     }
 
     /// The repository name, for `repo <name> <url>` origins.
@@ -216,6 +306,45 @@ impl Catalog {
             .collect()
     }
 
+    /// What must be installed before `target`: its dependencies (and theirs)
+    /// that are missing or too old, in the order to install them.
+    pub fn plan(&self, target: &IndexEntry, installed: &[Installed]) -> Result<Vec<Available>, String> {
+        let mut out = Vec::new();
+        self.visit(target, installed, &mut out, &mut vec![target.id.clone()])?;
+        Ok(out)
+    }
+
+    fn visit(&self, entry: &IndexEntry, installed: &[Installed], out: &mut Vec<Available>, stack: &mut Vec<String>) -> Result<(), String> {
+        for d in entry.deps() {
+            if stack.contains(&d.id) {
+                return Err(format!("{} and {} need each other; neither can be installed first", entry.id, d.id));
+            }
+            if installed.iter().any(|i| i.manifest.id == d.id && d.accepts(&i.manifest.version)) {
+                continue;
+            }
+            if let Some(planned) = out.iter().find(|a| a.entry.id == d.id) {
+                if !d.accepts(&planned.entry.version) {
+                    return Err(format!("{} needs {}, but another package needs {} {}", entry.id, d, d.id, planned.entry.version));
+                }
+                continue;
+            }
+            let Some(a) = self.get(&d.id) else {
+                return Err(format!("{} needs {}, which is in no repository", entry.id, d));
+            };
+            if !d.accepts(&a.entry.version) {
+                return Err(format!("{} needs {}, but the repositories have {} {}", entry.id, d, d.id, a.entry.version));
+            }
+            if !a.entry.installable() {
+                return Err(format!("{} needs {}, which needs a newer version of the mod", entry.id, d.id));
+            }
+            stack.push(d.id.clone());
+            self.visit(&a.entry, installed, out, stack)?;
+            stack.pop();
+            out.push(a.clone());
+        }
+        Ok(())
+    }
+
     /// Installed apps a repository has a newer version of.
     pub fn updates<'a>(&'a self, installed: &'a [Installed]) -> Vec<(&'a Installed, &'a Available)> {
         installed
@@ -235,6 +364,11 @@ pub struct InstallReport {
     pub trust: Trust,
     /// The version that was replaced, if any.
     pub replaced: Option<String>,
+    /// Dependencies installed along with it: (id, version).
+    pub also: Vec<(String, String)>,
+    /// What the package put on the computer besides its own folder
+    /// (commands in /bin, modules in /lib, files in /home/src).
+    pub placed: Vec<String>,
 }
 
 /// The repository client.
@@ -244,11 +378,16 @@ pub struct Client<N: Net> {
     pub net: N,
     /// Problems with single repositories that didn't stop the operation (shown by the caller).
     pub warnings: Vec<String>,
+    /// Install programs and libraries nobody vouches for (no pinned key, or a
+    /// file). They run with the whole computer in reach, so this is off by default.
+    pub allow_unverified: bool,
+    /// Accept an update signed by another author than the installed copy's.
+    pub allow_author_change: bool,
 }
 
 impl<N: Net> Client<N> {
     pub fn new(root: &str, net: N) -> Client<N> {
-        Client { root: root.trim_end_matches('/').to_string(), net, warnings: Vec::new() }
+        Client { root: root.trim_end_matches('/').to_string(), net, warnings: Vec::new(), allow_unverified: false, allow_author_change: false }
     }
 
     /// A guest path on the host (the root prefix added).
@@ -370,24 +509,48 @@ impl<N: Net> Client<N> {
         c.get(id).cloned().ok_or_else(|| format!("{} is not in any repository", id))
     }
 
-    // ------------------------------------------------------------ installed apps
+    // ------------------------------------------------------------ installed packages
+
+    /// The folder holding an installed package's files: `/apps/<id>` for an
+    /// app, `/var/lib/pkg/db/<id>` for the other kinds.
+    pub fn home_of(&self, id: &str) -> Option<String> {
+        if !manifest::valid_id(id) {
+            return None;
+        }
+        [paths::APPS_DIR, paths::DB_DIR]
+            .iter()
+            .map(|d| format!("{}/{}", d, id))
+            .find(|d| fs::metadata(self.path(&format!("{}/app.toml", d))).is_ok())
+    }
 
     pub fn installed_manifest(&self, id: &str) -> Option<Manifest> {
-        manifest::parse(&self.read_text(&format!("{}/{}/app.toml", paths::APPS_DIR, id))?).ok()
+        manifest::parse(&self.read_text(&format!("{}/app.toml", self.home_of(id)?))?).ok()
     }
 
     pub fn origin(&self, id: &str) -> Option<Origin> {
-        Origin::parse(&self.read_text(&format!("{}/{}/{}", paths::APPS_DIR, id, paths::ORIGIN_FILE))?)
+        Origin::parse(&self.read_text(&format!("{}/{}", self.home_of(id)?, paths::ORIGIN_FILE))?)
     }
 
-    /// Installed apps, sorted by id.
+    /// What an installed program, library or source package put outside its folder.
+    pub fn placed(&self, id: &str) -> Vec<String> {
+        self.read_text(&format!("{}/{}/{}", paths::DB_DIR, id, paths::FILES_FILE))
+            .map(|t| t.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Everything installed (apps and the other kinds), sorted by id.
     pub fn installed(&self) -> Vec<Installed> {
-        let mut out = Vec::new();
-        if let Ok(rd) = fs::read_dir(self.path(paths::APPS_DIR)) {
-            for e in rd.flatten() {
-                let id = e.file_name().to_string_lossy().into_owned();
-                if let Some(m) = self.installed_manifest(&id) {
-                    out.push(Installed { origin: self.origin(&id), manifest: m });
+        let mut out: Vec<Installed> = Vec::new();
+        for dir in [paths::APPS_DIR, paths::DB_DIR] {
+            if let Ok(rd) = fs::read_dir(self.path(dir)) {
+                for e in rd.flatten() {
+                    let id = e.file_name().to_string_lossy().into_owned();
+                    if out.iter().any(|i| i.manifest.id == id) {
+                        continue;
+                    }
+                    if let Some(m) = self.installed_manifest(&id) {
+                        out.push(Installed { origin: self.origin(&id), manifest: m });
+                    }
                 }
             }
         }
@@ -395,12 +558,27 @@ impl<N: Net> Client<N> {
         out
     }
 
+    /// The installed packages that need `id`.
+    pub fn dependents(&self, id: &str) -> Vec<String> {
+        self.installed().into_iter().filter(|i| i.manifest.depends.iter().any(|d| d.id == id)).map(|i| i.manifest.id).collect()
+    }
+
+    /// Packages that were installed only as dependencies and that nothing needs any more.
+    pub fn orphans(&self) -> Vec<String> {
+        let all = self.installed();
+        all.iter()
+            .filter(|i| i.origin.as_ref().map(|o| o.auto).unwrap_or(false))
+            .filter(|i| !all.iter().any(|o| o.manifest.depends.iter().any(|d| d.id == i.manifest.id)))
+            .map(|i| i.manifest.id.clone())
+            .collect()
+    }
+
     /// Bytes of a file of an installed app (its icon, for the store).
     pub fn installed_file(&self, id: &str, rel: &str) -> Option<Vec<u8>> {
         if !manifest::safe_rel_path(rel) {
             return None;
         }
-        fs::read(self.path(&format!("{}/{}/{}", paths::APPS_DIR, id, rel))).ok()
+        fs::read(self.path(&format!("{}/{}", self.home_of(id)?, rel))).ok()
     }
 
     // ------------------------------------------------------------ install / remove
@@ -425,10 +603,18 @@ impl<N: Net> Client<N> {
         self.net.get(&url, &package::asset_path(&a.entry, member), &mut |_, _| {})
     }
 
-    /// Unpack a checked package into `/apps/<id>/` (replacing an older copy),
-    /// write `.pkg-origin` and create `/var/apps/<id>/`. With `expect_id` the
-    /// package must be that app.
+    /// Install a checked package: an app into `/apps/<id>/` (with
+    /// `/var/apps/<id>/` for its data); a program, library or source package
+    /// into `/var/lib/pkg/db/<id>/`, with its commands, modules or files put
+    /// where the computer looks for them. An older copy is replaced. With
+    /// `expect_id` the package must be that one.
     pub fn unpack(&self, bytes: &[u8], origin: &str, trust: &Trust, expect_id: Option<&str>) -> Result<InstallReport, String> {
+        self.unpack_as(bytes, origin, trust, expect_id, "", None)
+    }
+
+    /// [`unpack`](Self::unpack) with the author's key and whether it comes as a dependency
+    /// (`None`: keep what the installed copy says).
+    pub fn unpack_as(&self, bytes: &[u8], origin: &str, trust: &Trust, expect_id: Option<&str>, author: &str, auto: Option<bool>) -> Result<InstallReport, String> {
         let p = package::open(bytes)?;
         if let Some(id) = expect_id {
             if p.manifest.id != id {
@@ -436,9 +622,71 @@ impl<N: Net> Client<N> {
             }
         }
         let m = p.manifest.clone();
-        let replaced = self.installed_manifest(&m.id).map(|o| o.version);
-        let dir = format!("{}/{}", paths::APPS_DIR, m.id);
-        self.remove_tree(&dir)?;
+        if m.level() > manifest::FORMAT_LEVEL {
+            return Err(format!("{} needs a newer version of the mod", m.id));
+        }
+        if m.kind.unconfined() && *trust != Trust::Verified && !self.allow_unverified {
+            return Err(format!(
+                "{} is a {}: it runs with the whole computer in reach, and nobody vouches for this copy ({}). Install it anyway with --unverified",
+                m.id,
+                m.kind.name(),
+                trust.label()
+            ));
+        }
+        let old = self.installed_manifest(&m.id);
+        let old_origin = self.origin(&m.id);
+        let replaced = old.as_ref().map(|o| o.version.clone());
+        let auto = auto.unwrap_or_else(|| old_origin.as_ref().map(|o| o.auto).unwrap_or(false));
+        let o = Origin { origin: origin.to_string(), version: m.version.clone(), sha256: p.sha256.clone(), trust: trust.label(), author: author.to_string(), auto };
+
+        // Where the package's files go besides its own folder.
+        let mut place: Vec<(String, &[u8])> = Vec::new();
+        match m.kind {
+            Kind::App => {}
+            Kind::Program => {
+                for b in &m.bin {
+                    let cmd = manifest::command_of(b);
+                    if self.is_system_command(cmd) {
+                        return Err(format!("{} wants to install the command '{}', which is one of the system's own", m.id, cmd));
+                    }
+                    let data = package::member(&p, b).ok_or_else(|| format!("bin {} is not in the package", b))?;
+                    place.push((format!("{}/{}.wasm", paths::BIN_DIR, cmd), data));
+                }
+            }
+            Kind::Library => {
+                for e in p.entries.iter().filter(|e| !e.is_dir) {
+                    if let Some((lang, _)) = package::library_member(&e.path) {
+                        let root = if lang == "python" { paths::PYTHON_LIB_DIR } else { paths::LUA_LIB_DIR };
+                        place.push((format!("{}/{}", root, &e.path[lang.len() + 1..]), &e.data));
+                    }
+                }
+            }
+            Kind::Source => {
+                for e in p.entries.iter().filter(|e| !e.is_dir && e.path != "app.toml") {
+                    place.push((format!("{}/{}/{}", paths::SOURCE_DIR, m.id, e.path), &e.data));
+                }
+            }
+        }
+        // A command or module already on the computer belongs to another package
+        // (or to the player): never overwrite it silently.
+        let mine = self.placed(&m.id);
+        if m.kind != Kind::Source {
+            if let Some((taken, _)) = place.iter().find(|(d, _)| !mine.contains(d) && fs::metadata(self.path(d)).is_ok()) {
+                return Err(format!("{} would overwrite {}, which it did not install; remove that first", m.id, taken));
+            }
+        }
+
+        // The old copy goes (a package may change kind between versions).
+        if let Some(home) = self.home_of(&m.id) {
+            for f in mine.iter().filter(|f| !place.iter().any(|(d, _)| d == *f)) {
+                let source = old.as_ref().map(|o| o.kind == Kind::Source).unwrap_or(false);
+                if !source {
+                    self.remove_placed(f);
+                }
+            }
+            self.remove_tree(&home)?;
+        }
+        let dir = format!("{}/{}", if m.kind == Kind::App { paths::APPS_DIR } else { paths::DB_DIR }, m.id);
         for e in &p.entries {
             let path = format!("{}/{}", dir, e.path);
             if e.is_dir {
@@ -447,14 +695,51 @@ impl<N: Net> Client<N> {
                 self.write(&path, &e.data)?;
             }
         }
-        let o = Origin { origin: origin.to_string(), version: m.version.clone(), sha256: p.sha256.clone(), trust: trust.label() };
         self.write(&format!("{}/{}", dir, paths::ORIGIN_FILE), o.to_json().as_bytes())?;
-        let _ = fs::create_dir_all(self.path(&format!("{}/{}", paths::APP_DATA_DIR, m.id)));
-        Ok(InstallReport { manifest: m, trust: trust.clone(), replaced })
+        let placed: Vec<String> = place.iter().map(|(d, _)| d.clone()).collect();
+        if m.kind == Kind::App {
+            let _ = fs::create_dir_all(self.path(&format!("{}/{}", paths::APP_DATA_DIR, m.id)));
+        } else {
+            for (dest, data) in &place {
+                self.write(dest, data)?;
+            }
+            self.write(&format!("{}/{}", dir, paths::FILES_FILE), (placed.join("\n") + "\n").as_bytes())?;
+        }
+        Ok(InstallReport { manifest: m, trust: trust.clone(), replaced, also: Vec::new(), placed })
     }
 
-    /// Install (or update to) the newest version of `id` from the repositories.
-    /// `Ok(None)` when it is already installed at that version or newer (unless `force`).
+    /// Is `cmd` one of the built-in programs (in `/server-bin`)? The shell looks
+    /// in `/bin` first, so a package with that name would replace it.
+    fn is_system_command(&self, cmd: &str) -> bool {
+        let files = [format!("{}/{}.wasm", paths::SYSTEM_BIN_DIR, cmd), format!("{}/{}", paths::SYSTEM_BIN_DIR, cmd)];
+        if files.iter().any(|f| fs::metadata(self.path(f)).is_ok()) {
+            return true;
+        }
+        // On a computer the built-in programs are a mount of the host's, which
+        // only the host's own file calls see.
+        #[cfg(target_arch = "wasm32")]
+        if self.root.is_empty() && files.iter().any(|f| ecm_host_abi::fs::exists(f.trim_start_matches('/'))) {
+            return true;
+        }
+        false
+    }
+
+    /// Delete one placed file and the folders it leaves empty (up to, not including, the shared roots).
+    fn remove_placed(&self, file: &str) {
+        let _ = fs::remove_file(self.path(file));
+        let roots = [paths::BIN_DIR, paths::PYTHON_LIB_DIR, paths::LUA_LIB_DIR, paths::SOURCE_DIR];
+        let mut dir = file.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        while !dir.is_empty() && !roots.contains(&dir.as_str()) && roots.iter().any(|r| dir.starts_with(&format!("{}/", r))) {
+            if fs::remove_dir(self.path(&dir)).is_err() {
+                break;
+            }
+            dir = dir.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        }
+    }
+
+    /// Install (or update to) the newest version of `id` from the repositories,
+    /// with whatever it depends on. `Ok(None)` when it is already installed at
+    /// that version or newer (unless `force`).
     pub fn install(&mut self, id: &str, force: bool, progress: Progress) -> Result<Option<InstallReport>, String> {
         let a = self.find(id, false)?;
         if !force {
@@ -467,20 +752,77 @@ impl<N: Net> Client<N> {
         self.install_available(&a, progress).map(Some)
     }
 
-    /// Download, check and unpack one catalog entry.
+    /// Download, check and unpack one catalog entry, after the dependencies it
+    /// is missing (from the configured repositories).
     pub fn install_available(&mut self, a: &Available, progress: Progress) -> Result<InstallReport, String> {
-        let (bytes, trust) = self.download(a, progress)?;
-        self.unpack(&bytes, &format!("repo {} {}", a.repo.name, a.repo.url), &trust, Some(&a.entry.id))
+        if !a.entry.installable() {
+            return Err(format!("{} needs a newer version of the mod", a.entry.id));
+        }
+        let deps = if a.entry.depends.is_empty() {
+            Vec::new()
+        } else {
+            let catalog = self.catalog(false);
+            catalog.plan(&a.entry, &self.installed())?
+        };
+        let mut also = Vec::new();
+        for d in &deps {
+            let r = self.install_one(d, Some(self.installed_manifest(&d.entry.id).is_none()).filter(|new| *new), progress)?;
+            also.push((r.manifest.id.clone(), r.manifest.version.clone()));
+        }
+        // Asked for by name: no longer just a dependency.
+        let mut r = self.install_one(a, Some(false), progress)?;
+        r.also = also;
+        Ok(r)
     }
 
-    /// Uninstall; `purge` also deletes `/var/apps/<id>`.
+    fn install_one(&mut self, a: &Available, auto: Option<bool>, progress: Progress) -> Result<InstallReport, String> {
+        // An update must come from the same author as the installed copy.
+        let author = a.entry.author().unwrap_or("").to_string();
+        if let Some(old) = self.origin(&a.entry.id) {
+            if !old.author.is_empty() && old.author != author && !self.allow_author_change {
+                return Err(format!(
+                    "{}: the installed copy was signed by its author (key {}...), this one {}; refusing the update (remove it first if you trust the new one)",
+                    a.entry.id,
+                    &old.author[..old.author.len().min(16)],
+                    if author.is_empty() { "is not signed by an author".to_string() } else { format!("by another key ({}...)", &author[..16.min(author.len())]) }
+                ));
+            }
+        }
+        let (bytes, trust) = self.download(a, progress)?;
+        self.unpack_as(&bytes, &format!("repo {} {}", a.repo.name, a.repo.url), &trust, Some(&a.entry.id), &author, auto)
+    }
+
+    /// Uninstall; `purge` also deletes an app's `/var/apps/<id>` (or a source
+    /// package's files in `/home/src/<id>`). Refused while another installed
+    /// package needs it.
     pub fn remove(&self, id: &str, purge: bool) -> Result<(), String> {
-        let dir = format!("{}/{}", paths::APPS_DIR, id);
-        if !manifest::valid_id(id) || (self.installed_manifest(id).is_none() && fs::metadata(self.path(&dir)).is_err()) {
+        self.remove_with(id, purge, false)
+    }
+
+    /// [`remove`](Self::remove); `force` removes it even when other packages need it.
+    pub fn remove_with(&self, id: &str, purge: bool, force: bool) -> Result<(), String> {
+        if !manifest::valid_id(id) {
             return Err(format!("{} is not installed", id));
         }
-        self.remove_tree(&dir)?;
-        if purge {
+        let apps_dir = format!("{}/{}", paths::APPS_DIR, id);
+        let Some(home) = self.home_of(id).or_else(|| fs::metadata(self.path(&apps_dir)).is_ok().then_some(apps_dir)) else {
+            return Err(format!("{} is not installed", id));
+        };
+        let needed_by = self.dependents(id);
+        if !needed_by.is_empty() && !force {
+            return Err(format!("{} is needed by {}; remove that first", id, needed_by.join(", ")));
+        }
+        let kind = self.installed_manifest(id).map(|m| m.kind).unwrap_or(Kind::App);
+        if kind != Kind::Source || purge {
+            for f in self.placed(id) {
+                self.remove_placed(&f);
+            }
+            if kind == Kind::Source {
+                let _ = self.remove_tree(&format!("{}/{}", paths::SOURCE_DIR, id));
+            }
+        }
+        self.remove_tree(&home)?;
+        if purge && kind == Kind::App {
             self.remove_tree(&format!("{}/{}", paths::APP_DATA_DIR, id))?;
         }
         Ok(())
@@ -517,31 +859,24 @@ pub fn reindex() -> Result<String, String> {
     }
 }
 
-/// HTTP over the computer's sockets (wasm32 only).
-#[cfg(target_arch = "wasm32")]
+/// The real network: `http://` and `https://` through `ecm-http` (the
+/// computer's sockets; the host's own when built for the host), `host://`
+/// through the server's link to the repository.
 pub struct SocketNet;
 
-#[cfg(target_arch = "wasm32")]
 impl SocketNet {
-    fn connect(url: &Url) -> Result<i32, String> {
-        use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM};
-        let mut addr = SockAddrIn::default();
-        if socket::getaddrinfo(&url.host, &mut addr) != 0 {
-            return Err(format!("cannot resolve {}", url.host));
-        }
-        addr.sin_port = url.port.to_be();
-        let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
-        if fd < 0 {
-            return Err(format!("cannot open a socket ({})", fd));
-        }
-        if socket::connect(fd, &addr) != 0 {
-            socket::close(fd);
-            return Err(format!("cannot connect to {}:{}", url.host, url.port));
-        }
-        Ok(fd)
+    #[cfg(target_os = "wasi")]
+    fn http() -> ecm_http::Client<ecm_http::sys::Sockets> {
+        ecm_http::sys::client("ecm-pkg/2")
     }
 
-    /// Send all of `data`.
+    #[cfg(not(target_os = "wasi"))]
+    fn http() -> ecm_http::Client<ecm_http::native::Native> {
+        ecm_http::Client::new(ecm_http::native::Native::default()).agent("ecm-pkg/2")
+    }
+
+    /// Send all of `data` on a socket (`pkg serve`).
+    #[cfg(target_arch = "wasm32")]
     pub fn send_all(fd: i32, mut data: &[u8]) -> bool {
         use ecm_host_abi::socket;
         while !data.is_empty() {
@@ -553,60 +888,92 @@ impl SocketNet {
         }
         true
     }
-}
 
-#[cfg(target_arch = "wasm32")]
-impl Net for SocketNet {
-    fn get(&mut self, url: &Url, file: &str, progress: Progress) -> Result<Vec<u8>, String> {
-        use crate::http;
-        use ecm_host_abi::socket;
-        let fd = SocketNet::connect(url)?;
-        let path = url.join(file);
-        if !SocketNet::send_all(fd, &http::get_request(&url.host, &path)) {
-            socket::close(fd);
-            return Err(format!("send to {} failed", url.host));
-        }
-        let mut raw = Vec::new();
-        let mut buf = vec![0u8; 8192];
-        loop {
-            let n = socket::recv(fd, &mut buf, 0);
-            if n <= 0 {
-                break;
-            }
-            raw.extend_from_slice(&buf[..n as usize]);
-            progress(http::body_received(&raw), http::content_length(&raw));
-            if http::response_complete(&raw) || raw.len() > 16 * 1024 * 1024 {
-                break;
-            }
-        }
-        socket::close(fd);
-        let r = http::parse_response(&raw).map_err(|e| format!("{}{}: {}", url.display(), file, e))?;
-        if r.status != 200 {
-            return Err(format!("{}{}: HTTP {}", url.display(), file, r.status));
-        }
-        Ok(r.body)
-    }
-
-    fn discover(&mut self) -> Vec<ecm_disco::Found> {
-        ecm_disco::sys::search(ecm_disco::types::PKG, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
-    }
-}
-
-/// Off a computer (native builds) there are no sockets.
-#[cfg(not(target_arch = "wasm32"))]
-pub struct SocketNet;
-
-#[cfg(not(target_arch = "wasm32"))]
-impl SocketNet {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn send_all(_fd: i32, _data: &[u8]) -> bool {
         false
     }
+
+    /// One request over the server's link; the body with progress.
+    fn host(method: &str, path: &str, headers: &[(String, String)], body: &[u8], progress: Progress) -> Result<Reply, String> {
+        use ecm_host_abi::repo::{encode_request, Support, Ticket};
+        match ecm_host_abi::repo::supported() {
+            Support::Ready => {}
+            other => return Err(other.message().to_string()),
+        }
+        let h: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let t = Ticket::begin(&encode_request(method, path, &h, body))?;
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            let p = t.poll()?;
+            loop {
+                let n = t.read(&mut buf);
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+                if out.len() > MAX_DOWNLOAD {
+                    return Err(format!("the answer is larger than {} bytes", MAX_DOWNLOAD));
+                }
+                progress(out.len(), p.total.map(|t| t as usize));
+            }
+            if p.done {
+                return Ok(Reply { status: p.status, body: out });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// The largest file a repository may send.
+pub const MAX_DOWNLOAD: usize = 16 * 1024 * 1024;
+
 impl Net for SocketNet {
-    fn get(&mut self, url: &Url, _file: &str, _progress: Progress) -> Result<Vec<u8>, String> {
-        Err(format!("cannot connect to {}:{} (no network off a computer)", url.host, url.port))
+    fn get(&mut self, url: &Url, file: &str, progress: Progress) -> Result<Vec<u8>, String> {
+        let what = format!("{}{}", url.display(), file);
+        let reply = if url.scheme == Scheme::Host {
+            SocketNet::host("GET", &url.join(file), &[], &[], progress)?
+        } else {
+            let req = ecm_http::Request::get(&what).map_err(|e| e.to_string())?;
+            let mut p = |done: u64, total: Option<u64>| progress(done as usize, total.map(|t| t as usize));
+            let mut t = ecm_http::Transfer { sink: None, progress: Some(&mut p), max_body: MAX_DOWNLOAD as u64 };
+            let r = SocketNet::http().send(&req, &mut t).map_err(|e| format!("{}: {}", what, e))?;
+            Reply { status: r.status, body: r.body }
+        };
+        if reply.status != 200 {
+            return Err(format!("{}: HTTP {}", what, reply.status));
+        }
+        Ok(reply.body)
+    }
+
+    fn call(&mut self, base: &Url, call: &Call) -> Result<Reply, String> {
+        let headers = call.all_headers();
+        if base.scheme == Scheme::Host {
+            return SocketNet::host(&call.method, &call.path, &headers, &call.body, &mut |_, _| {});
+        }
+        if call.token.is_some() && !base.private() {
+            return Err(format!("{} is not encrypted; a sign-in is only sent over https://", base.origin()));
+        }
+        let mut req = ecm_http::Request::new(&call.method, &format!("{}{}", base.origin(), call.path)).map_err(|e| e.to_string())?;
+        req.body = call.body.clone();
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+        // No redirects: a sign-in is for the origin it was made for.
+        let r = SocketNet::http().exchange(&req, &mut ecm_http::Transfer::default()).map_err(|e| e.to_string())?;
+        Ok(Reply { status: r.status, body: r.body })
+    }
+
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            ecm_disco::sys::search(ecm_disco::types::PKG, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Vec::new()
+        }
     }
 }
 
@@ -620,6 +987,10 @@ pub struct MemoryNet {
     pub down: Vec<String>,
     /// What [`Net::discover`] finds.
     pub found: Vec<ecm_disco::Found>,
+    /// Scripted API answers: `<METHOD> <origin><path>` -> reply.
+    pub api: std::collections::HashMap<String, Reply>,
+    /// API calls seen.
+    pub calls: Vec<Call>,
 }
 
 impl MemoryNet {
@@ -663,6 +1034,15 @@ impl Net for MemoryNet {
             progress(0, Some(0));
         }
         Ok(b)
+    }
+
+    fn call(&mut self, base: &Url, call: &Call) -> Result<Reply, String> {
+        self.calls.push(call.clone());
+        if self.down.iter().any(|h| *h == base.host) {
+            return Err(format!("cannot connect to {}:{}", base.host, base.port));
+        }
+        let key = format!("{} {}{}", call.method, base.origin(), call.path);
+        Ok(self.api.get(&key).cloned().unwrap_or(Reply { status: 404, body: br#"{"error":"not_found","message":"no such page"}"#.to_vec() }))
     }
 
     fn discover(&mut self) -> Vec<ecm_disco::Found> {
@@ -806,5 +1186,205 @@ mod tests {
         assert!(cat.get("dev.s.app").is_some());
         c.remove_repo("plain").unwrap();
         assert!(c.remove_repo("plain").is_err());
+    }
+
+    /// A package of any kind: (manifest lines after id/name/version, extra files).
+    fn pack(id: &str, version: &str, rest: &str, files: &[(&str, &[u8])]) -> (crate::package::Package, Vec<u8>) {
+        let toml = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\n{rest}\n");
+        let mut all = vec![("app.toml".to_string(), toml.into_bytes())];
+        all.extend(files.iter().map(|(p, d)| (p.to_string(), d.to_vec())));
+        build(all).unwrap()
+    }
+
+    /// A signed repository at `url` holding `packages`; returns its public key.
+    fn signed_repo(net: &mut MemoryNet, url: &str, packages: Vec<(crate::package::Package, Vec<u8>)>, author: Option<&str>) -> String {
+        let (public, secret) = crate::sign::keypair_from_seed(&[7u8; 32]);
+        let mut entries = Vec::new();
+        let mut files = Vec::new();
+        for (p, bytes) in packages {
+            let file = package::file_name(&p.manifest);
+            let msg = package::signed_message(&p.manifest.id, &p.manifest.version, &p.sha256);
+            let mut e = index_entry(&p, &file, bytes.len() as u64, Some(crate::sign::sign(&secret, &msg)));
+            if let Some(a) = author {
+                e.author_key = crate::sign::public_of(a);
+                e.author_signature = Some(crate::sign::sign(a, &msg));
+            }
+            entries.push(e);
+            files.push((file, bytes));
+        }
+        let ix = Index { format: INDEX_FORMAT.into(), name: url.into(), publisher_key: Some(public.clone()), packages: entries };
+        net.serve(url, &ix, &files);
+        public
+    }
+
+    #[test]
+    fn programs_libraries_and_source_go_where_the_computer_looks() {
+        let root = tmp("kinds");
+        let mut net = MemoryNet::default();
+        let key = signed_repo(
+            &mut net,
+            "https://repo.test/r/stable/",
+            vec![
+                pack("dev.t.tools", "1.0.0", "kind = \"program\"\nbin = [\"out/hexdump.wasm\", \"b64.wasm\"]", &[("out/hexdump.wasm", b"HEX"), ("b64.wasm", b"B64"), ("README.md", b"docs")]),
+                pack("dev.t.geo", "1.0.0", "kind = \"library\"\nprovides = [\"geo\"]", &[("python/geo/__init__.py", b"py"), ("python/geo/shapes.py", b"py2"), ("lua/geo.lua", b"lua")]),
+                pack("dev.t.examples", "1.0.0", "kind = \"source\"", &[("blink.py", b"print(1)"), ("lib/util.lua", b"return {}")]),
+                pack("dev.t.clash", "1.0.0", "kind = \"program\"\nbin = [\"hexdump.wasm\"]", &[("hexdump.wasm", b"OTHER")]),
+                pack("dev.t.ls", "1.0.0", "kind = \"program\"\nbin = [\"ls.wasm\"]", &[("ls.wasm", b"EVIL")]),
+            ],
+            None,
+        );
+        let mut c = Client::new(&root, net);
+        c.add_repo("official", "https://repo.test/r/stable/", Some(&key)).unwrap();
+        fs::create_dir_all(c.path("/server-bin")).unwrap();
+        fs::write(c.path("/server-bin/ls.wasm"), b"real ls").unwrap();
+
+        let r = c.install("dev.t.tools", false, &mut |_, _| {}).unwrap().unwrap();
+        assert_eq!(r.placed, vec!["/bin/hexdump.wasm", "/bin/b64.wasm"]);
+        assert_eq!(fs::read(c.path("/bin/hexdump.wasm")).unwrap(), b"HEX");
+        assert!(fs::metadata(c.path("/var/lib/pkg/db/dev.t.tools/README.md")).is_ok());
+        assert!(fs::metadata(c.path("/apps/dev.t.tools")).is_err(), "not an app");
+        // A command another package installed, and a system command, are never replaced.
+        assert!(c.install("dev.t.clash", false, &mut |_, _| {}).unwrap_err().contains("would overwrite /bin/hexdump.wasm"));
+        assert!(c.install("dev.t.ls", false, &mut |_, _| {}).unwrap_err().contains("one of the system's own"));
+
+        c.install("dev.t.geo", false, &mut |_, _| {}).unwrap().unwrap();
+        assert_eq!(fs::read(c.path("/lib/python/geo/shapes.py")).unwrap(), b"py2");
+        assert_eq!(fs::read(c.path("/lib/lua/geo.lua")).unwrap(), b"lua");
+        c.install("dev.t.examples", false, &mut |_, _| {}).unwrap().unwrap();
+        assert_eq!(fs::read(c.path("/home/src/dev.t.examples/lib/util.lua")).unwrap(), b"return {}");
+
+        let ids: Vec<String> = c.installed().into_iter().map(|i| format!("{}:{}", i.manifest.id, i.manifest.kind.name())).collect();
+        assert_eq!(ids, vec!["dev.t.examples:source", "dev.t.geo:library", "dev.t.tools:program"]);
+        assert_eq!(c.origin("dev.t.geo").unwrap().trust, "verified publisher");
+
+        // Removing takes the commands and modules away, and the folders they leave empty.
+        c.remove("dev.t.tools", false).unwrap();
+        assert!(fs::metadata(c.path("/bin/hexdump.wasm")).is_err() && fs::metadata(c.path("/bin")).is_ok());
+        c.remove("dev.t.geo", false).unwrap();
+        assert!(fs::metadata(c.path("/lib/python/geo")).is_err() && fs::metadata(c.path("/lib/python")).is_ok());
+        // Source files are the player's now: kept unless purged.
+        fs::write(c.path("/home/src/dev.t.examples/mine.py"), b"x").unwrap();
+        c.remove("dev.t.examples", false).unwrap();
+        assert!(fs::metadata(c.path("/home/src/dev.t.examples/blink.py")).is_ok());
+        c.install("dev.t.examples", false, &mut |_, _| {}).unwrap().unwrap();
+        c.remove("dev.t.examples", true).unwrap();
+        assert!(fs::metadata(c.path("/home/src/dev.t.examples")).is_err());
+        assert!(c.installed().is_empty());
+    }
+
+    #[test]
+    fn unverified_programs_are_refused_unless_asked_for() {
+        let root = tmp("unverified");
+        let mut net = MemoryNet::default();
+        let (p, bytes) = pack("dev.t.tool", "1.0.0", "kind = \"program\"\nbin = [\"tool.wasm\"]", &[("tool.wasm", b"T")]);
+        let file = package::file_name(&p.manifest);
+        let ix = Index { format: INDEX_FORMAT.into(), name: "plain".into(), publisher_key: None, packages: vec![index_entry(&p, &file, bytes.len() as u64, None)] };
+        net.serve("http://10.0.0.9:8080/", &ix, &[(file, bytes.clone())]);
+        let mut c = Client::new(&root, net);
+        c.add_repo("plain", "http://10.0.0.9:8080/", None).unwrap();
+        let e = c.install("dev.t.tool", false, &mut |_, _| {}).unwrap_err();
+        assert!(e.contains("whole computer in reach") && e.contains("--unverified"), "{e}");
+        assert!(c.unpack(&bytes, "file x", &Trust::Unsigned, None).is_err(), "a file is no better");
+        assert!(fs::metadata(c.path("/bin/tool.wasm")).is_err());
+        c.allow_unverified = true;
+        c.install("dev.t.tool", false, &mut |_, _| {}).unwrap().unwrap();
+        assert!(fs::metadata(c.path("/bin/tool.wasm")).is_ok());
+        // Apps are sandboxed: an unsigned one installs as before.
+        c.allow_unverified = false;
+        let (_, app_bytes) = app("dev.t.app", "1.0.0", "");
+        c.unpack(&app_bytes, "file x", &Trust::Unsigned, None).unwrap();
+    }
+
+    #[test]
+    fn dependencies_come_first_and_hold_what_needs_them() {
+        let root = tmp("deps");
+        let mut net = MemoryNet::default();
+        let key = signed_repo(
+            &mut net,
+            "https://repo.test/r/stable/",
+            vec![
+                pack("dev.t.app", "1.0.0", "entry = \"main.py\"\ndepends = [\"dev.t.ui >= 1.2.0\"]", &[("main.py", b"import ui")]),
+                pack("dev.t.ui", "1.2.0", "kind = \"library\"\nprovides = [\"tui\"]\ndepends = [\"dev.t.base\"]", &[("python/tui.py", b"u")]),
+                pack("dev.t.base", "0.3.0", "kind = \"library\"\nprovides = [\"tbase\"]", &[("python/tbase.py", b"b")]),
+                pack("dev.t.old", "1.0.0", "entry = \"main.py\"\ndepends = [\"dev.t.ui >= 2.0.0\"]", &[("main.py", b"x")]),
+                pack("dev.t.lost", "1.0.0", "entry = \"main.py\"\ndepends = [\"dev.t.nowhere\"]", &[("main.py", b"x")]),
+                pack("dev.t.a", "1.0.0", "kind = \"source\"\ndepends = [\"dev.t.b\"]", &[("a", b"a")]),
+                pack("dev.t.b", "1.0.0", "kind = \"source\"\ndepends = [\"dev.t.a\"]", &[("b", b"b")]),
+            ],
+            None,
+        );
+        let mut c = Client::new(&root, net);
+        c.add_repo("official", "https://repo.test/r/stable/", Some(&key)).unwrap();
+        let cat = c.catalog(false);
+        let plan: Vec<String> = cat.plan(&cat.get("dev.t.app").unwrap().entry, &[]).unwrap().into_iter().map(|a| a.entry.id).collect();
+        assert_eq!(plan, vec!["dev.t.base", "dev.t.ui"], "deepest first");
+
+        let r = c.install("dev.t.app", false, &mut |_, _| {}).unwrap().unwrap();
+        assert_eq!(r.also, vec![("dev.t.base".to_string(), "0.3.0".to_string()), ("dev.t.ui".to_string(), "1.2.0".to_string())]);
+        assert!(fs::metadata(c.path("/lib/python/tbase.py")).is_ok());
+        assert!(c.origin("dev.t.ui").unwrap().auto && !c.origin("dev.t.app").unwrap().auto);
+        // Already there: nothing more to fetch.
+        assert!(c.catalog(false).plan(&cat.get("dev.t.app").unwrap().entry, &c.installed()).unwrap().is_empty());
+
+        assert!(c.install("dev.t.old", false, &mut |_, _| {}).unwrap_err().contains("needs dev.t.ui >= 2.0.0, but the repositories have dev.t.ui 1.2.0"));
+        assert!(c.install("dev.t.lost", false, &mut |_, _| {}).unwrap_err().contains("which is in no repository"));
+        assert!(c.install("dev.t.a", false, &mut |_, _| {}).unwrap_err().contains("need each other"));
+
+        // What something needs cannot be pulled out from under it.
+        assert_eq!(c.dependents("dev.t.ui"), vec!["dev.t.app"]);
+        assert!(c.remove("dev.t.ui", false).unwrap_err().contains("is needed by dev.t.app"));
+        assert!(c.orphans().is_empty());
+        c.remove("dev.t.app", false).unwrap();
+        assert_eq!(c.orphans(), vec!["dev.t.ui"], "base is still needed by ui");
+        c.remove("dev.t.ui", false).unwrap();
+        assert_eq!(c.orphans(), vec!["dev.t.base"]);
+        // Asked for by name, a dependency is no longer an orphan.
+        c.install("dev.t.base", true, &mut |_, _| {}).unwrap().unwrap();
+        assert!(c.orphans().is_empty());
+    }
+
+    #[test]
+    fn an_update_from_another_author_is_refused() {
+        let root = tmp("author");
+        let (_, alice) = crate::sign::keypair_from_seed(&[1u8; 32]);
+        let (_, mallory) = crate::sign::keypair_from_seed(&[2u8; 32]);
+        let mut net = MemoryNet::default();
+        let key = signed_repo(&mut net, "https://repo.test/r/community/", vec![app("dev.t.app", "1.0.0", "")], Some(&alice));
+        let mut c = Client::new(&root, net);
+        c.add_repo("community", "https://repo.test/r/community/", Some(&key)).unwrap();
+        c.install("dev.t.app", false, &mut |_, _| {}).unwrap().unwrap();
+        assert_eq!(c.origin("dev.t.app").unwrap().author, crate::sign::public_of(&alice).unwrap());
+
+        // The same author's update is fine.
+        signed_repo(&mut c.net, "https://repo.test/r/community/", vec![app("dev.t.app", "1.1.0", "")], Some(&alice));
+        c.catalog(true);
+        assert_eq!(c.install("dev.t.app", false, &mut |_, _| {}).unwrap().unwrap().manifest.version, "1.1.0");
+        // Another author's (the repository's own signature is still good), and an unsigned one, are not.
+        for (version, author) in [("1.2.0", Some(mallory.as_str())), ("1.3.0", None)] {
+            signed_repo(&mut c.net, "https://repo.test/r/community/", vec![app("dev.t.app", version, "")], author);
+            c.catalog(true);
+            let e = c.install("dev.t.app", false, &mut |_, _| {}).unwrap_err();
+            assert!(e.contains("refusing the update"), "{e}");
+        }
+        assert_eq!(c.installed_manifest("dev.t.app").unwrap().version, "1.1.0");
+        c.allow_author_change = true;
+        assert!(c.install("dev.t.app", false, &mut |_, _| {}).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_newer_format_is_listed_but_not_installed() {
+        let root = tmp("level");
+        let mut net = MemoryNet::default();
+        let (p, bytes) = app("dev.t.future", "1.0.0", "");
+        let file = package::file_name(&p.manifest);
+        let mut e = index_entry(&p, &file, bytes.len() as u64, None);
+        e.level = 9;
+        e.kind = "hologram".into();
+        let ix = Index { format: INDEX_FORMAT.into(), name: "f".into(), publisher_key: None, packages: vec![e] };
+        net.serve("http://f/", &ix, &[(file, bytes)]);
+        let mut c = Client::new(&root, net);
+        c.add_repo("f", "http://f/", None).unwrap();
+        assert_eq!(c.catalog(false).apps.len(), 1);
+        assert!(c.install("dev.t.future", false, &mut |_, _| {}).unwrap_err().contains("newer version of the mod"));
     }
 }

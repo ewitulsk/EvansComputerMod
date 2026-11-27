@@ -1,0 +1,89 @@
+#cloud-config
+# First boot of the package repository droplet. Installs Docker, creates the
+# deploy user and the compose directory. No secrets here: the .env is copied
+# to ${deploy_dir}/.env by the deploy step (docs/DEPLOY.md).
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - fail2ban
+  - sqlite3
+  - unattended-upgrades
+
+ssh_pwauth: false
+disable_root: true
+
+users:
+  - name: ${deploy_user}
+    gecos: Deploy user
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+%{ for key in authorized_keys ~}
+      - ${jsonencode(key)}
+%{ endfor ~}
+
+swap:
+  filename: /swapfile
+  size: 1G
+  maxsize: 1G
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-ecm-hardening.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      AllowUsers ${deploy_user}
+
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "5" },
+        "live-restore": true
+      }
+
+  - path: /etc/apt/apt.conf.d/52ecm-unattended-upgrades
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "09:30";
+
+  - path: /etc/sysctl.d/60-ecm.conf
+    permissions: "0644"
+    content: |
+      vm.swappiness = 10
+
+%{ for name, f in files ~}
+  - path: ${deploy_dir}/${name}
+    permissions: "${f.mode}"
+    encoding: gz+b64
+    content: ${f.content}
+
+%{ endfor ~}
+runcmd:
+  # Docker Engine and the compose plugin from Docker's apt repository.
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker ${deploy_user}
+  # The compose directory belongs to the deploy user; the data directory to
+  # the id the containers run as.
+  - install -d -m 0750 -o ${deploy_user} -g ${deploy_user} ${deploy_dir}
+  - chown -R ${deploy_user}:${deploy_user} ${deploy_dir}
+  - install -d -m 0750 -o ${app_uid} -g ${app_uid} ${deploy_dir}/data
+  - sysctl --system
+  - systemctl restart ssh
+  - systemctl enable --now fail2ban
+  - touch ${deploy_dir}/.cloud-init-done

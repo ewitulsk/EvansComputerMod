@@ -79,6 +79,11 @@ pub struct NodeSpec {
     pub boot: Vec<String>,
     #[serde(default)]
     pub files: std::collections::BTreeMap<String, String>,
+    /// Built programs copied onto the computer's disk before it boots:
+    /// `"src/tool/tool.wasm" = "echo"` puts `echo.wasm` from the programs
+    /// directory there (a package's program needs some real .wasm).
+    #[serde(default)]
+    pub programs: std::collections::BTreeMap<String, String>,
     /// A cellular agent on this computer (`crate::cell`).
     pub cell: Option<crate::cell::CellSpec>,
 }
@@ -243,6 +248,7 @@ impl TopoFile {
                     ifaces: None,
                     boot: vec![],
                     files: Default::default(),
+                    programs: Default::default(),
                     cell: None,
                 })
                 .collect(),
