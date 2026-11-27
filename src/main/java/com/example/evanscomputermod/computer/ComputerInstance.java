@@ -70,6 +70,10 @@ public class ComputerInstance implements AutoCloseable {
             = new com.example.evanscomputermod.computer.upload.UploadPort(
                     this::storagePath, this::attachedHost, () -> isPhone() ? "ePhone" : "Terminal");
 
+    // The server's link to the package repository (abi/child-abi.toml [imports.repo]).
+    private final com.example.evanscomputermod.computer.repo.RepoPort repoPort
+            = new com.example.evanscomputermod.computer.repo.RepoPort(() -> host.getComputerId(), () -> host.getServer());
+
     /** Selector for the target display of bridge video/gfx calls. */
     public static final int GFX_TARGET_TERMINAL = 0;
     public static final int GFX_TARGET_SCREEN = 1;
@@ -354,6 +358,9 @@ public class ComputerInstance implements AutoCloseable {
         } catch (IOException e) {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
         }
+
+        // The official package repository, as the server's settings offer it to this computer.
+        com.example.evanscomputermod.computer.repo.RepoProvision.apply(computerStoragePath, host.getServer(), computerId);
 
         // Set up virtual mount table:
         // 1. User storage (read-write) — checked first, allows shadowing system programs
@@ -2533,6 +2540,123 @@ public class ComputerInstance implements AutoCloseable {
         return uploadPort;
     }
 
+    // --- The server's repository link, the secret store and player prompts (docs/REPO.md) ---
+
+    public com.example.evanscomputermod.computer.repo.RepoPort repoPort() {
+        return repoPort;
+    }
+
+    public int bridgeRepoSupported() {
+        return repoPort.supported();
+    }
+
+    public int bridgeRepoBegin(byte[] request) {
+        if (childAbortRequested) return -5;
+        return repoPort.begin(callerPid(), request);
+    }
+
+    public com.example.evanscomputermod.computer.repo.RepoPort.Progress bridgeRepoPoll(int ticket) {
+        if (childAbortRequested) return new com.example.evanscomputermod.computer.repo.RepoPort.Progress(-5, 0, 0, -1);
+        return repoPort.poll(ticket, callerPid());
+    }
+
+    public int bridgeRepoRead(int ticket, byte[] buf) {
+        return repoPort.read(ticket, callerPid(), buf);
+    }
+
+    public String bridgeRepoError(int ticket) {
+        return repoPort.error(ticket, callerPid());
+    }
+
+    public int bridgeRepoClose(int ticket) {
+        return repoPort.close(ticket, callerPid());
+    }
+
+    /**
+     * Who may use the secret {@code name} right now: the player at this
+     * computer, when the calling program is one of the system's own and owns
+     * that name. Null: not permitted.
+     */
+    private net.minecraft.server.level.ServerPlayer keystoreUser(String name) {
+        String program = processManager.systemProgram(callerPid());
+        if (!com.example.evanscomputermod.computer.repo.SystemPrograms.mayUse(program, name)) return null;
+        return uploadPort.operator();
+    }
+
+    /** {@code keystore_get}: the value, or null with {@code err[0]} set. */
+    public byte[] bridgeKeystoreGet(String name, int[] err) {
+        var player = keystoreUser(name);
+        if (player == null) {
+            err[0] = com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+            return null;
+        }
+        byte[] v = com.example.evanscomputermod.computer.repo.KeyStore.get(host.getServer(), host.getComputerId(), player.getUUID(), name);
+        if (v == null) err[0] = com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_FOUND;
+        return v;
+    }
+
+    public int bridgeKeystorePut(String name, byte[] value) {
+        var player = keystoreUser(name);
+        if (player == null) return com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+        return com.example.evanscomputermod.computer.repo.KeyStore.put(host.getServer(), host.getComputerId(), player.getUUID(), name, value);
+    }
+
+    public int bridgeKeystoreDelete(String name) {
+        var player = keystoreUser(name);
+        if (player == null) return com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+        return com.example.evanscomputermod.computer.repo.KeyStore.delete(host.getServer(), host.getComputerId(), player.getUUID(), name);
+    }
+
+    /** {@code keystore_keygen} ({@code make}) or {@code keystore_public}: the 32-byte public key, or null with {@code err[0]} set. */
+    public byte[] bridgeKeystorePublic(String name, boolean make, int[] err) {
+        var player = keystoreUser(name);
+        if (player == null) {
+            err[0] = com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+            return null;
+        }
+        byte[] k = make
+                ? com.example.evanscomputermod.computer.repo.KeyStore.keygen(host.getServer(), host.getComputerId(), player.getUUID(), name)
+                : com.example.evanscomputermod.computer.repo.KeyStore.publicKey(host.getServer(), host.getComputerId(), player.getUUID(), name);
+        if (k == null) {
+            err[0] = make ? com.example.evanscomputermod.computer.repo.KeyStore.ERR_FULL : com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_FOUND;
+        }
+        return k;
+    }
+
+    /** {@code keystore_sign}: the 64-byte signature, or null with {@code err[0]} set. */
+    public byte[] bridgeKeystoreSign(String name, byte[] message, int[] err) {
+        var player = keystoreUser(name);
+        if (player == null) {
+            err[0] = com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+            return null;
+        }
+        byte[] sig = com.example.evanscomputermod.computer.repo.KeyStore.sign(host.getServer(), host.getComputerId(), player.getUUID(), name, message);
+        if (sig == null) err[0] = com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_FOUND;
+        return sig;
+    }
+
+    /** {@code keystore_confirm}: 1 yes, 0 no or no answer, -5 interrupted, -13 not permitted. Blocks the program. */
+    public int bridgeKeystoreConfirm(String text, int timeoutMs) {
+        String program = processManager.systemProgram(callerPid());
+        var player = uploadPort.operator();
+        if (program == null || player == null) return com.example.evanscomputermod.computer.repo.KeyStore.ERR_NOT_PERMITTED;
+        try {
+            return com.example.evanscomputermod.computer.repo.PlayerPrompts.confirm(player, isPhone() ? "Your ePhone" : "The computer", text, timeoutMs) ? 1 : 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -5;
+        }
+    }
+
+    /** {@code player_link}: 0 shown, -4 nobody is using the computer, -13 not a repository page. */
+    public int bridgePlayerLink(String url, String text) {
+        if (!com.example.evanscomputermod.computer.repo.PlayerPrompts.linkAllowed(url)) return -13;
+        var player = uploadPort.operator();
+        if (player == null) return -4;
+        com.example.evanscomputermod.computer.repo.PlayerPrompts.link(player, url, text);
+        return 0;
+    }
+
     /** {@code upload_supported}: one of UploadPort.SUPPORT_*. */
     public int bridgeUploadSupported() {
         return uploadPort.supported();
@@ -3194,6 +3318,7 @@ public class ComputerInstance implements AutoCloseable {
         screenDevice.release(pid);
         videoRegistry.closeOwnedBy(pid);
         uploadPort.onProcessExit(pid);
+        repoPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
         uiManager.onProcessExit(pid);
         WakeLock l = pidWakeLocks.remove(pid);
@@ -3897,6 +4022,7 @@ public class ComputerInstance implements AutoCloseable {
         inputQueue.clear();
 
         uploadPort.close();
+        repoPort.closeAll();
 
         // Free FFmpeg decoder state before tearing down WASM.
         try {

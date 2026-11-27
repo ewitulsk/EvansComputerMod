@@ -55,6 +55,13 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue AUDIO_DUCK_LEVEL_PERCENT;
     private static final ModConfigSpec.BooleanValue INTERNET_GATEWAY_RECIPE;
     private static final ModConfigSpec.BooleanValue TECH_VILLAGES_ENABLED;
+    private static final ModConfigSpec.ConfigValue<String> REPO_ACCESS;
+    private static final ModConfigSpec.ConfigValue<String> REPO_URL;
+    private static final ModConfigSpec.ConfigValue<String> REPO_KEY;
+    private static final ModConfigSpec.BooleanValue REPO_COMMUNITY;
+    private static final ModConfigSpec.BooleanValue REPO_PUBLISH;
+    private static final ModConfigSpec.IntValue REPO_CACHE_MIB;
+    private static final ModConfigSpec.IntValue INTERNET_MAX_KBPS;
     /** Defaults of the per-mode CPU shares: a call mixes talkers and runs the microphone, so it gets more. */
     public static final java.util.Map<String, Integer> BACKGROUND_CPU_DEFAULTS = java.util.Map.of(
             "audio", 10, "call", 25, "radio", 10, "transfer", 10, "navigation", 10);
@@ -208,6 +215,40 @@ public final class EcmConfig {
                         "block of redstone). Off: the recipe doesn't exist and the only gateway is the one generated at",
                         "(0, 0, 0). Read when recipes load: after changing it, run /reload or restart.")
                 .define("gatewayRecipe", false);
+        INTERNET_MAX_KBPS = b
+                .comment("How fast one connection through the Internet Gateway may download, in kilobytes per second",
+                        "(0 = as fast as the game's network carries it). Read by the internet add-on when the server starts.")
+                .defineInRange("maxKbps", 0, 0, 100000);
+        b.pop();
+
+        b.comment("The package repository (docs/REPO.md): apps, programs and libraries from the internet.").push("repo");
+        REPO_ACCESS = b
+                .comment("How computers reach the official repository:",
+                        "  off        - not at all; only repositories inside the game (pkg serve).",
+                        "  open       - every computer, with no in-game network: the server fetches for it.",
+                        "  internet   - a computer needs a route to an Internet Gateway (and the internet add-on).",
+                        "  datacenter - only repository servers (Tech Village data centers, and computers an operator",
+                        "               names with /ecm repo grant) reach it; everyone else gets packages from one of",
+                        "               those over the game's network, and only what it chooses to offer.",
+                        "open and datacenter need the internet add-on (evanscomputermod-internet) on the server.")
+                .define("access", "internet", v -> v instanceof String s && java.util.List.of("off", "open", "internet", "datacenter").contains(s));
+        REPO_URL = b
+                .comment("The repository's address (no path).")
+                .define("url", "https://repo.evanwitulski.com");
+        REPO_KEY = b
+                .comment("The repository's signing key (64 hex digits): computers only install official packages signed",
+                        "with it. Empty: no official repository is set up on computers.")
+                .define("key", "");
+        REPO_COMMUNITY = b
+                .comment("Also offer the community channel: everything players have published, unreviewed.")
+                .define("allowCommunity", true);
+        REPO_PUBLISH = b
+                .comment("Let players publish and sign in through the server's own link (access = open). With",
+                        "access = internet a player publishes over the network, which this does not switch off.")
+                .define("allowPublish", true);
+        REPO_CACHE_MIB = b
+                .comment("How much disk the server may use to keep packages it fetched for computers.")
+                .defineInRange("cacheMiB", 256, 16, 16384);
         b.pop();
 
         b.comment("Tech Villages (docs/TECH_VILLAGE_NETWORK.md): the ring of ten villages, its fiber and cell sites.").push("techVillages");
@@ -462,5 +503,69 @@ public final class EcmConfig {
     /** Test override of {@code techVillages.enabled} (null = the config). */
     public static void overrideTechVillagesEnabled(Boolean on) {
         techVillagesOverride = on;
+    }
+
+    // ------------------------------------------------------------ the package repository
+
+    private static String get(ModConfigSpec.ConfigValue<String> v, String fallback) {
+        try {
+            return SPEC.isLoaded() ? v.get() : fallback;
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    private static boolean get(ModConfigSpec.BooleanValue v, boolean fallback) {
+        try {
+            return SPEC.isLoaded() ? v.get() : fallback;
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    private static volatile String repoAccessOverride, repoUrlOverride, repoKeyOverride;
+
+    /** {@code repo.access}: off, open, internet or datacenter. */
+    public static String repoAccess() {
+        String o = repoAccessOverride;
+        return o != null ? o : get(REPO_ACCESS, "internet");
+    }
+
+    /** {@code repo.url}: the repository's origin, without a trailing slash. */
+    public static String repoUrl() {
+        String o = repoUrlOverride;
+        String u = o != null ? o : get(REPO_URL, "https://repo.evanwitulski.com");
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        return u;
+    }
+
+    /** {@code repo.key}: the repository's public key (lower-case hex), or empty. */
+    public static String repoKey() {
+        String o = repoKeyOverride;
+        return (o != null ? o : get(REPO_KEY, "")).trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    public static boolean repoAllowCommunity() {
+        return get(REPO_COMMUNITY, true);
+    }
+
+    public static boolean repoAllowPublish() {
+        return get(REPO_PUBLISH, true);
+    }
+
+    public static int repoCacheMiB() {
+        return get(REPO_CACHE_MIB, 256);
+    }
+
+    /** {@code internet.maxKbps}: per-connection download cap through the gateway (0 = none). */
+    public static int internetMaxKbps() {
+        return get(INTERNET_MAX_KBPS, 0);
+    }
+
+    /** Test override of the repository settings (null = the config). */
+    public static void overrideRepo(String access, String url, String key) {
+        repoAccessOverride = access;
+        repoUrlOverride = url;
+        repoKeyOverride = key;
     }
 }

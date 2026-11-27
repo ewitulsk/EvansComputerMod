@@ -208,6 +208,9 @@ public class ProcessManager {
             return -1;
         }
 
+        entry.system = com.example.evanscomputermod.computer.repo.SystemPrograms.identify(
+                com.example.evanscomputermod.wasm.WasmManager.getWasmBinPath(), wasmPath, wasmBytes);
+
         Thread childThread = new PausableThread(() -> {
             CURRENT_PID.set(pid);
             int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid, envVars, entry.gate);
@@ -240,6 +243,15 @@ public class ProcessManager {
     }
 
     public WasiPipe getChildOutputPipe(int pid) { return childOutputPipes.get(pid); }
+
+    /**
+     * The shipped program a live child is ({@code pkg}, {@code store}), or null
+     * for anything else: a downloaded program, or a changed copy of a shipped one.
+     */
+    public String systemProgram(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        return entry == null ? null : entry.system;
+    }
 
     /** The program file name of a live child ({@code gba.wasm}), or null. */
     public String nameOf(int pid) {
@@ -688,6 +700,8 @@ public class ProcessManager {
         volatile int group;
         /** Started by the host, not the kernel (see {@link #spawnDetached}). */
         volatile boolean detached;
+        /** The shipped program this process is ({@code pkg}), or null (SystemPrograms.identify). */
+        volatile String system;
         /** Output of a detached child. */
         final TailFd log = new TailFd();
 

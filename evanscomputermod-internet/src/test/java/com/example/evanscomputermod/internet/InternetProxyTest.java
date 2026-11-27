@@ -155,6 +155,113 @@ public class InternetProxyTest {
         }
     }
 
+    /** A guest that acknowledges what arrives in order and counts it; returns the bytes received. */
+    private static byte[] download(InternetProxy proxy, LinkedBlockingQueue<byte[]> output, ServerSocket server, int target, byte[] data, int[] largestBurst) throws Exception {
+        int port = server.getLocalPort();
+        proxy.sendFrame(tcp(target, port, 100, 0, 2, new byte[0]));
+        try (var socket = server.accept()) {
+            byte[] syn = output.poll(3, TimeUnit.SECONDS);
+            assertNotNull(syn);
+            long remote = Integer.toUnsignedLong(InternetProxy.i32(syn, 38));
+            long expect = (remote + 1) & 0xffffffffL;
+            proxy.sendFrame(tcp(target, port, 101, expect, 16, new byte[0]));
+            new Thread(() -> {
+                try {
+                    socket.getOutputStream().write(data);
+                    socket.getOutputStream().flush();
+                    socket.shutdownOutput();
+                } catch (Exception ignored) {
+                }
+            }).start();
+            var got = new java.io.ByteArrayOutputStream();
+            long deadline = System.currentTimeMillis() + 20_000;
+            boolean fin = false;
+            while (!fin && System.currentTimeMillis() < deadline) {
+                // Everything that arrived since the last acknowledgement is one burst.
+                List<byte[]> burst = new ArrayList<>();
+                byte[] f = output.poll(500, TimeUnit.MILLISECONDS);
+                while (f != null) {
+                    burst.add(f);
+                    f = output.poll(15, TimeUnit.MILLISECONDS);
+                }
+                int bytes = 0;
+                for (byte[] seg : burst) {
+                    long seq = Integer.toUnsignedLong(InternetProxy.i32(seg, 38));
+                    int len = seg.length - 54;
+                    if (seq == expect && len > 0) {
+                        got.write(seg, 54, len);
+                        expect = (expect + len) & 0xffffffffL;
+                        bytes += len;
+                    }
+                    if ((seg[47] & 1) != 0 && seq == expect) {
+                        expect = (expect + 1) & 0xffffffffL;
+                        fin = true;
+                    }
+                }
+                largestBurst[0] = Math.max(largestBurst[0], bytes);
+                if (!burst.isEmpty()) proxy.sendFrame(tcp(target, port, 101, expect, 16, new byte[0]));
+            }
+            assertTrue(fin, "the download ended with FIN after " + got.size() + " bytes");
+            return got.toByteArray();
+        }
+    }
+
+    @Test
+    void downloadsAreWindowedAndInOrder() throws Exception {
+        var output = new LinkedBlockingQueue<byte[]>();
+        int target = address();
+        byte[] data = new byte[300_000];
+        for (int i = 0; i < data.length; i++) data[i] = (byte) (i * 31 + (i >> 8));
+        int[] burst = {0};
+        long t0 = System.currentTimeMillis();
+        try (var server = new ServerSocket(0); var proxy = new InternetProxy(output::offer, true)) {
+            assertArrayEquals(data, download(proxy, output, server, target, data, burst));
+        }
+        long ms = System.currentTimeMillis() - t0;
+        assertTrue(burst[0] > InternetProxy.SEGMENT, "several segments travel per acknowledgement: " + burst[0]);
+        assertTrue(burst[0] <= InternetProxy.WINDOW, "never more than the window: " + burst[0]);
+        System.out.println("PROXY_DOWNLOAD 300000 bytes in " + ms + " ms, largest burst " + burst[0]);
+    }
+
+    @Test
+    void downloadCapIsHonoured() throws Exception {
+        var output = new LinkedBlockingQueue<byte[]>();
+        int target = address();
+        byte[] data = new byte[60_000];
+        java.util.Arrays.fill(data, (byte) 7);
+        int[] burst = {0};
+        long t0 = System.currentTimeMillis();
+        // 100 kB/s: 60 kB takes at least half a second.
+        try (var server = new ServerSocket(0); var proxy = new InternetProxy(output::offer, true, 100)) {
+            assertArrayEquals(data, download(proxy, output, server, target, data, burst));
+        }
+        long ms = System.currentTimeMillis() - t0;
+        assertTrue(ms >= 450, "capped at 100 kB/s, 60 kB took " + ms + " ms");
+    }
+
+    @Test
+    void blockedAddressesAreRefusedEvenWhenPublic() throws Exception {
+        var output = new LinkedBlockingQueue<byte[]>();
+        int target = 0x08080808;
+        var before = InternetProxy.BLOCKED;
+        try (var proxy = new InternetProxy(output::offer, false)) {
+            assertTrue(proxy.routable(target, 443));
+            InternetProxy.BLOCKED = Set.of(target);
+            assertFalse(proxy.routable(target, 443));
+            assertTrue(proxy.routable(0x01010101, 443), "other sites are untouched");
+            proxy.sendFrame(tcp(target, 443, 500, 0, 2, new byte[0]));
+            byte[] reply = output.poll(3, TimeUnit.SECONDS);
+            assertNotNull(reply);
+            assertEquals(20, reply[47] & 255, "RST+ACK");
+        } finally {
+            InternetProxy.BLOCKED = before;
+        }
+        // Only datacenter and off keep computers away from the repository.
+        assertTrue(RepoBlock.resolve("open", "https://localhost").isEmpty());
+        assertTrue(RepoBlock.resolve("internet", "https://localhost").isEmpty());
+        assertEquals(Set.of(0x7f000001), RepoBlock.resolve("datacenter", "http://127.0.0.1:8080"));
+    }
+
     @Test
     void lanDestinationsBlockedByDefault() throws Exception {
         try (var lan = new InternetProxy(b -> {}, false); var open = new InternetProxy(b -> {}, true)) {
