@@ -18,7 +18,11 @@ use std::time::{Duration, Instant};
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The computer's sockets and disk.
-struct HostTransport;
+#[derive(Default)]
+struct HostTransport {
+    /// The authorities this computer trusts for in-game servers (/etc/ssl/certs), read on first use.
+    trust: Option<ecm_tls::Trust>,
+}
 
 fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
     let parts: Vec<u8> = s.split('.').map(|p| p.parse::<u8>()).collect::<Result<_, _>>().ok()?;
@@ -75,6 +79,49 @@ impl Transport for HostTransport {
         socket::shutdown(fd, socket::SHUT_RDWR);
         socket::close(fd);
         if out.is_empty() && started.elapsed() >= READ_TIMEOUT {
+            return Err(FetchError::Connect(endpoint));
+        }
+        Ok(out)
+    }
+
+    fn exchange_tls(&mut self, host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, FetchError> {
+        use std::io::{Read, Write};
+        let ip = match parse_ipv4(host) {
+            Some(ip) => ip,
+            None => socket::resolve(host).map_err(|e| FetchError::Resolve(host.into(), e.describe()))?,
+        };
+        let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
+        if fd == -13 {
+            return Err(FetchError::NotAllowed);
+        }
+        if fd < 0 {
+            return Err(FetchError::NoNetwork);
+        }
+        let endpoint = format!("{}.{}.{}.{}:{port}", ip[0], ip[1], ip[2], ip[3]);
+        if socket::connect(fd, &SockAddrIn::from_ip_port(ip, port)) != 0 {
+            socket::close(fd);
+            return Err(FetchError::Connect(endpoint));
+        }
+        // The socket closes when the stream is dropped.
+        let sock = ecm_http::sys::Socket::from_fd(fd, READ_TIMEOUT);
+        let trust = self.trust.get_or_insert_with(|| ecm_tls::Trust::load(ecm_tls::CERTS_DIR));
+        let mut tls = trust.connect(sock, host, ip, ecm_tls::Check::Full).map_err(|e| FetchError::Certificate(e.to_string()))?;
+        tls.write_all(request).and_then(|_| tls.flush()).map_err(|_| FetchError::Io(format!("the connection to {endpoint} broke while sending")))?;
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match tls.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    out.extend_from_slice(&buf[..n]);
+                    if out.len() >= ecm_web::fetch::MAX_BODY {
+                        break;
+                    }
+                }
+            }
+        }
+        tls.close();
+        if out.is_empty() {
             return Err(FetchError::Connect(endpoint));
         }
         Ok(out)
@@ -152,7 +199,7 @@ fn main() {
         }
     };
     let data = std::env::var("ECM_APP_DATA").ok().filter(|d| !d.is_empty());
-    let mut app = match BrowserApp::with_settings(conn, HostTransport, args.first().map(String::as_str), data, &default_home()) {
+    let mut app = match BrowserApp::with_settings(conn, HostTransport::default(), args.first().map(String::as_str), data, &default_home()) {
         Ok(a) => a,
         Err(e) => {
             println!("browser: {e}");

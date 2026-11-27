@@ -2,7 +2,8 @@ NAME
     httpd - a web server: files, virtual hosts and CGI scripts
 
 SYNOPSIS
-    httpd <port> [dir] [--cgi <prefix>]
+    httpd <port> [dir] [--cgi <prefix>] [--tls]
+    httpd <port> [dir] [--cgi <prefix>] --cert <file> --key <file>
 
 DESCRIPTION
     Serves the files in dir (default: the computer's root) over HTTP/1.0
@@ -35,10 +36,19 @@ OPTIONS
         otherwise); a missing script is 404. The web module in Python
         and Lua (web.cgi) does both halves for you.
 
+    --tls
+        Serve HTTPS with this computer's certificate (cert request gets
+        one; man cert). 443 is the usual port. httpd says how to get a
+        certificate when there is none.
+
+    --cert file --key file
+        HTTPS with another certificate and key.
+
 EXAMPLES
       httpd 80 /home/site &
+      httpd 443 /home/site --tls &
       httpd 80 /srv/www --cgi /cgi &
       curl http://localhost/
 
 SEE ALSO
-    browser, curl, scripting, networking
+    browser, curl, tls, cert, scripting, networking

@@ -140,3 +140,14 @@ pub fn online(url: &str) -> crate::probe::Online {
     let mut c = crate::Client::new(Sockets { idle: Duration::from_secs(8) }).agent("ecm-online/1");
     crate::probe::check(&mut c, &net_state(), url)
 }
+
+/// One request for the scripting languages (`net.http_get` and friends): the
+/// status, the headers and the whole body, redirects followed.
+pub fn simple_request(method: &str, url: &str, body: Option<&[u8]>) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+    let mut req = crate::Request::new(method, url).map_err(|e| e.to_string())?;
+    if let Some(b) = body {
+        req.body = b.to_vec();
+    }
+    let r = client("ecm-script/1").send(&req, &mut crate::Transfer::default()).map_err(|e| e.to_string())?;
+    Ok((r.status, r.headers, r.body))
+}

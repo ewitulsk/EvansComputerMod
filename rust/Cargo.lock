@@ -446,7 +446,9 @@ version = "0.1.0"
 dependencies = [
  "ecm-dns",
  "ecm-host-abi",
+ "ecm-http",
  "ecm-js",
+ "ecm-tls",
  "ecm-ui",
  "ecm-ui-proto",
  "ecm-web",
@@ -2686,6 +2688,7 @@ dependencies = [
  "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-http",
  "ecm-lineedit",
  "ecm-radio",
  "ecm-tel",
@@ -3620,6 +3623,7 @@ dependencies = [
  "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
+ "ecm-http",
  "ecm-lineedit",
  "ecm-radio",
  "ecm-tel",
@@ -4831,6 +4835,7 @@ name = "store"
 version = "0.1.0"
 dependencies = [
  "ecm-apps-ui",
+ "ecm-host-abi",
  "ecm-ui",
  "pkg",
 ]

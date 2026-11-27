@@ -17,7 +17,10 @@ pub mod view;
 use crate::appctl::{self, AppCtl, PermLine, PermState};
 use crate::perms::{self, PermText};
 use crate::png::{Images, Img};
+use ecm_pkg::account::{self, Account, DevicePoll, DeviceStart, MemorySecrets, Secrets, Summary};
 use ecm_pkg::client::{Available, Catalog, Client, Installed, Net, Plan, TrustHint};
+use ecm_pkg::http::Url;
+use ecm_pkg::manifest::Kind;
 use ecm_pkg::Repo;
 use ecm_ui::conn::{ConnError, Connection};
 use ecm_ui::App;
@@ -30,6 +33,8 @@ pub enum Tab {
     Discover = 0,
     Updates = 1,
     Installed = 2,
+    /// The signed-in player's favorites (shown only when signed in).
+    Favorites = 3,
 }
 
 impl Tab {
@@ -37,6 +42,7 @@ impl Tab {
         match i {
             1 => Tab::Updates,
             2 => Tab::Installed,
+            3 => Tab::Favorites,
             _ => Tab::Discover,
         }
     }
@@ -85,6 +91,15 @@ pub enum Cmd {
     AddRepo { name: String, url: String },
     /// Remove a repository (`pkg repo remove <name>`).
     RemoveRepo(String),
+    /// Start signing in to the repository that has accounts (a code to enter in the browser).
+    SignIn,
+    /// Stop waiting for the code to be approved.
+    CancelSignIn,
+    SignOut,
+    /// Like or favorite (`what`) a package, or take it back.
+    Mark { id: String, what: &'static str, on: bool },
+    /// Read the signed-in player's favorites.
+    Favorites,
 }
 
 /// What the button on an app's card does.
@@ -93,6 +108,10 @@ pub enum Action {
     Install,
     Update { from: String },
     Open,
+    /// Installed and nothing to open: a program, a library or a source package.
+    Installed,
+    /// In the player's favorites, but no repository here offers it.
+    NotOffered,
     /// Queued or running (`percent` of the download).
     Busy { percent: u32, label: String },
     /// The repository pins a key and the package isn't signed.
@@ -110,6 +129,10 @@ pub struct Card {
     pub trust: String,
     pub verified: bool,
     pub action: Action,
+    /// `app`, `program`, `library` or `source`.
+    pub kind: Kind,
+    /// Likes at the repository, when it counts them and they were read.
+    pub likes: Option<u64>,
 }
 
 /// An app's page.
@@ -125,6 +148,21 @@ pub struct Detail {
     pub permissions: Vec<(String, PermText, Option<PermState>)>,
     pub screenshots: Vec<String>,
     pub can_remove: bool,
+    /// What the package needs installed first, as written (`dev.x.lib >= 1.0.0`).
+    pub depends: Vec<String>,
+    /// For a program or a library: it is not sandboxed. Shown before installing.
+    pub warning: Option<String>,
+    /// Likes, downloads and the player's own marks, from a repository with accounts.
+    pub social: Option<Summary>,
+    /// The player is signed in: Like and Favorite can be shown.
+    pub signed_in: bool,
+}
+
+/// A sign-in in progress: the code to enter on the repository's page.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Login {
+    pub code: String,
+    pub url: String,
 }
 
 /// Apps the store never offers to remove (it is one).
@@ -154,6 +192,29 @@ pub struct Store {
     /// Repositories found on the network that aren't configured (docs/DISCOVERY.md): their
     /// apps are in the catalog too, and the Repositories page offers to add them.
     pub found: Vec<Repo>,
+    /// The first repository that has accounts (https:// or host://), if any.
+    pub account_repo: Option<Repo>,
+    /// The handle signed in there.
+    pub account: Option<String>,
+    pub login: Option<Login>,
+    /// What the repository says about packages whose page was opened.
+    pub social: HashMap<String, Summary>,
+    pub favorites: Vec<Summary>,
+}
+
+/// The words shown before a program or library is installed.
+pub fn unconfined_warning(kind: Kind) -> Option<String> {
+    kind.unconfined().then(|| {
+        format!(
+            "This is a {}, not an app: it is not sandboxed and can read and change everything on this computer. Install it only if you trust who made it.",
+            kind.name()
+        )
+    })
+}
+
+/// The first configured repository that can have accounts.
+pub fn account_repo(repos: &[Repo]) -> Option<Repo> {
+    repos.iter().find(|r| Url::parse(&r.url).map(|u| u.private()).unwrap_or(false)).cloned()
 }
 
 impl Store {
@@ -188,8 +249,10 @@ impl Store {
             Some(a) => match Plan::of(self.installed_version(id), &a.entry.version) {
                 Plan::Install => Action::Install,
                 Plan::Update { from } => Action::Update { from },
-                Plan::UpToDate | Plan::Newer { .. } => Action::Open,
+                Plan::UpToDate | Plan::Newer { .. } if a.entry.kind() == Kind::App => Action::Open,
+                Plan::UpToDate | Plan::Newer { .. } => Action::Installed,
             },
+            None if self.installed.iter().any(|i| i.manifest.id == id && i.manifest.kind != Kind::App) => Action::Installed,
             None => Action::Open,
         }
     }
@@ -205,6 +268,8 @@ impl Store {
             trust: t.label().into(),
             verified: t.verified(),
             action: self.action_for(&a.entry.id, Some(a)),
+            kind: a.entry.kind(),
+            likes: self.social.get(&a.entry.id).map(|s| s.likes),
         }
     }
 
@@ -220,6 +285,8 @@ impl Store {
             verified: trust == "verified publisher" || trust == "system app",
             trust,
             action: self.action_for(&m.id, self.catalog.get(&m.id)),
+            kind: m.kind,
+            likes: self.social.get(&m.id).map(|s| s.likes),
         }
     }
 
@@ -237,11 +304,38 @@ impl Store {
         self.installed.iter().map(|i| self.card_of_installed(i)).collect()
     }
 
+    /// The player's favorites: installable where a repository here offers them.
+    pub fn favorite_cards(&self) -> Vec<Card> {
+        self.favorites
+            .iter()
+            .map(|f| match self.catalog.get(&f.id) {
+                Some(a) => {
+                    let mut c = self.card_of_available(a);
+                    c.likes = Some(f.likes);
+                    c
+                }
+                None => Card {
+                    id: f.id.clone(),
+                    name: if f.name.is_empty() { f.id.clone() } else { f.name.clone() },
+                    summary: f.summary.clone(),
+                    version: f.version.clone(),
+                    publisher: f.owner.clone(),
+                    trust: String::new(),
+                    verified: false,
+                    action: if self.installed_version(&f.id).is_some() { Action::Installed } else { Action::NotOffered },
+                    kind: Kind::parse(&f.kind).unwrap_or(Kind::App),
+                    likes: Some(f.likes),
+                },
+            })
+            .collect()
+    }
+
     pub fn cards(&self) -> Vec<Card> {
         match self.tab() {
             Tab::Discover => self.discover(),
             Tab::Updates => self.updates(),
             Tab::Installed => self.installed_cards(),
+            Tab::Favorites => self.favorite_cards(),
         }
     }
 
@@ -274,6 +368,14 @@ impl Store {
             repo: available.as_ref().map(|a| a.repo.name.clone()),
             installed_version: installed.map(|i| i.manifest.version.clone()),
             can_remove: installed.is_some() && !SYSTEM_APPS.contains(&id),
+            depends: match (&available, installed) {
+                (Some(a), _) => a.entry.depends.clone(),
+                (None, Some(i)) => i.manifest.depends.iter().map(|d| d.to_string()).collect(),
+                _ => Vec::new(),
+            },
+            warning: if installed.is_none() { unconfined_warning(card.kind) } else { None },
+            social: self.social.get(id).cloned(),
+            signed_in: self.account.is_some(),
             card,
             available,
             permissions,
@@ -283,8 +385,30 @@ impl Store {
     // ------------------------------------------------------------ actions (from handlers)
 
     pub fn set_tab(&mut self, t: Tab) {
+        // Favorites only exists while signed in.
+        let t = if t == Tab::Favorites && self.account.is_none() { Tab::Discover } else { t };
         self.tab = Some(t);
         self.detail = None;
+        if t == Tab::Favorites {
+            self.cmds.push(Cmd::Favorites);
+        }
+    }
+
+    pub fn sign_in(&mut self) {
+        self.cmds.push(Cmd::SignIn);
+    }
+
+    pub fn cancel_sign_in(&mut self) {
+        self.cmds.push(Cmd::CancelSignIn);
+    }
+
+    pub fn sign_out(&mut self) {
+        self.cmds.push(Cmd::SignOut);
+    }
+
+    /// Like or favorite (`what`) a package, or take it back.
+    pub fn mark(&mut self, id: &str, what: &'static str, on: bool) {
+        self.cmds.push(Cmd::Mark { id: id.to_string(), what, on });
     }
 
     pub fn open_detail(&mut self, id: &str) {
@@ -415,6 +539,12 @@ pub struct StoreApp<N: Net, C: AppCtl> {
     pub ctl: C,
     pub images: Images,
     pub window: u32,
+    /// Where the sign-in is kept (the computer's secret store in the program).
+    pub secrets: Box<dyn Secrets>,
+    /// Shows the sign-in page's link to the player outside the game (their chat), if it can.
+    pub show_link: fn(&str, &str),
+    /// A device sign-in being waited for, and when to ask again.
+    pending: Option<(DeviceStart, std::time::Instant, std::time::Instant)>,
 }
 
 impl<N: Net, C: AppCtl> StoreApp<N, C> {
@@ -425,7 +555,17 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
         let s = store.clone();
         let window = app.window("App Store", move |cx| view::view(&s, cx));
         store.borrow_mut().cmds.push(Cmd::Refresh(fetch));
-        let mut me = StoreApp { app, store, client, ctl, images: Images::new(), window };
+        let mut me = StoreApp {
+            app,
+            store,
+            client,
+            ctl,
+            images: Images::new(),
+            window,
+            secrets: Box::new(MemorySecrets::default()),
+            show_link: |_, _| {},
+            pending: None,
+        };
         me.process();
         Ok(me)
     }
@@ -439,11 +579,69 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
     /// One loop turn: draw, wait up to `timeout_ms` for input, handle it, do queued work.
     pub fn step(&mut self, timeout_ms: i32) -> bool {
         let busy = !self.store.borrow().cmds.is_empty() || !self.store.borrow().queue.is_empty();
-        if !self.app.step(if busy { 0 } else { timeout_ms }) {
+        // While a sign-in waits for the player's browser, wake up to ask whether it is approved.
+        let timeout = match (&self.pending, busy) {
+            (_, true) => 0,
+            (Some((d, _, _)), false) => {
+                let wait = (d.interval * 1000) as i32;
+                if timeout_ms < 0 { wait } else { timeout_ms.min(wait) }
+            }
+            (None, false) => timeout_ms,
+        };
+        if !self.app.step(timeout) {
             return false;
         }
         self.process();
+        self.poll_sign_in();
         true
+    }
+
+    fn account_base(&self) -> Option<Url> {
+        self.store.borrow().account_repo.as_ref().and_then(|r| Url::parse(&r.url).ok())
+    }
+
+    fn signed_in(&self) -> Option<Account> {
+        account::load(self.secrets.as_ref(), &self.account_base()?)
+    }
+
+    /// Ask the repository whether the sign-in code was approved (at its interval).
+    pub fn poll_sign_in(&mut self) {
+        let Some((d, started, next)) = self.pending.clone() else { return };
+        let now = std::time::Instant::now();
+        if now < next {
+            return;
+        }
+        let Some(base) = self.account_base() else {
+            self.pending = None;
+            return;
+        };
+        let outcome = if started.elapsed().as_secs() > d.expires_in { Ok(DevicePoll::Expired) } else { account::device_poll(&mut self.client.net, &base, &d.device_code) };
+        let mut done = true;
+        let status = match outcome {
+            Ok(DevicePoll::Pending) => {
+                done = false;
+                self.pending = Some((d.clone(), started, now + std::time::Duration::from_secs(d.interval)));
+                None
+            }
+            Ok(DevicePoll::Granted(a)) => match account::save(self.secrets.as_mut(), &a) {
+                Ok(()) => {
+                    self.store.borrow_mut().account = Some(a.handle.clone());
+                    Some(format!("Signed in as {}", a.handle))
+                }
+                Err(e) => Some(format!("Signed in, but the sign-in could not be kept: {e}")),
+            },
+            Ok(DevicePoll::Denied) => Some("The sign-in was denied on the web page".into()),
+            Ok(DevicePoll::Expired) => Some("The sign-in code ran out; try again".into()),
+            Err(e) => Some(format!("Couldn't sign in: {e}")),
+        };
+        if done {
+            self.pending = None;
+            self.store.borrow_mut().login = None;
+        }
+        if let Some(m) = status {
+            self.store.borrow_mut().status = m;
+            let _ = self.redraw();
+        }
     }
 
     pub fn run(&mut self) {
@@ -505,9 +703,12 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
                     };
                     s.catalog = catalog;
                     s.installed = installed;
+                    s.account_repo = account_repo(&repos);
                     s.repos = repos;
                     s.found = found;
                 }
+                let who = self.signed_in().map(|a| a.handle);
+                self.store.borrow_mut().account = who;
                 self.load_icons();
             }
             Cmd::AddRepo { name, url } => match self.client.add_repo(&name, &url, None) {
@@ -543,7 +744,85 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
                     Err(e) => s.status = format!("Can't open {name}: {e}"),
                 }
             }
+            Cmd::SignIn => {
+                let Some(base) = self.account_base() else {
+                    self.store.borrow_mut().status = "No repository here has accounts (the official repository does).".into();
+                    return;
+                };
+                match account::device_start(&mut self.client.net, &base, "App Store", &["social", "publish"]) {
+                    Ok(d) => {
+                        (self.show_link)(&d.verification_uri_complete, "Sign in to the package repository");
+                        let mut s = self.store.borrow_mut();
+                        s.login = Some(Login { code: d.user_code.clone(), url: d.verification_uri.clone() });
+                        s.status = "Waiting for you to approve the code in your browser...".into();
+                        let now = std::time::Instant::now();
+                        self.pending = Some((d.clone(), now, now + std::time::Duration::from_secs(d.interval)));
+                    }
+                    Err(e) => self.store.borrow_mut().status = format!("Couldn't start signing in: {e}"),
+                }
+            }
+            Cmd::CancelSignIn => {
+                self.pending = None;
+                let mut s = self.store.borrow_mut();
+                s.login = None;
+                s.status = "Sign-in cancelled".into();
+            }
+            Cmd::SignOut => {
+                if let Some(base) = self.account_base() {
+                    account::logout(&mut self.client.net, self.secrets.as_mut(), &base);
+                }
+                let mut s = self.store.borrow_mut();
+                s.account = None;
+                s.favorites.clear();
+                for v in s.social.values_mut() {
+                    v.liked = false;
+                    v.favorited = false;
+                }
+                if s.tab == Some(Tab::Favorites) {
+                    s.tab = Some(Tab::Discover);
+                }
+                s.status = "Signed out".into();
+            }
+            Cmd::Mark { id, what, on } => {
+                let (Some(base), who) = (self.account_base(), self.signed_in()) else { return };
+                match account::mark(&mut self.client.net, &base, who.as_ref(), &id, what, on) {
+                    Ok(()) => {
+                        // Read the counts back: someone else may have liked it meanwhile.
+                        if let Ok(sum) = account::detail(&mut self.client.net, &base, who.as_ref(), &id) {
+                            self.store.borrow_mut().social.insert(id.clone(), sum);
+                        }
+                        let showing_favorites = self.store.borrow().tab == Some(Tab::Favorites);
+                        if what == "favorite" && showing_favorites {
+                            self.command(Cmd::Favorites);
+                        }
+                    }
+                    Err(e) => self.store.borrow_mut().status = e,
+                }
+            }
+            Cmd::Favorites => {
+                let (Some(base), who) = (self.account_base(), self.signed_in()) else { return };
+                match account::mine(&mut self.client.net, &base, who.as_ref(), "favorites") {
+                    Ok(list) => self.store.borrow_mut().favorites = list,
+                    Err(e) => self.store.borrow_mut().status = format!("Couldn't read your favorites: {e}"),
+                }
+            }
             Cmd::Detail(id) => {
+                // Likes and downloads, from a repository that counts them (one small request).
+                let from_account_repo = {
+                    let s = self.store.borrow();
+                    match (&s.account_repo, s.catalog.get(&id)) {
+                        (Some(r), Some(a)) => Url::parse(&r.url).ok().map(|u| u.origin()) == a.url().ok().map(|u| u.origin()),
+                        _ => false,
+                    }
+                };
+                if from_account_repo {
+                    if let Some(base) = self.account_base() {
+                        let who = self.signed_in();
+                        if let Ok(sum) = account::detail(&mut self.client.net, &base, who.as_ref(), &id) {
+                            self.store.borrow_mut().social.insert(id.clone(), sum);
+                        }
+                    }
+                }
                 if self.store.borrow().installed_version(&id).is_some() {
                     if let Ok(r) = self.ctl.call(&["perm", "list", &id]) {
                         let (lines, _) = appctl::parse_perm_list(&r);

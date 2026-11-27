@@ -196,3 +196,26 @@ fn https_with_an_ingame_authority() {
     assert_eq!(probe::check(&mut c, &state, &format!("https://localhost:{port}/")), probe::Online::Yes(200));
     assert_eq!(probe::check(&mut c, &state, "http://127.0.0.1:1/").code(), "unreachable");
 }
+
+/// The real internet: a public site's certificate chain is checked against the
+/// built-in roots with the pure-Rust provider. Needs a network, so it only
+/// runs when asked: `cargo test -p ecm-http -- --ignored public_site`.
+#[test]
+#[ignore]
+fn public_site_over_https() {
+    let mut c = client();
+    c.trust = Some(Trust::public_only());
+    for url in ["https://example.com/", "https://letsencrypt.org/", "https://www.cloudflare.com/"] {
+        let r = c.send(&Request::get(url).unwrap(), &mut Transfer { max_body: 4 << 20, ..Transfer::default() }).unwrap_or_else(|e| panic!("{url}: {e}"));
+        assert!(r.status < 400, "{url}: HTTP {}", r.status);
+        assert!(r.tls.is_some() && ecm_tls::is_public(r.peer), "{url}: {:?} {:?}", r.tls, r.peer);
+        println!("{url}: HTTP {} over {} from {:?}, {} bytes", r.status, r.tls.unwrap(), r.peer, r.length);
+    }
+    // A name the certificate is not for (the address answers, the name is wrong).
+    let e = c.get("https://wrong.host.badssl.com/").unwrap_err();
+    assert!(matches!(e, HttpError::Tls(TlsError::WrongName(_))), "{e:?}");
+    let e = c.get("https://expired.badssl.com/").unwrap_err();
+    assert!(matches!(e, HttpError::Tls(TlsError::Expired(_))), "{e:?}");
+    let e = c.get("https://self-signed.badssl.com/").unwrap_err();
+    assert!(matches!(e, HttpError::Tls(TlsError::UnknownAuthority(_))), "{e:?}");
+}

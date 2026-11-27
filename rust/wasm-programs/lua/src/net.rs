@@ -10,6 +10,9 @@
 //!   net.tcp_accept(listener) → conn, net.tcp_send(conn, data) → n,
 //!   net.tcp_recv(conn, max) → data, net.tcp_close(conn)
 //!   net.http_get(url), net.http_post(url, body) → {status=, body=, headers={...}}
+//!     (http:// and https://; an https server's certificate is checked)
+//!   net.online(url) → "online", or the step that fails ("no-link", "no-address",
+//!     "no-route", "no-dns", "unreachable", "certificate", "not-allowed", "failed")
 
 use ecm_host_abi::{net_config, net_ipc};
 use mlua::{Lua, Table};
@@ -160,6 +163,20 @@ fn resolve_host(host: &str) -> mlua::Result<String> {
 
 /// A plain HTTP/1.1 request over the computer's TCP stack.
 fn http(lua: &Lua, method: &str, url: &str, body: Option<&[u8]>) -> mlua::Result<Table> {
+    // https:// goes through the shared client (TLS, certificates checked).
+    #[cfg(target_os = "wasi")]
+    if url.starts_with("https://") {
+        let (status, head, data) = ecm_http::sys::simple_request(method, url, body).map_err(err)?;
+        let headers = lua.create_table()?;
+        for (k, v) in head {
+            headers.set(k.to_lowercase(), v)?;
+        }
+        let out = lua.create_table()?;
+        out.set("status", status as f64)?;
+        out.set("body", lua.create_string(&data)?)?;
+        out.set("headers", headers)?;
+        return Ok(out);
+    }
     let rest = url.strip_prefix("http://").unwrap_or(url);
     let (host_port, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -394,6 +411,18 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     m.set("tcp_close", lua.create_function(|_, conn: i32| {
         net_ipc::tcp_close(conn);
         Ok(())
+    })?)?;
+
+    m.set("online", lua.create_function(|_, url: String| {
+        #[cfg(target_os = "wasi")]
+        {
+            Ok(ecm_http::sys::online(&url).code().to_string())
+        }
+        #[cfg(not(target_os = "wasi"))]
+        {
+            let _ = url;
+            Ok("no-link".to_string())
+        }
     })?)?;
 
     m.set("http_get", lua.create_function(|lua, url: String| http(lua, "GET", &url, None))?)?;

@@ -287,3 +287,188 @@ fn found_repositories_skip_configured_ones_and_get_free_names() {
     assert_eq!(v, vec![("Lab-2", "http://10.0.7.2:8080/"), ("10-0-7-3", "http://10.0.7.3:8080/")]);
     assert!(got.iter().all(|r| r.key.is_none()), "a key from the network is never pinned");
 }
+
+// ---------------------------------------------------------------- the official repository: kinds and accounts
+
+const OFFICIAL: &str = "https://repo.test/r/stable/";
+
+fn pack(id: &str, name: &str, rest: &str, files: &[(&str, &[u8])]) -> (ecm_pkg::package::Package, Vec<u8>) {
+    let toml = format!("id = \"{id}\"\nname = \"{name}\"\nversion = \"1.0.0\"\nsummary = \"{name} for tests\"\n{rest}\n");
+    let mut all = vec![("app.toml".to_string(), toml.into_bytes())];
+    all.extend(files.iter().map(|(p, d)| (p.to_string(), d.to_vec())));
+    ecm_pkg::package::build(all).unwrap()
+}
+
+fn json_reply(status: u16, body: serde_json::Value) -> ecm_pkg::client::Reply {
+    ecm_pkg::client::Reply { status, body: body.to_string().into_bytes() }
+}
+
+fn summary(id: &str, kind: &str, likes: u64, liked: bool, favorited: bool) -> serde_json::Value {
+    serde_json::json!({"id": id, "name": id, "summary": "", "kind": kind, "version": "1.0.0", "owner": "evan", "channels": ["stable"],
+        "likes": likes, "downloads": 12, "liked": liked, "favorited": favorited})
+}
+
+/// A store on a signed HTTPS repository with a program, a library and an app that needs the library.
+fn official(name: &str) -> (StoreApp<MemoryNet, FakeCtl>, MockConnection) {
+    let (public, secret) = ecm_pkg::sign::keypair_from_seed(&[7u8; 32]);
+    let mut net = MemoryNet::default();
+    let mut entries = Vec::new();
+    let mut files = Vec::new();
+    for (p, bytes) in [
+        pack("dev.t.hexdump", "Hexdump", "kind = \"program\"\nbin = [\"hexdump.wasm\"]", &[("hexdump.wasm", b"H")]),
+        pack("dev.t.geo", "Geometry", "kind = \"library\"\nprovides = [\"geo\"]", &[("python/geo.py", b"g")]),
+        pack("dev.t.area", "Area", "entry = \"main.py\"\ndepends = [\"dev.t.geo >= 1.0.0\"]", &[("main.py", b"a")]),
+    ] {
+        let file = ecm_pkg::package::file_name(&p.manifest);
+        let sig = ecm_pkg::sign::sign(&secret, &ecm_pkg::package::signed_message(&p.manifest.id, &p.manifest.version, &p.sha256));
+        entries.push(ecm_pkg::package::index_entry(&p, &file, bytes.len() as u64, Some(sig)));
+        files.push((file, bytes));
+    }
+    let ix = ecm_pkg::package::Index { format: ecm_pkg::package::INDEX_FORMAT.into(), name: "official".into(), publisher_key: Some(public.clone()), packages: entries };
+    net.serve(OFFICIAL, &ix, &files);
+    let c = Client::new(&tmp(name), net);
+    c.add_repo("official", OFFICIAL, Some(&public)).unwrap();
+
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    let mut wl = ui_samples::welcome(false);
+    if let Message::Welcome(ref mut x) = wl {
+        x.display.w = 640;
+        x.display.h = 400;
+        x.display.size_class = proto::SizeClass::for_width(640);
+    }
+    mock.push(&[wl]);
+    let mut ctl = FakeCtl::default();
+    ctl.add(crate::STORE_ID, "App Store", "1.0.0", &["packages", "network"], &[]);
+    let mut sa = StoreApp::new(Box::new(mock.clone()), c, ctl, true).unwrap();
+    mock.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w: 640, h: 400, states: proto::window_states::ACTIVATED })]);
+    sa.step(0);
+    sa.step(0);
+    (sa, mock)
+}
+
+fn shows(sa: &StoreApp<MemoryNet, FakeCtl>, id: &str) -> bool {
+    sa.app.core.window(1).unwrap().hit_id_of(id).is_some()
+}
+
+#[test]
+fn kinds_are_named_and_unconfined_ones_carry_a_warning() {
+    let (mut sa, mock) = official("kinds");
+    {
+        let s = sa.store.borrow();
+        let kinds: Vec<(String, &str)> = s.discover().into_iter().map(|c| (c.name, c.kind.name())).collect();
+        assert_eq!(kinds, vec![("Area".to_string(), "app"), ("Geometry".to_string(), "library"), ("Hexdump".to_string(), "program")]);
+        assert!(s.discover().iter().all(|c| c.verified), "signed with the pinned key");
+        // A program: not sandboxed, and the page says so before the install; an app has no warning.
+        let d = s.detail_of("dev.t.hexdump").unwrap();
+        assert!(d.warning.as_deref().unwrap().contains("not sandboxed"));
+        assert!(s.detail_of("dev.t.geo").unwrap().warning.is_some());
+        let area = s.detail_of("dev.t.area").unwrap();
+        assert_eq!((area.warning.clone(), area.depends.clone()), (None, vec!["dev.t.geo >= 1.0.0".to_string()]));
+    }
+    // Install the program from its page: nothing to open afterwards, and no warning any more.
+    click(&mut sa, &mock, "name:dev.t.hexdump");
+    assert!(sa.store.borrow().detail_of("dev.t.hexdump").unwrap().warning.is_some(), "the open page carries the warning");
+    click(&mut sa, &mock, "page:dev.t.hexdump");
+    {
+        let s = sa.store.borrow();
+        assert_eq!(s.status, "Installed Hexdump 1.0.0 (verified publisher)");
+        let d = s.detail_of("dev.t.hexdump").unwrap();
+        assert_eq!((d.card.action.clone(), d.warning.clone()), (Action::Installed, None));
+    }
+    assert!(std::fs::metadata(sa.client.path("/bin/hexdump.wasm")).is_ok());
+    // Open on a program does nothing (there is nothing to launch).
+    sa.store.borrow_mut().act("dev.t.hexdump");
+    assert!(sa.store.borrow().cmds.is_empty());
+    // The app brings its library.
+    click(&mut sa, &mock, "back");
+    click(&mut sa, &mock, "name:dev.t.area");
+    click(&mut sa, &mock, "page:dev.t.area");
+    assert!(std::fs::metadata(sa.client.path("/lib/python/geo.py")).is_ok());
+    assert_eq!(sa.store.borrow().detail_of("dev.t.geo").unwrap().card.action, Action::Installed);
+}
+
+#[test]
+fn sign_in_like_and_favorite() {
+    let (mut sa, mock) = official("account");
+    let api = |sa: &mut StoreApp<MemoryNet, FakeCtl>, key: &str, r: ecm_pkg::client::Reply| {
+        sa.client.net.api.insert(key.to_string(), r);
+    };
+    let o = "https://repo.test";
+    assert_eq!(sa.store.borrow().account_repo.as_ref().map(|r| r.name.clone()), Some("official".into()));
+    assert_eq!(sa.store.borrow().account, None);
+    // Signed out: a package's page has no Like button, and there is no Favorites tab.
+    api(&mut sa, &format!("GET {o}/v1/packages/dev.t.area"), json_reply(200, summary("dev.t.area", "app", 3, false, false)));
+    click(&mut sa, &mock, "name:dev.t.area");
+    assert_eq!(sa.store.borrow().social["dev.t.area"].likes, 3, "likes are shown to everyone");
+    assert!(!shows(&sa, "like"));
+    sa.store.borrow_mut().set_tab(Tab::Favorites);
+    assert_eq!(sa.store.borrow().tab(), Tab::Discover, "no Favorites while signed out");
+
+    // Repositories page: Sign in shows the code; the link goes to the player's chat.
+    api(&mut sa, &format!("POST {o}/auth/v1/device/start"), json_reply(200, serde_json::json!({"device_code":"dc","user_code":"WXYZ-1234",
+        "verification_uri":"https://repo.test/device","verification_uri_complete":"https://repo.test/device?code=WXYZ-1234","interval":1,"expires_in":600})));
+    api(&mut sa, &format!("POST {o}/auth/v1/device/token"), json_reply(428, serde_json::json!({"error":"pending","message":"wait"})));
+    thread_local!(static LINKS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) });
+    sa.show_link = |url, _| LINKS.with(|l| l.borrow_mut().push(url.to_string()));
+    click(&mut sa, &mock, "repos");
+    click(&mut sa, &mock, "sign_in");
+    assert_eq!(sa.store.borrow().login, Some(Login { code: "WXYZ-1234".into(), url: "https://repo.test/device".into() }));
+    assert!(shows(&sa, "cancel_sign_in"), "the code page is showing");
+    LINKS.with(|l| assert_eq!(*l.borrow(), vec!["https://repo.test/device?code=WXYZ-1234".to_string()]));
+    // Not approved yet: still waiting.
+    sa.pending.as_mut().unwrap().2 = std::time::Instant::now();
+    sa.poll_sign_in();
+    assert!(sa.store.borrow().login.is_some() && sa.store.borrow().account.is_none());
+    // Approved in the browser.
+    api(&mut sa, &format!("POST {o}/auth/v1/device/token"), json_reply(200, serde_json::json!({"token":"ecm_d_tok","handle":"evan","scopes":["social","publish"]})));
+    sa.pending.as_mut().unwrap().2 = std::time::Instant::now();
+    sa.poll_sign_in();
+    assert_eq!((sa.store.borrow().account.clone(), sa.store.borrow().login.clone()), (Some("evan".into()), None));
+    assert_eq!(sa.store.borrow().status, "Signed in as evan");
+    assert!(sa.secrets.get(&account::secret_name(o)).unwrap().contains("ecm_d_tok"), "the sign-in went to the secret store");
+    sa.step(0);
+    assert!(shows(&sa, "sign_out"));
+
+    // Like and favorite from the page; the counts are read back from the repository.
+    click(&mut sa, &mock, "repos_back");
+    api(&mut sa, &format!("PUT {o}/v1/packages/dev.t.area/like"), ecm_pkg::client::Reply { status: 204, body: vec![] });
+    api(&mut sa, &format!("PUT {o}/v1/packages/dev.t.area/favorite"), ecm_pkg::client::Reply { status: 204, body: vec![] });
+    click(&mut sa, &mock, "name:dev.t.area");
+    assert!(shows(&sa, "like") && shows(&sa, "favorite"));
+    api(&mut sa, &format!("GET {o}/v1/packages/dev.t.area"), json_reply(200, summary("dev.t.area", "app", 4, true, false)));
+    click(&mut sa, &mock, "like");
+    assert_eq!((sa.store.borrow().social["dev.t.area"].likes, sa.store.borrow().social["dev.t.area"].liked), (4, true));
+    let sent = sa.client.net.calls.iter().rev().find(|c| c.path.ends_with("/like")).unwrap().clone();
+    assert_eq!((sent.method.as_str(), sent.token.as_deref()), ("PUT", Some("ecm_d_tok")));
+    api(&mut sa, &format!("GET {o}/v1/packages/dev.t.area"), json_reply(200, summary("dev.t.area", "app", 4, true, true)));
+    click(&mut sa, &mock, "favorite");
+    assert!(sa.store.borrow().social["dev.t.area"].favorited);
+
+    // The Favorites tab: what the account holds, installable when a repository here offers it.
+    api(&mut sa, &format!("GET {o}/v1/me/favorites"), json_reply(200, serde_json::json!([summary("dev.t.area", "app", 4, true, true), summary("dev.t.elsewhere", "program", 9, false, true)])));
+    sa.store.borrow_mut().set_tab(Tab::Favorites);
+    sa.process();
+    let cards = sa.store.borrow().cards();
+    assert_eq!(cards.iter().map(|c| (c.id.as_str(), c.action.clone())).collect::<Vec<_>>(),
+        vec![("dev.t.area", Action::Install), ("dev.t.elsewhere", Action::NotOffered)]);
+    assert_eq!(cards[1].likes, Some(9));
+
+    // Sign out: the token is revoked and forgotten; Favorites goes away.
+    sa.store.borrow_mut().sign_out();
+    sa.process();
+    assert_eq!((sa.store.borrow().account.clone(), sa.store.borrow().tab()), (None, Tab::Discover));
+    assert!(sa.secrets.get(&account::secret_name(o)).is_none());
+    assert_eq!(sa.client.net.calls.last().unwrap().path, "/auth/v1/token/revoke");
+}
+
+#[test]
+fn a_plain_repository_has_no_account_section() {
+    let (mut sa, mock) = start("plain", 640, 400);
+    assert!(sa.store.borrow().account_repo.is_none());
+    click(&mut sa, &mock, "repos");
+    assert!(!shows(&sa, "sign_in"));
+    sa.store.borrow_mut().sign_in();
+    sa.process();
+    assert!(sa.store.borrow().status.contains("No repository here has accounts"));
+}

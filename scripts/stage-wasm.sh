@@ -101,9 +101,10 @@ for dir in rust/wasm-programs/*/; do
 done
 
 # Interactive programs must compile before they run (ChicoryRuntime.SYNC_COMPILE_MAX_BYTES,
-# 4 MiB; browser has a tighter 2 MiB budget): a bigger module starts interpreted and stays
-# so while open, too slow to type into.
-for spec in browser:2097152 vim:4194304; do
+# 4 MiB): a bigger module starts interpreted and stays so while open, too slow to type
+# into. The same goes for everything that speaks TLS (interpreted, a handshake takes about
+# a second and a download crawls). The browser keeps half a megabyte of room.
+for spec in browser:3670016 vim:4194304 pkg:4194304 store:4194304 curl:4194304 httpd:4194304 cad:4194304 cert:4194304 lua:4194304; do
     app="${spec%%:*}"
     limit="${spec##*:}"
     f="wasm-bin/$app.wasm"

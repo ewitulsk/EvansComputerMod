@@ -1,0 +1,94 @@
+NAME
+    repo - where packages come from: repositories and the official one
+
+DESCRIPTION
+    A repository is a web server with an index.json and package files.
+    Three kinds of address reach one (pkg repo add name url):
+
+      http://host:port/    a computer in the game running pkg serve
+      https://host/        the same over TLS (man tls), or the official
+                           repository on the real internet
+      host://repo/r/...    the official repository, fetched for this
+                           computer by the Minecraft server itself: no
+                           network needed
+
+    THE OFFICIAL REPOSITORY
+
+    Apps, programs, libraries and code that the mod's author and other
+    players have published. It has channels:
+
+      stable      chosen and checked by the mod's author
+      community   everything players have published, unreviewed
+
+    Anyone can download from it. With an account (pkg login) you can
+    publish your own packages, like and favorite.
+
+    HOW A COMPUTER REACHES IT
+
+    The server's owner decides (the server setting repo.access):
+
+      open        every computer can use it, cabled or not. The
+                  repositories official and community are already in
+                  /etc/pkg/repos as host:// addresses.
+      internet    a computer needs a way to the real internet: a cable
+                  (or Wi-Fi, or a cell signal) that leads to an Internet
+                  Gateway. official and community are in /etc/pkg/repos
+                  as https:// addresses. pkg online says what is
+                  missing.
+      datacenter  only the server's repository servers reach it (the
+                  Tech Village data centers, and computers an operator
+                  chose). Everyone else adds a data center's repository
+                  (pkg discover finds them) and gets what it offers.
+      off         not at all. Repositories in the game still work.
+
+    A data center picks what it offers with pkg mirror: all of the
+    official repository, or a chosen list.
+
+    WHO TO TRUST
+
+    Packages of the official repository are signed with its key, which
+    the server pins in /etc/pkg/repos: a copy from a data center is
+    checked exactly like the original. See TRUST in man pkg.
+
+    Apps are sandboxed. Programs and libraries are not: read what a
+    package is before installing one from the community channel.
+
+    PUBLISHING
+
+      pkg login            sign in (a code to enter in your browser)
+      pkg publish mydir    upload the package in mydir
+
+    The package's id is yours from the first upload. Other players
+    install it with pkg install <id>. pkg yank takes a version out of
+    the listings.
+
+    YOUR SIGN-IN
+
+    The sign-in is kept in the computer's secret store, outside its
+    files: no program can read it off the disk, it only works while you
+    are the one at the computer, and only pkg and the App Store are
+    given it. Sign out with pkg logout, or revoke it from your account
+    page on the repository's website.
+
+    The server's owner can see everything on their server. Do not sign
+    in on a server you do not trust.
+
+OPERATORS
+    /ecm repo status
+        How computers reach the repository on this server.
+
+    /ecm repo grant <pos>
+    /ecm repo revoke <pos>
+    /ecm repo list
+        Make the computer at pos a repository server (or stop), and
+        list them. They matter when repo.access is datacenter.
+
+EXAMPLES
+      pkg online
+      pkg search
+      pkg install dev.example.notes
+      pkg mirror official /srv/repo --only dev.example.notes
+      pkg serve /srv/repo &
+
+SEE ALSO
+    pkg, store, tls, cert, networking, disco

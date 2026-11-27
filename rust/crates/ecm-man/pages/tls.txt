@@ -1,0 +1,70 @@
+NAME
+    tls - https, certificates and whom a computer trusts
+
+DESCRIPTION
+    TLS encrypts a connection and proves who the server is. An address
+    that starts with https:// uses it: in curl, the Browser, pkg, and
+    net.http_get in Python and Lua.
+
+    A server proves who it is with a certificate, signed by an
+    authority. A computer checks that the certificate is for the name
+    it asked for, that it is in date, and that an authority it trusts
+    signed it. Which authorities count depends on where the server is:
+
+      on the real internet     the real world's authorities, built in
+      in the game's networks   the authorities this computer trusts:
+                               the files in /etc/ssl/certs
+
+    So an authority in the game cannot vouch for a website on the real
+    internet, and the other way round.
+
+    AUTHORITIES IN THE GAME
+
+    Any computer can be an authority: it runs cad (man cad). Another
+    computer trusts it with
+
+      cert trust <the authority's address>
+
+    and gets a certificate for itself from it with
+
+      cert request <this computer's name or address>
+
+    The authority checks that the computer really answers at that name
+    before it signs. A certificate lasts 90 days; cert renew gets a new
+    one. See man cert.
+
+    Computers generated in a Tech Village already trust the village's
+    authority (at the name ca), and its servers have certificates.
+
+    SERVING HTTPS
+
+      httpd 443 /srv/www --tls &
+      pkg serve /srv/repo --tls &
+
+    Both use this computer's certificate (/etc/ssl/server.crt and
+    /etc/ssl/private/server.key).
+
+    WHEN IT FAILS
+
+      certificate not trusted          no trusted authority signed it:
+                                       cert trust <authority>
+      certificate is for another name  use the name (or address) the
+                                       certificate was asked for
+      certificate is out of date       cert renew on the server; or
+                                       this computer's clock is wrong
+
+    curl -k connects without checking. It still encrypts, but you no
+    longer know who is at the other end: never send a password that
+    way.
+
+FILES
+    /etc/ssl/certs
+        The authorities this computer trusts for servers in the game:
+        *.anchor (an authority's key and name) and *.pem (a root
+        certificate).
+
+    /etc/ssl/server.crt, /etc/ssl/private/server.key
+        This computer's certificate and its key.
+
+SEE ALSO
+    cert, cad, curl, httpd, pkg, browser, networking

@@ -1,0 +1,53 @@
+NAME
+    cad - a certificate authority for the game's networks
+
+SYNOPSIS
+    cad init <name>
+    cad [serve] [port]
+    cad show
+
+DESCRIPTION
+    Makes this computer an authority that signs certificates for other
+    computers (man tls). A computer that trusts it (cert trust) accepts
+    the https servers it signed for.
+
+    Before signing, cad checks that the asking computer really answers
+    at each name: it fetches a page from port 80 of the name and
+    compares it with what it handed out. It never signs for a name or
+    address on the real internet.
+
+COMMANDS
+    init name
+        Make this computer an authority called name: a key in
+        /etc/cad/ca.key (kept if there is one already) and its own
+        certificate in /etc/cad/ca.crt. Prints the line other computers
+        trust it by.
+
+    serve [port]
+        Answer certificate requests on port 8555 (or port) until
+        stopped with Ctrl+C or Ctrl+T. Start it with & to keep the
+        shell, or put the line cad in /services.cfg. Each request and
+        each certificate signed is printed.
+
+    show
+        The authority's name and key.
+
+FILES
+    /etc/cad/ca.key
+        The authority's key. Whoever has it can sign for any name in
+        the game on the computers that trust this authority: keep the
+        computer safe.
+
+    /etc/cad/ca.name, /etc/cad/ca.crt
+        Its name and certificate.
+
+    /var/lib/cad/issued.log
+        Every certificate signed: time, serial, who asked, the names.
+
+EXAMPLES
+      cad init Evan's Authority
+      cad &
+      cad show
+
+SEE ALSO
+    tls, cert, httpd

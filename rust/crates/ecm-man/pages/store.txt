@@ -1,5 +1,5 @@
 NAME
-    store - the App Store: find, install, update and remove apps
+    store - the App Store: find, install, update and remove packages
 
 SYNOPSIS
     store [--app ID]
@@ -28,6 +28,12 @@ DESCRIPTION
       Unsigned                 the repository has a pinned key but
                                the package isn't signed: refused
 
+    Programs, libraries and source packages are listed with their
+    kind. A program or a library is not sandboxed: its page says so, in
+    a red box, before you install it. What a package needs is installed
+    with it. Once installed they show Installed (there is nothing to
+    open).
+
     Buttons: Install, Update or Open, and Remove (your app's data in
     /var/apps/ID is kept; system apps can't be removed). Installs,
     updates and removes queue up; a download shows a progress bar and
@@ -43,6 +49,19 @@ DESCRIPTION
     network" and its apps can be installed; Add keeps it.
 
     A repository that can't be reached shows its last saved list.
+
+    ACCOUNT
+
+    When one of your repositories has accounts (the official one; see
+    man repo), the Repositories page has an Account section. Sign in
+    shows a short code and a web address: open it in your real browser
+    (a link appears in your chat), sign in there and enter the code;
+    the store notices by itself. Anyone can install without signing in.
+
+    Signed in, a package's page shows its likes and downloads, with
+    Like and Favorite buttons, and a Favorites tab lists your
+    favorites on any computer you sign in on. Sign out is on the same
+    page. To publish, use pkg publish.
 
 OPTIONS
     --app ID
@@ -70,4 +89,4 @@ EXAMPLES
       pkg serve /srv/repo
 
 SEE ALSO
-    pkg, settings, gui, disco
+    pkg, repo, settings, gui, disco
