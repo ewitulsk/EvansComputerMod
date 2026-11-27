@@ -338,6 +338,7 @@ pub struct ViewCtx<'a> {
     pub width: i32,
     pub height: i32,
     pub class: SizeClass,
+    pub activated: bool,
     pub theme: &'a Theme,
     states: &'a HashMap<String, WidgetState>,
 }
@@ -423,16 +424,35 @@ fn face_of(font: Font, size: u8) -> Face {
     fonts::face(font, size).or_else(|| fonts::face(font, 16)).or_else(|| fonts::face(Font::Ui, 12)).unwrap()
 }
 
-/// Clip a string to what one text node may carry.
-fn clip_text(s: &str) -> String {
-    if s.len() <= 4096 {
-        return s.to_string();
+/// Truncate `s` to at most `max_bytes` UTF-8 bytes on a char boundary.
+fn truncate_bytes(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
     }
-    let mut end = 4096;
+    let mut end = max_bytes;
     while !s.is_char_boundary(end) {
         end -= 1;
     }
-    s[..end].to_string()
+    &s[..end]
+}
+
+/// Clip a string to what one text node may carry.
+fn clip_text(s: &str) -> String {
+    truncate_bytes(s, 4096).to_string()
+}
+
+fn topmost_dialog<'a>(w: &'a W<'a>) -> Option<&'a W<'a>> {
+    let mut found = (w.el.kind == Kind::Dialog).then_some(w);
+    for c in &w.children {
+        if let Some(d) = topmost_dialog(c) {
+            found = Some(d);
+        }
+    }
+    found
+}
+
+fn contains_widget_key(w: &W<'_>, key: &str) -> bool {
+    w.key == key || w.children.iter().any(|c| contains_widget_key(c, key))
 }
 
 impl Window {
@@ -511,7 +531,9 @@ impl Window {
     /// Does the focused widget show a caret (text fields and areas)?
     pub fn caret_shown(&self) -> bool {
         self.activated
-            && self.focus.as_ref().and_then(|f| self.info.get(f)).is_some_and(|i| matches!(i.kind, Kind::TextField | Kind::TextArea | Kind::ColorPicker))
+            && self.focus.as_ref().and_then(|f| self.info.get(f)).is_some_and(|i| {
+                i.enabled && matches!(i.kind, Kind::TextField | Kind::TextArea | Kind::ColorPicker)
+            })
     }
 
     /// The hit id of a widget's main interactive part (tests, tools).
@@ -581,6 +603,7 @@ impl Window {
                     width: self.width,
                     height: self.height,
                     class,
+                    activated: self.activated,
                     theme,
                     states: &self.states,
                 };
@@ -589,6 +612,13 @@ impl Window {
             Content::Static(e) => e.clone(),
         };
         let mut tree = build(&root, "", 0, class, &mut self.states);
+        if let Some(dlg) = topmost_dialog(&tree) {
+            if let Some(f) = &self.focus {
+                if !contains_widget_key(dlg, f) {
+                    self.focus = None;
+                }
+            }
+        }
         {
             let lay = Layout { theme, states: &self.states, class };
             lay.arrange(&mut tree, Rect::new(0, 0, self.width, self.height));
@@ -601,6 +631,7 @@ impl Window {
             hits: HashMap::new(),
             info: HashMap::new(),
             focus_order: Vec::new(),
+            dialog_focus: None,
             focus: self.focus.as_deref(),
             pressed: self.pressed.as_ref().map(|(k, _)| k.as_str()),
             hover: self.hover.as_ref().map(|(k, p)| (k.as_str(), p.clone())),
@@ -611,10 +642,10 @@ impl Window {
         let bg = SceneNode::new("root:bg", NodeKind::Rect, vec![Prop::W(self.width), Prop::H(self.height), Prop::Fill(theme.bg)]);
         let mut scene = vec![bg];
         p.paint(&tree, None, (0, 0), &mut scene);
-        let (hits, info, order) = (p.hits, p.info, p.focus_order);
+        let (hits, info, order, dialog_focus) = (p.hits, p.info, p.focus_order, p.dialog_focus);
         self.hits = hits;
         self.info = info;
-        self.focus_order = order;
+        self.focus_order = dialog_focus.unwrap_or(order);
         if let Some(f) = &self.focus {
             if !self.info.contains_key(f) {
                 self.focus = None;
@@ -830,6 +861,9 @@ impl Window {
         }
         match kind {
             PointerKind::Down => {
+                if button != Button::Left && button != Button::None {
+                    return out;
+                }
                 let Some((key, part)) = target else {
                     if self.focus.take().is_some() {
                         self.dirty = true;
@@ -948,6 +982,12 @@ impl Window {
                 _ => {}
             },
             PointerKind::Up => {
+                if button != Button::Left && button != Button::None {
+                    if buttons == 0 {
+                        self.hover = target;
+                    }
+                    return out;
+                }
                 if let Some(Drag::Line(key)) = self.drag.clone() {
                     out.extend(self.grid_line_done(&key, x, y));
                 }
@@ -1944,9 +1984,10 @@ fn build<'e>(el: &'e Element, parent: &str, index: usize, class: SizeClass, stat
         Kind::TextField | Kind::TextArea => {
             if let Some(t) = &p.text {
                 let max = if el.kind == Kind::TextArea { MAX_AREA_TEXT } else { MAX_FIELD_TEXT };
+                let truncated = truncate_bytes(t, max);
                 let st = states.entry(key.clone()).or_default();
-                if st.text != *t {
-                    st.text = t.chars().take(max).collect();
+                if st.text != truncated {
+                    st.text = truncated.to_string();
                     st.cursor = st.text.chars().count();
                     st.anchor = None;
                 }
@@ -2379,16 +2420,28 @@ impl Layout<'_> {
                 let pad = self.pad(el);
                 let gap = self.gap(el);
                 let inner = Rect::new(r.x + pad, r.y + pad, r.w - 2 * pad, r.h - 2 * pad);
-                let sizes: Vec<(i32, i32)> = w.children.iter().map(|c| self.measure(c, inner.w)).collect();
+                let sizes: Vec<(i32, i32)> = w
+                    .children
+                    .iter()
+                    .map(|c| {
+                        let (mw, mh) = self.measure(c, inner.w);
+                        let base_h = if self.grow(c.el, Axis::V) > 0 && c.el.props.height.is_none() { 0 } else { mh };
+                        (mw, base_h)
+                    })
+                    .collect();
                 let n = w.children.len() as i32;
                 let used: i32 = sizes.iter().map(|s| s.1).sum::<i32>() + gap * (n - 1).max(0);
-                let total_grow: i32 = w.children.iter().map(|c| self.grow(c.el, Axis::V) as i32).sum();
+                let total_grow: i32 = w
+                    .children
+                    .iter()
+                    .map(|c| if c.el.props.height.is_none() { self.grow(c.el, Axis::V) as i32 } else { 0 })
+                    .sum();
                 let left = (inner.h - used).max(0);
                 let mut y = inner.y;
                 let mut given = 0;
                 let mut seen = 0;
                 for (c, (mw, mh)) in w.children.iter_mut().zip(sizes) {
-                    let g = self.grow(c.el, Axis::V) as i32;
+                    let g = if c.el.props.height.is_none() { self.grow(c.el, Axis::V) as i32 } else { 0 };
                     let mut h = mh;
                     if g > 0 && total_grow > 0 {
                         seen += g;
@@ -2492,6 +2545,7 @@ struct Painter<'a> {
     hits: HashMap<u32, (String, Part)>,
     info: HashMap<String, Info>,
     focus_order: Vec<String>,
+    dialog_focus: Option<Vec<String>>,
     focus: Option<&'a str>,
     pressed: Option<&'a str>,
     hover: Option<(&'a str, Part)>,
@@ -2760,7 +2814,7 @@ impl Painter<'_> {
                     let tn = self.text(text_key.clone(), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted });
                     g.children.push(if typing { tn.with([Prop::Caret(cursor as u32)]) } else { tn });
                 }
-                if focused && self.activated && self.caret_on {
+                if focused && enabled && self.activated && self.caret_on {
                     let cr = Rect::new(r.x + px - sx + caret_x, r.y + ty, 1, f.line_height());
                     let mut caret = self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0);
                     if typing {
@@ -2966,9 +3020,11 @@ impl Painter<'_> {
                 let tf = face_of(Font::Ui, t.title());
                 let pad = el.props.padding.unwrap_or(t.padding as i32);
                 cg.children.push(self.text(format!("{k}:title"), pad, pad, p.text.as_deref().unwrap_or(""), &tf, t.text));
+                let focus_start = self.focus_order.len();
                 for c in &w.children {
                     self.paint(c, Some(k), cl, &mut cg.children);
                 }
+                self.dialog_focus = Some(self.focus_order[focus_start..].to_vec());
                 g.children.push(cg);
                 out.push(g);
             }
@@ -3233,7 +3289,7 @@ impl Painter<'_> {
         let tx = field.x + px / 2 + sw + px / 2;
         let ty = field.y + (field.h - lh) / 2;
         g.children.push(self.text(format!("{k}:ftext"), tx - r.x, ty - r.y, &shown, &f, if enabled { t.text } else { t.text_muted }));
-        if focused && self.activated && self.caret_on {
+        if focused && enabled && self.activated && self.caret_on {
             let cx = tx + f.text_width(&shown);
             g.children.push(self.rect(format!("{k}:caret"), Rect::new(cx, ty, 1, lh), local, t.text, 0, None, 0));
         }
@@ -3319,7 +3375,7 @@ impl Painter<'_> {
         let empty = st.text.is_empty();
         let mut view = self.group(format!("{k}:view"), Rect::new(r.x + gutter + px, r.y + py, view_w, view_h), local, true);
         let vl = (r.x + gutter + px, r.y + py);
-        if let (Some((a, b)), true) = (sel, focused) {
+        if let Some((a, b)) = sel {
             for (slot, (n, s0, l)) in visible.iter().enumerate() {
                 let len = l.chars().count();
                 let (la, lb) = (a.max(*s0), b.min(s0 + len + 1));
@@ -3341,7 +3397,7 @@ impl Painter<'_> {
                 view.children.push(self.text(format!("{k}:l{slot}"), text_x - vl.0, text_y + *n as i32 * lh - vl.1, l, &f, color));
             }
         }
-        if focused && self.activated && self.caret_on {
+        if focused && enabled && self.activated && self.caret_on {
             let cr = Rect::new(text_x + caret_x, text_y + cl as i32 * lh, if f.design_font() == Font::Mono { 2 } else { 1 }, lh);
             view.children.push(self.rect(format!("{k}:caret"), cr, vl, t.text, 0, None, 0));
         }

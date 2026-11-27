@@ -625,17 +625,36 @@ impl Core {
                 }
                 Message::Key(k) => {
                     self.restart_blink();
-                    if k.down && k.key == window::keys::ESCAPE && self.windows.iter().any(|w| w.role == WindowRole::Popup { parent: k.surface }) {
-                        self.close_popups(k.surface);
-                        continue;
+                    if k.down && k.key == window::keys::ESCAPE {
+                        if self.window(k.surface).is_some_and(|w| matches!(w.role, WindowRole::Popup { .. })) {
+                            self.close_popups(k.surface);
+                            self.close_window(k.surface);
+                            continue;
+                        }
+                        if self.windows.iter().any(|w| w.role == WindowRole::Popup { parent: k.surface }) {
+                            self.close_popups(k.surface);
+                            continue;
+                        }
                     }
                     let mut used = false;
+                    let mut close = None;
                     if let Some(w) = self.window_mut(k.surface) {
-                        let (evs, u) = w.key_event(k.key, k.mods, k.down, k.repeat);
+                        let (mut evs, u) = w.key_event(k.key, k.mods, k.down, k.repeat);
                         used = u;
+                        if let WindowRole::Popup { parent } = w.role {
+                            if w.close_on_select && evs.iter().any(|e| e.kind == EventKind::Select) {
+                                close = Some(w.surface);
+                                for e in &mut evs {
+                                    e.window = parent;
+                                }
+                            }
+                        }
                         events.extend(evs.into_iter().map(AppEvent::Widget));
                     }
                     self.run_effects(k.surface);
+                    if let Some(s) = close {
+                        self.close_window(s);
+                    }
                     if !used {
                         events.push(AppEvent::Key { window: k.surface, key: k.key, mods: k.mods, down: k.down, repeat: k.repeat });
                     }
@@ -669,9 +688,8 @@ impl Core {
                 Message::PopupDone(p) => {
                     if self.window(p.surface).is_some() {
                         self.close_window(p.surface);
-                    } else {
-                        events.push(AppEvent::Message(Message::PopupDone(p)));
                     }
+                    events.push(AppEvent::Message(Message::PopupDone(p)));
                 }
                 Message::Hotkey(h) => events.push(AppEvent::Hotkey { slot: h.slot, down: h.down }),
                 Message::MediaAction(a) => events.push(AppEvent::Media { action: a.action, position_ms: a.position_ms }),
@@ -919,6 +937,14 @@ impl Ctx<'_> {
     pub fn set_selected(&mut self, id: &str, i: Option<usize>) {
         if let Some(s) = self.state_mut(id) {
             s.selected = i;
+        }
+    }
+
+    /// Set the vertical scroll offset of a scroll view or text area.
+    pub fn set_scroll(&mut self, id: &str, scroll: i32) {
+        if let Some(s) = self.state_mut(id) {
+            s.scroll = scroll.max(0);
+            s.scroll_x = 0;
         }
     }
 

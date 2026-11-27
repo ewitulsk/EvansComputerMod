@@ -269,8 +269,9 @@ public final class AppScenarios {
         b.await(r -> clickText(r, "Net Check", "Net Check"), "click Net Check's window", 5_000);
         b.mutate(r -> r.pressKey("client", 0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, null), "press Alt+F4");
         b.await(r -> netCheck(r) == null ? null : "still running", "Net Check quit", 10_000);
-        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
-        b.await(r -> clickOn(r, "popup", "Net Check"), "click Net Check in the launcher (listed since its install)", 5_000);
+        b.await(r -> clickOn(r, "taskbar", "Start"), "click Start on the taskbar", 5_000);
+        b.await(r -> clickOn(r, "popup", "All Apps >"), "click All Apps > in Start", 5_000);
+        b.await(r -> clickOn(r, "popup", "Net Check"), "click Net Check in All Apps (listed since its install)", 5_000);
         b.await(r -> comp(r).layerTexts("permission").contains(NETCHECK_ASKS) ? null : "no dialog yet", "it asks again (new run)", 30_000);
         b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
         b.await(r -> {
@@ -457,8 +458,9 @@ public final class AppScenarios {
         b.send("client", "gui");
         b.expect("client", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
-        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 10_000);
-        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in the launcher", 5_000);
+        b.await(r -> clickOn(r, "taskbar", "Start"), "click Start on the taskbar", 10_000);
+        b.await(r -> clickOn(r, "popup", "All Apps >"), "click All Apps > in Start", 5_000);
+        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in All Apps", 5_000);
         b.await(r -> windowShown(r, "App Store"), "the App Store's window", 20_000);
         b.await(r -> comp(r).findText("App Store", "No apps yet. Add a repository under Repos.") != null ? null : "store not loaded",
                 "control: no repository, no apps", 15_000);
@@ -510,8 +512,8 @@ public final class AppScenarios {
                 "control: no notification while Discord has focus", 1_000);
 
         b.note("Discord in the background: Files from the launcher takes the focus; the server writes again");
-        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
-        b.await(r -> clickOn(r, "popup", "Files"), "click Files in the launcher", 5_000);
+        b.await(r -> clickOn(r, "taskbar", "Start"), "click Start on the taskbar", 5_000);
+        b.await(r -> clickOn(r, "popup", "Files"), "click Files in Start", 5_000);
         b.await(r -> windowShown(r, "Files") == null && !discordFocused(r) ? null : "Discord still focused", "Files has the focus", 15_000);
         b.send("server", DISCORD_LATER);
         b.await(r -> comp(r).layerTexts("permission").contains("Allow Discord to use notifications?") ? null
@@ -599,8 +601,9 @@ public final class AppScenarios {
         b.send("client", "gui");
         b.expect("client", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
-        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 10_000);
-        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in the launcher", 5_000);
+        b.await(r -> clickOn(r, "taskbar", "Start"), "click Start on the taskbar", 10_000);
+        b.await(r -> clickOn(r, "popup", "All Apps >"), "click All Apps > in Start", 5_000);
+        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in All Apps", 5_000);
         b.await(r -> windowShown(r, "App Store"), "the App Store's window", 20_000);
         b.await(r -> comp(r).findText("App Store", "1 apps from 1 repository (1 found on the network)") != null
                         && comp(r).findText("App Store", "Discord") != null ? null : "store not loaded",

@@ -99,20 +99,25 @@ public final class UiManager implements CompositorHost {
         return compositor;
     }
 
+    private volatile boolean shutDown;
+    private volatile java.util.concurrent.ScheduledFuture<?> autostartTask;
+    private volatile boolean switchBackspaceSwallowed;
+
     /**
      * After boot: start the GUI if {@code /etc/ui.toml} says {@code autostart = true}.
      * An ePhone always starts it, with the phone shell (P5).
      */
     public void onBoot() {
+        if (shutDown) return;
         if (computer.isPhone() && phone == null) {
             phone = new PhoneUi(computer, this);
             phone.boot();
         }
         config = loadConfig();
         if (config.autostart()) {
-            ticks().schedule(() -> {
+            autostartTask = ticks().schedule(() -> {
                 try {
-                    start();
+                    if (!shutDown) start();
                 } catch (Throwable t) {
                     EvansComputerMod.LOGGER.error("GUI autostart failed", t);
                 }
@@ -127,6 +132,7 @@ public final class UiManager implements CompositorHost {
 
     /** Start the compositor (if it isn't running) with the configured shell, and show it. */
     public synchronized String start() {
+        if (shutDown) return "gui: shutting down";
         if (compositor == null) {
             config = loadConfig();
             Compositor c = new Compositor(this, currentDisplay(), UiLimits.fromConfig(),
@@ -267,6 +273,7 @@ public final class UiManager implements CompositorHost {
                 return stop() + "\n";
             }
             case "console" -> {
+                if (phone != null) return "gui: phones stay in GUI mode\n";
                 setVisible(false);
                 return compositor == null ? "gui: not running\n" : "gui: console shown\n";
             }
@@ -423,7 +430,12 @@ public final class UiManager implements CompositorHost {
      * Returns true if the key was used here (the console must not see it).
      */
     public boolean key(int hid, int mods, boolean down, boolean repeat) {
+        if (!down && hid == HidKeys.BACKSPACE && switchBackspaceSwallowed) {
+            switchBackspaceSwallowed = false;
+            return true;
+        }
         if (down && hid == HidKeys.BACKSPACE && (mods & SWITCH_MODS) == SWITCH_MODS && compositor != null) {
+            switchBackspaceSwallowed = true;
             if (!repeat) toggle();
             return true;
         }
@@ -551,6 +563,10 @@ public final class UiManager implements CompositorHost {
     }
 
     public void shutdown() {
+        shutDown = true;
+        java.util.concurrent.ScheduledFuture<?> task = autostartTask;
+        autostartTask = null;
+        if (task != null) task.cancel(false);
         PhoneUi p = phone;
         if (p != null) p.close();
         stop();

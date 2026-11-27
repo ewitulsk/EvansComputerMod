@@ -54,6 +54,8 @@ public final class DeltaApplier {
             // setGfxFromBytes resets counters to 0 from packet data.
             // Force monotonic increase so GPU texture re-uploads every keyframe.
             display.setGfxDirtyCounters(prevPixDirty + 1, prevPalDirty + 1);
+        } else {
+            display.setDisplayMode(delta.displayMode());
         }
     }
 

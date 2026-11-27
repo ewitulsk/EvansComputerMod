@@ -311,8 +311,9 @@ public final class CellNetScenarios {
         b.send("core", "gui");
         b.expect("core", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
-        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 8_000);
-        b.await(r -> clickOn(r, "popup", "Carrier Console"), "click Carrier Console in the launcher", 5_000);
+        b.await(r -> clickOn(r, "taskbar", "Start"), "click Start on the taskbar", 8_000);
+        b.await(r -> clickOn(r, "popup", "All Apps >"), "click All Apps > in Start", 5_000);
+        b.await(r -> clickOn(r, "popup", "Carrier Console"), "click Carrier Console in All Apps", 5_000);
         b.await(r -> consoleShows(r, "alice"), "the Carrier Console lists subscriber alice", 15_000);
         b.await(r -> clickText(r, "Carrier Console", "Sites"), "click Sites", 5_000);
         b.await(r -> consoleShows(r, "site-a", "connected"), "the Carrier Console: site-a connected", 5_000);

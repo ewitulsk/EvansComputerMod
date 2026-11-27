@@ -126,11 +126,11 @@ public class DesktopKernelTest {
         return p;
     }
 
-    /** Open an app the way a player does: the Apps button, then its launcher entry. */
+    /** Open an app the way a player does: the Start button, then its entry (or All Apps if not in Most Used). */
     private Compositor.WindowInfo launch(String label, String appId) throws InterruptedException {
-        int[] apps = waitAt(() -> comp().locateLayerText("taskbar", "Apps", false), 10_000, "the taskbar's Apps button");
-        click(apps, 0);
-        int[] entry = waitAt(() -> comp().locatePopupText(label, false), 10_000, "'" + label + "' in the launcher");
+        int[] start = waitAt(() -> comp().locateLayerText("taskbar", "Start", false), 10_000, "the taskbar's Start button");
+        click(start, 0);
+        int[] entry = waitAt(() -> comp().locatePopupText(label, false), 10_000, "'" + label + "' in Start");
         click(entry, 0);
         waitFor(() -> app(appId) != null, 30_000, appId + "'s window");
         return app(appId);
@@ -157,7 +157,7 @@ public class DesktopKernelTest {
     void autostartBootsToTheDesktopAndTheAppsWorkTogether() throws Exception {
         // Boot to the desktop with no command typed.
         waitFor(() -> comp() != null && comp().shellConnected(), 30_000, "the desktop shell to connect");
-        waitFor(() -> comp().layerTexts("taskbar").contains("Apps"), 10_000, "the taskbar");
+        waitFor(() -> comp().layerTexts("taskbar").contains("Start"), 10_000, "the taskbar");
         assertEquals("ecm-default", comp().themeName(), "the desktop set the default theme");
         assertTrue(ui().status().contains("shell dev.ecm.desktop connected"), ui().status());
 

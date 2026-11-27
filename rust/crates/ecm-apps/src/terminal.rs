@@ -264,10 +264,12 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
     // The cursor: a block over the character, the character in the background colour.
     if t.view_top.is_none() && t.vte.cursor_visible() && !t.exited {
         let (cx, cy) = t.vte.cursor();
+        let cx = cx.min(t.cols.saturating_sub(1));
+        let cy = cy.min(t.rows.saturating_sub(1));
         let (px, py) = (pad + cx as i32 * CELL_W, pad + cy as i32 * CELL_H);
         let fill = if active { theme.text } else { theme.text_muted & 0xffff_ff00 | 0x80 };
         out.push(SceneNode::new("cur", NodeKind::Rect, vec![Prop::X(px), Prop::Y(py), Prop::W(CELL_W), Prop::H(CELL_H), Prop::Fill(fill)]));
-        let ch = cell_char(t.vte.cell(cx.min(t.cols - 1), cy).0);
+        let ch = cell_char(t.vte.cell(cx, cy).0);
         if active && ch != ' ' {
             out.push(SceneNode::new(
                 "curc",
@@ -484,7 +486,7 @@ fn view(vcx: &ecm_ui::ViewCtx, term: &TermRef, sys: &SysRef) -> Element {
         }
     }
     let t = term.borrow();
-    let active = true;
+    let active = vcx.activated;
     let nodes = nodes(&t, vcx.theme, w, h, active);
     let (t1, s1) = (term.clone(), sys.clone());
     let (t2, s2) = (term.clone(), sys.clone());

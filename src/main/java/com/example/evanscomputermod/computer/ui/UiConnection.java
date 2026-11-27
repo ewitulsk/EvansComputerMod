@@ -115,10 +115,16 @@ public final class UiConnection {
         long deadline = timeoutMs < 0 ? Long.MAX_VALUE : System.nanoTime() + timeoutMs * 1_000_000L;
         synchronized (this) {
             while (out.isEmpty() && !closed) {
-                long wait = deadline == Long.MAX_VALUE ? 0 : (deadline - System.nanoTime()) / 1_000_000L;
-                if (deadline != Long.MAX_VALUE && wait <= 0) return new byte[0];
+                long waitMs;
+                if (deadline == Long.MAX_VALUE) {
+                    waitMs = 1000;
+                } else {
+                    long remNs = deadline - System.nanoTime();
+                    if (remNs <= 0) return new byte[0];
+                    waitMs = Math.max(1, (remNs + 999_999L) / 1_000_000L);
+                }
                 try {
-                    wait(deadline == Long.MAX_VALUE ? 1000 : Math.max(1, wait));
+                    wait(waitMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("ui_recv interrupted");

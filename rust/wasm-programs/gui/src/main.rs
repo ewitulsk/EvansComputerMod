@@ -33,7 +33,17 @@ fn main() {
     let mut answer = String::new();
     let _ = dev.read_to_string(&mut answer);
     print!("{answer}");
-    if answer.contains("can't") || answer.contains("unknown") {
+    let first = answer.trim_start();
+    let err = first.starts_with("gui: unknown")
+        || first.starts_with("gui: can't")
+        || first.starts_with("gui: phones")
+        || first.starts_with("gui: apps")
+        || first.starts_with("gui: wakelock")
+        || first.starts_with("gui: not a phone")
+        || first.starts_with("gui: shutting down")
+        || first.starts_with("usage:")
+        || first.starts_with("no GUI");
+    if err {
         std::process::exit(1);
     }
 }

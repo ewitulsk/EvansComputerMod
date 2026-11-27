@@ -170,6 +170,7 @@ public final class UiSceneMirror {
     }
 
     private void reset() {
+        prediction.reset();
         timedQ.clear();
         timedLast.clear();
         surfaces.clear();
@@ -249,6 +250,16 @@ public final class UiSceneMirror {
         }
         resources.clear();
         resources.putAll(nr);
+        // Prune timed queues for surfaces/canvases that no longer exist.
+        Set<Long> liveTimed = new HashSet<>();
+        for (UiSceneCodec.SurfaceInfo si : h.surfaces()) {
+            if (si.kind() == UiProto.SurfaceKind.PIXELS) liveTimed.add(SceneExporter.timedKey(si.scope(), si.id()));
+        }
+        for (UiSceneCodec.ResourceInfo ri : h.resources()) {
+            if (ri.kind() == UiProto.ResourceKind.CANVAS) liveTimed.add(SceneExporter.timedKey(ri.scope(), ri.id()));
+        }
+        timedQ.keySet().retainAll(liveTimed);
+        timedLast.keySet().retainAll(liveTimed);
         // The header moved things around: redraw everything (rare next to tree and pixel changes).
         damage.add(SceneRenderer.displayBox(display));
     }
@@ -277,6 +288,9 @@ public final class UiSceneMirror {
             if (s.argb != null && s.bw == si.bw() && s.bh == si.bh()) {
                 s.pscale = si.pscale();
             } else {
+                long tk = SceneExporter.timedKey(si.scope(), si.id());
+                timedQ.remove(tk);
+                timedLast.remove(tk);
                 s.setMirrorBuffer(si.bw(), si.bh(), si.pscale());
             }
         }
@@ -354,7 +368,11 @@ public final class UiSceneMirror {
 
     /** A key (HID usage) going down or up: Backspace edits the predicted text. */
     public boolean key(int hid, boolean down, long clientNowMs) {
-        return ready && prediction.key(hid, down, clientNowMs);
+        return key(hid, 0, down, clientNowMs);
+    }
+
+    public boolean key(int hid, int mods, boolean down, long clientNowMs) {
+        return ready && prediction.key(hid, mods, down, clientNowMs);
     }
 
     /** Predictions made so far (tests, stats). */

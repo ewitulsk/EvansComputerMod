@@ -93,6 +93,7 @@ fn go(cx: &mut Ctx, st: &Shared, sys: &SysRef, dir: &str) {
         let cwd = st.borrow().cwd.clone();
         cx.set_text("path", &cwd);
         cx.set_selected("list", None);
+        cx.set_scroll("scroll", 0);
     }
 }
 
@@ -101,6 +102,15 @@ fn open_entry(cx: &mut Ctx, st: &Shared, sys: &SysRef, e: &Entry) {
     if e.dir {
         go(cx, st, sys, &path);
         return;
+    }
+    if e.name.to_lowercase().ends_with(".desktop") {
+        if let Ok(bytes) = sys::read_file(&**sys.borrow(), &path) {
+            if let Some(sc) = crate::desktop_icons::parse_shortcut(&String::from_utf8_lossy(&bytes)) {
+                cx.launch(&sc.program, &sc.args);
+                st.borrow_mut().status = format!("Starting {}", sc.name);
+                return;
+            }
+        }
     }
     match open_action(&e.name) {
         OpenAction::Open => {
@@ -250,7 +260,7 @@ pub fn app(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, start: Option<&
     let mut app = App::with_connection("dev.ecm.files", conn)?;
     let sys: SysRef = Rc::new(RefCell::new(sys));
     let mut icons = HashMap::new();
-    for name in ["folder", "file", "code", "game"] {
+    for name in ["folder", "file", "code", "game", "app"] {
         if let Some(i) = ecm_ui::icons::builtin(name) {
             if let Ok(id) = app.core.image_rgba(i.w, i.h, &i.rgba) {
                 icons.insert(name, id);
@@ -320,6 +330,7 @@ fn icon_of(e: &Entry) -> &'static str {
     match e.name.rsplit_once('.').map(|(_, x)| x.to_lowercase()).as_deref() {
         Some("py" | "rs" | "sh" | "json" | "toml" | "vpl") => "code",
         Some("gba") => "game",
+        Some("desktop") => "app",
         _ => "file",
     }
 }

@@ -19,8 +19,8 @@ use std::rc::Rc;
 pub enum Ask {
     /// Path to open.
     Open,
-    /// Path to save to.
-    SaveAs,
+    /// Path to save to, optionally followed by a pending action (Close/New/Open).
+    SaveAs(Option<Then>),
     /// Unsaved changes before: closing, a new file, opening a file.
     Unsaved(Then),
 }
@@ -91,8 +91,12 @@ pub fn open_path(cx: &mut Ctx, st: &Shared, sys: &SysRef, path: &str) {
 
 /// Save to the current path (or ask for one).
 pub fn save(cx: &mut Ctx, st: &Shared, sys: &SysRef) -> bool {
+    save_then(cx, st, sys, None)
+}
+
+fn save_then(cx: &mut Ctx, st: &Shared, sys: &SysRef, next: Option<Then>) -> bool {
     let Some(path) = st.borrow().path.clone() else {
-        ask(cx, st, Ask::SaveAs);
+        ask(cx, st, Ask::SaveAs(next));
         return false;
     };
     let text = cx.text("doc");
@@ -114,11 +118,11 @@ pub fn save(cx: &mut Ctx, st: &Shared, sys: &SysRef) -> bool {
 
 fn ask(cx: &mut Ctx, st: &Shared, a: Ask) {
     let seed = match &a {
-        Ask::SaveAs => st.borrow().path.clone().unwrap_or_else(|| "/untitled.txt".into()),
+        Ask::SaveAs(_) => st.borrow().path.clone().unwrap_or_else(|| "/untitled.txt".into()),
         Ask::Open => st.borrow().path.as_deref().map(sys::parent).map(|p| if p == "/" { p } else { p + "/" }).unwrap_or_else(|| "/".into()),
         Ask::Unsaved(_) => String::new(),
     };
-    let field = matches!(a, Ask::Open | Ask::SaveAs);
+    let field = matches!(a, Ask::Open | Ask::SaveAs(_));
     st.borrow_mut().ask = Some(a);
     if field {
         cx.set_text("askpath", &seed);
@@ -157,14 +161,18 @@ fn answer(cx: &mut Ctx, st: &Shared, sys: &SysRef, choice: u8) {
             let p = cx.text("askpath");
             open_path(cx, st, sys, p.trim());
         }
-        (Ask::SaveAs, 1) => {
+        (Ask::SaveAs(next), 1) => {
             let p = sys::normalize("/", cx.text("askpath").trim());
             st.borrow_mut().path = Some(p);
-            save(cx, st, sys);
+            if save(cx, st, sys) {
+                if let Some(t) = next {
+                    then(cx, st, t);
+                }
+            }
         }
         (Ask::Unsaved(t), 1) => {
-            // Save, then go on (unless saving needs a path first).
-            if save(cx, st, sys) {
+            // Save, then go on (or ask for a path first, preserving `t`).
+            if save_then(cx, st, sys, Some(t.clone())) {
                 then(cx, st, t);
             }
         }
@@ -228,8 +236,11 @@ pub fn app(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, file: Option<&s
             }
             return true;
         }
+        if s2.borrow().ask.is_some() {
+            return false;
+        }
         match key {
-            keys::S if ctrl && mods & proto::mods::SHIFT != 0 => ask(cx, &s2, Ask::SaveAs),
+            keys::S if ctrl && mods & proto::mods::SHIFT != 0 => ask(cx, &s2, Ask::SaveAs(None)),
             keys::S if ctrl => {
                 save(cx, &s2, &y2);
             }
@@ -298,7 +309,7 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
             save(cx, &c, &yc);
         }));
     if !compact {
-        tools = tools.child(button("Save as").id("saveas").on_click(move |cx, _| ask(cx, &d, Ask::SaveAs)));
+        tools = tools.child(button("Save as").id("saveas").on_click(move |cx, _| ask(cx, &d, Ask::SaveAs(None))));
     }
     tools = tools
         .child(button("Find").id("findbtn").on_click(move |cx, _| {
@@ -345,12 +356,12 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     if let Some(a) = &s.ask {
         let (title, primary, second): (String, &str, Option<&str>) = match a {
             Ask::Open => ("Open a file".into(), "Open", None),
-            Ask::SaveAs => ("Save as".into(), "Save", None),
+            Ask::SaveAs(_) => ("Save as".into(), "Save", None),
             Ask::Unsaved(_) => (format!("Save changes to {}?", s.path.as_deref().map(sys::file_name).unwrap_or("Untitled")), "Save", Some("Don't save")),
         };
         let (p1, y1, p2, y2, p3, y3) = (st.clone(), sys.clone(), st.clone(), sys.clone(), st.clone(), sys.clone());
         let mut dlg = dialog(title).id("ask");
-        if matches!(a, Ask::Open | Ask::SaveAs) {
+        if matches!(a, Ask::Open | Ask::SaveAs(_)) {
             let (p4, y4) = (st.clone(), sys.clone());
             dlg = dlg.child(text_field().id("askpath").width(260).on_submit(move |cx, _| answer(cx, &p4, &y4, 1)));
         }

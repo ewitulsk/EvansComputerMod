@@ -62,9 +62,10 @@ public final class ClipboardPackets {
         }
 
         public static void handle(Push p, IPayloadContext ctx) {
-            ctx.enqueueWork(() -> {
-                if (ctx.player() instanceof ServerPlayer player) deliver(player, p);
-            });
+            if (!(ctx.player() instanceof ServerPlayer player)) return;
+            ComputerTargets.input(player, p.computerId(), p.displayId(),
+                    c -> c.clipboardFromPlayer(player.getUUID(), p.text()),
+                    () -> deliver(player, p));
         }
     }
 

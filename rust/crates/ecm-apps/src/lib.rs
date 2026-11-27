@@ -7,10 +7,13 @@
 //! * [`editor`] — the Text Editor.
 //! * [`sys`] — the computer as the apps see it; [`uitoml`] — `/etc/ui.toml`.
 
+pub mod app_catalog;
 pub mod desktop;
+pub mod desktop_icons;
 pub mod editor;
 pub mod files;
 pub mod settings;
+pub mod start_menu;
 pub mod sys;
 pub mod terminal;
 pub mod uitoml;

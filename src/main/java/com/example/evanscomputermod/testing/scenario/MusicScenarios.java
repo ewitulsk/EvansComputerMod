@@ -153,8 +153,9 @@ public final class MusicScenarios {
         b.send(host, "gui");
         b.expect(host, "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r, host) != null && comp(r, host).shellConnected() ? null : "waiting for the shell", host + "'s desktop is up", 15_000);
-        b.await(r -> DiscordScenarios.clickOn(r, host, "taskbar", "Apps"), host + ": click Apps on the taskbar", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, host, "popup", "Music"), host + ": click Music in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, host, "taskbar", "Start"), host + ": click Start on the taskbar", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, host, "popup", "All Apps >"), host + ": click All Apps > in Start", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, host, "popup", "Music"), host + ": click Music in All Apps", 5_000);
         b.await(r -> comp(r, host).layerTexts("permission").contains("Allow Music to use network?") ? null
                 : "no dialog: " + comp(r, host).layerTexts("permission"), host + ": Music asks for the network as it looks for servers", 20_000);
         b.await(r -> DiscordScenarios.clickOn(r, host, "permission", "Allow"), host + ": click Allow", 5_000);
@@ -589,8 +590,9 @@ public final class MusicScenarios {
         b.send("bo", "gui");
         b.expect("bo", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r, "bo") != null && comp(r, "bo").shellConnected() ? null : "waiting for the shell", "bo's desktop is up", 15_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "bo", "taskbar", "Apps"), "bo: click Apps on the taskbar", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "Music"), "bo: click Music in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "taskbar", "Start"), "bo: click Start on the taskbar", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "All Apps >"), "bo: click All Apps > in Start", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "Music"), "bo: click Music in All Apps", 5_000);
         b.await(r -> allowAll(r, "bo", x -> shows(x, "bo", "Village Radio")), "bo: allow Music the network; it finds Village Radio", 30_000);
         b.await(r -> click(r, "bo", "Sign in"), "bo: click Sign in", 10_000);
         signUp(b, "bo", "bo");
@@ -599,8 +601,9 @@ public final class MusicScenarios {
         b.await(r -> allowAll(r, "bo", x -> musicStream(x, "bo", BO_SPEAKER) != null && drained(x, BO_SPEAKER) > 22_050 ? null
                         : "speaker " + drained(x, BO_SPEAKER) + "; " + shows(x, "bo", "\u0000") + "; permission " + comp(x, "bo").layerTexts("permission")),
                 "bo: allow Music the speaker; Redstone Sunrise plays on bo's Speaker", 25_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "bo", "taskbar", "Apps"), "bo: click Apps", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "Discord"), "bo: click Discord in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "taskbar", "Start"), "bo: click Start", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "All Apps >"), "bo: click All Apps >", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "bo", "popup", "Discord"), "bo: click Discord in All Apps", 5_000);
         b.await(r -> comp(r, "bo").layerTexts("permission").contains("Allow Discord to use network?") ? null
                 : "no dialog: " + comp(r, "bo").layerTexts("permission"), "bo: Discord asks for the network", 20_000);
         b.await(r -> DiscordScenarios.clickOn(r, "bo", "permission", "Allow"), "bo: click Allow", 5_000);

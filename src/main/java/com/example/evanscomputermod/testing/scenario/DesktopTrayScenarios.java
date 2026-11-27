@@ -121,8 +121,9 @@ public final class DesktopTrayScenarios {
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
         b.waitMs(2_500, "the taskbar settles (its speaker icon appears)");
         b.mutate(r -> st(r).before = hitIds(r), "note the taskbar's icons");
-        b.await(r -> DiscordScenarios.clickOn(r, "pc", "taskbar", "Apps"), "click Apps on the taskbar", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "pc", "popup", "Voice"), "click Voice in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "pc", "taskbar", "Start"), "click Start on the taskbar", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "pc", "popup", "All Apps >"), "click All Apps > in Start", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "pc", "popup", "Voice"), "click Voice in All Apps", 5_000);
         b.await(r -> window(r, VOICE) != null && voice(r) != null && voice(r).activeModes().contains("call") ? null
                 : "voice " + voice(r), "Voice opens and holds a call (call mode)", 20_000);
         b.await(r -> samples(r) > 8_000 ? null : "samples " + samples(r), "the call plays on the Speaker", 15_000);
@@ -157,7 +158,7 @@ public final class DesktopTrayScenarios {
         b.await(r -> hitIds(r).stream().noneMatch(id -> !st(r).before.contains(id)) ? null : "taskbar " + comp(r).layerTexts("taskbar"),
                 "the tray icon is gone", 5_000);
         b.note("Control: Notes has no background mode, so its x closes it for real");
-        b.await(r -> DiscordScenarios.clickOn(r, "pc", "taskbar", "Apps"), "click Apps", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "pc", "taskbar", "Start"), "click Start", 10_000);
         b.await(r -> DiscordScenarios.clickOn(r, "pc", "popup", "Notes"), "click Notes", 5_000);
         b.await(r -> window(r, "notes") != null ? null : "windows " + comp(r).windows(), "Notes opens", 15_000);
         b.await(r -> closeWindow(r, "notes"), "click x on Notes", 5_000);

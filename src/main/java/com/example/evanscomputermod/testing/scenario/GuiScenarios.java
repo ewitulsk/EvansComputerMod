@@ -303,7 +303,7 @@ public final class GuiScenarios {
         Compositor c = comp(r);
         if (c == null) return null;
         if (where.equals("popup")) return c.locatePopupText(text, false);
-        if (where.equals("taskbar") || where.equals("permission")) return c.locateLayerText(where, text, false);
+        if (where.equals("taskbar") || where.equals("permission") || where.equals("wallpaper")) return c.locateLayerText(where, text, false);
         Compositor.WindowInfo w = appWindow(r, where);
         return w == null ? null : c.locateText(w.id(), text, false);
     }
@@ -353,12 +353,12 @@ public final class GuiScenarios {
         return (f[i] & 0xFF) << 16 | (f[i + 1] & 0xFF) << 8 | (f[i + 2] & 0xFF);
     }
 
-    /** Launch an app from the taskbar's launcher: the Apps button, then its entry. */
+    /** Launch an app from the taskbar's Start menu: click Start, then its entry. */
     static Scenario.Builder launch(Scenario.Builder b, String label, String appId) {
-        return b.await(r -> visible(r, "taskbar", "Apps"), "the taskbar's Apps button is drawn", 10_000)
-                .mutate(r -> clickText(r, "taskbar", "Apps"), "click Apps on the taskbar")
-                .await(r -> visible(r, "popup", label), "the launcher lists " + label, 5_000)
-                .mutate(r -> clickText(r, "popup", label), "click " + label + " in the launcher")
+        return b.await(r -> visible(r, "taskbar", "Start"), "the taskbar's Start button is drawn", 10_000)
+                .mutate(r -> clickText(r, "taskbar", "Start"), "click Start on the taskbar")
+                .await(r -> visible(r, "popup", label), "Start lists " + label, 5_000)
+                .mutate(r -> clickText(r, "popup", label), "click " + label + " in Start")
                 .await(r -> appWindow(r, appId) != null ? null : "no " + appId + " window yet", label + " opens in a frame", 20_000);
     }
 
@@ -419,7 +419,7 @@ public final class GuiScenarios {
         PlayerKit.powerCycle(b, "pc");
         b.note("The pc booted straight to the desktop (autostart): wallpaper, taskbar, no command typed")
                 .await(r -> comp(r) != null && comp(r).shellConnected() ? null : "no desktop yet", "the desktop shell is connected", 20_000)
-                .await(r -> comp(r).layerTexts("taskbar").contains("Apps") ? null : "no taskbar yet", "the taskbar shows Apps and the clock", 10_000)
+                .await(r -> comp(r).layerTexts("taskbar").contains("Start") ? null : "no taskbar yet", "the taskbar shows Start and the clock", 10_000)
                 .note("Settings: scan, pick the network, type the password, Join");
         launch(b, "Settings", "settings")
                 .await(r -> shows(r, "settings", "Not connected"), "Settings' Wi-Fi page says Not connected", 10_000)
@@ -677,6 +677,74 @@ public final class GuiScenarios {
         }
     }
 
+    // ================================================================ desktop_launcher
+
+    private static Scenario desktopLauncher() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -2, 2, 0, 2));
+        var b = Scenario.builder("desktop_launcher",
+                        "desktop icons & folders (/home/Desktop), Start menu with Most Used & search, taskbar Settings menu, "
+                                + "and scalable macOS-style paginated All Apps overlay")
+                .asPlayer()
+                .realTime()
+                .host("pc", PC, "-")
+                .decor(PlayerKit.decor(floor, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()),
+                        r -> {},
+                        r -> {
+                            UiManager u = ui(r);
+                            if (u != null) u.stop();
+                        }))
+                .timeLimit(60_000)
+                .note("Create 20 sample apps under /apps and a Tools folder on /home/Desktop from Python");
+        Map<String, String> seedFiles = new LinkedHashMap<>();
+        seedFiles.put("/home/Desktop/Tools/readme.txt", "inside tools folder\n");
+        for (int i = 1; i <= 20; i++) {
+            String id = String.format("dev.demo.tool%02d", i);
+            String name = String.format("Demo %02d", i);
+            seedFiles.put("/apps/" + id + "/app.toml", "id = \"" + id + "\"\nname = \"" + name + "\"\nversion = \"1.0.0\"\nentry = \"main.py\"\n");
+            seedFiles.put("/apps/" + id + "/main.py", "print(\"demo\")\n");
+        }
+        PlayerKit.typeFiles(b, Map.of("pc", seedFiles));
+        b.note("Start the desktop GUI")
+                .send("pc", "gui")
+                .expect("pc", "^gui: started", "the desktop started")
+                .await(r -> comp(r) != null && comp(r).shellConnected() ? null : "no desktop yet", "desktop shell connected", 15_000)
+                .await(r -> visible(r, "taskbar", "Start"), "taskbar shows Start", 10_000)
+                .await(r -> visible(r, "wallpaper", "Tools"), "desktop wallpaper shows the Tools folder", 10_000)
+                .mutate(r -> snapshot(r, "desktop_wallpaper"), "snapshot: desktop icons and Tools folder")
+                .note("Double-click the Tools folder on the desktop: opens directly in Files at /home/Desktop/Tools")
+                .mutate(r -> {
+                    clickText(r, "wallpaper", "Tools");
+                    clickText(r, "wallpaper", "Tools");
+                }, "double-click Tools on the desktop")
+                .await(r -> appWindow(r, "files") != null ? null : "Files didn't open", "Files opens", 20_000)
+                .await(r -> shows(r, "files", "readme.txt"), "Files opened directly inside /home/Desktop/Tools", 10_000)
+                .note("Open Start -> All Apps > to test the macOS-style paginated, searchable overlay (26+ apps across pages)")
+                .mutate(r -> clickText(r, "taskbar", "Start"), "click Start")
+                .await(r -> visible(r, "popup", "All Apps >"), "Start menu shows Most Used, Settings, All Apps >, Console, Exit GUI", 5_000)
+                .mutate(r -> snapshot(r, "desktop_start_menu"), "snapshot: Start menu")
+                .mutate(r -> clickText(r, "popup", "All Apps >"), "click All Apps >")
+                .await(r -> visible(r, "popup", "1/2"), "All Apps overlay paginates across 2 pages", 5_000)
+                .mutate(r -> snapshot(r, "desktop_all_apps"), "snapshot: macOS-style All Apps overlay")
+                .mutate(r -> clickText(r, "popup", ">"), "click > for page 2")
+                .await(r -> visible(r, "popup", "2/2"), "All Apps shows page 2/2", 5_000)
+                .mutate(r -> type(r, "Demo 17"), "type 'Demo 17' into the search box")
+                .await(r -> visible(r, "popup", "Demo 17"), "search filters to Demo 17", 5_000)
+                .await(r -> locate(r, "popup", "Demo 01") == null ? null : "Demo 01 still shown", "control: non-matching Demo 01 hidden", 2_000)
+                .mutate(r -> clickText(r, "popup", "x"), "close All Apps")
+                .note("Open Start, search Notes, launch with Enter, then verify Exit GUI stops the GUI")
+                .mutate(r -> clickText(r, "taskbar", "Start"), "click Start")
+                .await(r -> visible(r, "popup", "Most Used"), "Start menu open", 5_000)
+                .mutate(r -> type(r, "Notes"), "search Notes in Start")
+                .await(r -> visible(r, "popup", "Notes"), "Start search matches Notes", 5_000)
+                .mutate(GuiScenarios::enter, "press Enter to launch Notes")
+                .await(r -> appWindow(r, "notes") != null ? null : "Notes didn't open", "Notes opened from Start search", 20_000)
+                .mutate(r -> clickText(r, "taskbar", "Start"), "click Start again")
+                .await(r -> visible(r, "popup", "Exit GUI"), "Start shows Exit GUI", 5_000)
+                .mutate(r -> clickText(r, "popup", "Exit GUI"), "click Exit GUI")
+                .await(r -> ui(r) != null && !ui(r).isRunning() ? null : "GUI still running", "Exit GUI stops the compositor and returns to console", 10_000);
+        return b.build();
+    }
+
     // Last: static initialisers run in source order, and the scenarios use the constants above.
     static {
         Scenario s = guiBasics();
@@ -685,6 +753,8 @@ public final class GuiScenarios {
         ALL.put(d.name, d);
         Scenario c = guiClientRender();
         ALL.put(c.name, c);
+        Scenario l = desktopLauncher();
+        ALL.put(l.name, l);
     }
 }
 //?}

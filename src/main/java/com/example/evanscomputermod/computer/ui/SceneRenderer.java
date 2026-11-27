@@ -129,8 +129,7 @@ public final class SceneRenderer {
             }
         }
         for (Surface p : sc.popups()) {
-            if (!p.mapped || p.popupDone) continue;
-            if (p.parent != null && p.parent.window != null && !shown(sc, p.parent.window)) continue;
+            if (!popupShown(sc, p)) continue;
             Geo g = geo(display, p, now);
             if (g != null) out.add(new Item(p, g, 255));
         }
@@ -140,6 +139,16 @@ public final class SceneRenderer {
                     display.scale()), 255));
         }
         return out;
+    }
+
+    private static boolean popupShown(Scene sc, Surface p) {
+        for (Surface cur = p; cur != null; cur = cur.parent) {
+            if (!cur.mapped) return false;
+            if (cur.role == UiProto.SurfaceRole.POPUP && cur.popupDone) return false;
+            if (cur.window != null && !shown(sc, cur.window)) return false;
+            if (cur.role == UiProto.SurfaceRole.LAYER && sc.safeMode()) return false;
+        }
+        return true;
     }
 
     private static void addLayer(Scene sc, List<Item> out, UiProto.Layer layer, long now) {

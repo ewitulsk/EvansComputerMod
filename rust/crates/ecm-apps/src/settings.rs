@@ -181,18 +181,25 @@ fn set_default(st: &Shared, sys: &SysRef, input: bool, name: &str) {
         let _ = std::fs::create_dir_all(sys::host_path(&s.root(), "/etc"));
         sys::write_file(&**s, ecm_audio::SOUND_CONF, text.as_bytes())
     };
-    let mut s = st.borrow_mut();
-    match r {
-        Ok(()) => {
-            if input {
-                s.default_input = Some(name.to_string());
-                s.input_level = None;
-            } else {
-                s.default_output = Some(name.to_string());
+    let mut stop_mic = false;
+    {
+        let mut s = st.borrow_mut();
+        match r {
+            Ok(()) => {
+                if input {
+                    s.default_input = Some(name.to_string());
+                    s.input_level = None;
+                    stop_mic = true;
+                } else {
+                    s.default_output = Some(name.to_string());
+                }
+                s.notice = format!("Default {}: {name}", if input { "input" } else { "output" });
             }
-            s.notice = format!("Default {}: {name}", if input { "input" } else { "output" });
+            Err(e) => s.notice = format!("Can't write {}: {e}", ecm_audio::SOUND_CONF),
         }
-        Err(e) => s.notice = format!("Can't write {}: {e}", ecm_audio::SOUND_CONF),
+    }
+    if stop_mic {
+        sys.borrow_mut().mic_level_stop();
     }
 }
 
@@ -228,6 +235,7 @@ fn scan(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
         }
     }
     cx.set_selected("nets", None);
+    cx.set_text("pass", "");
 }
 
 fn join(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
@@ -342,6 +350,7 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
         c = c.child(list().id("nets").children(rows).on_select(move |cx, e| {
             if let EventValue::Index(i) = e.value {
                 ch.borrow_mut().chosen = Some(i);
+                cx.set_text("pass", "");
                 cx.focus("pass");
             }
         }));
@@ -396,7 +405,8 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
                 .style("caption"),
         );
     }
-    for m in &s.cells {
+    for (idx, m) in s.cells.iter().enumerate() {
+        let cid = |base: &str| if idx == 0 { base.to_string() } else { format!("{base}:{idx}") };
         let kw = if compact { 56 } else { 96 };
         let tech = match m.tech.as_str() {
             "lte" => "LTE",
@@ -410,19 +420,19 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
                     .align(Align::Center)
                     .child(label(format!("{} ({} modem)", m.name, tech)).wrap(false))
                     .child(spacer())
-                    .child(label(if m.carrier.is_empty() { "No service".to_string() } else { m.carrier.clone() }).id("cell_carrier").wrap(false))
-                    .child(label(bar_text(m.bars)).id("cell_bars").wrap(false).font(proto::Font::Mono)),
+                    .child(label(if m.carrier.is_empty() { "No service".to_string() } else { m.carrier.clone() }).id(cid("cell_carrier")).wrap(false))
+                    .child(label(bar_text(m.bars)).id(cid("cell_bars")).wrap(false).font(proto::Font::Mono)),
             )
-            .child(kv_w("State", m.message.clone(), kw).id("cell_state"))
-            .child(kv_w("SIM", m.sim.clone(), kw).id("cell_sim"))
-            .child(kv_w("Number", if m.number.is_empty() { "-".to_string() } else { m.number.clone() }, kw).id("cell_number"))
-            .child(kv_w("Calls", m.ims.clone(), kw).id("cell_ims"))
+            .child(kv_w("State", m.message.clone(), kw).id(cid("cell_state")))
+            .child(kv_w("SIM", m.sim.clone(), kw).id(cid("cell_sim")))
+            .child(kv_w("Number", if m.number.is_empty() { "-".to_string() } else { m.number.clone() }, kw).id(cid("cell_number")))
+            .child(kv_w("Calls", m.ims.clone(), kw).id(cid("cell_ims")))
             .child(kv_w("Cell", m.cell.clone(), kw))
             .child(kv_w("Signal", m.signal.clone(), kw))
             .child(kv_w("Address", m.address.clone(), kw))
-            .child(kv_w("Data", m.data.clone(), kw).id("cell_data"));
+            .child(kv_w("Data", m.data.clone(), kw).id(cid("cell_data")));
         let (r, yr) = (st.clone(), sys.clone());
-        c = c.child(toggle("Data roaming").id("roaming").checked(m.roaming).on_change(move |cx, e| {
+        c = c.child(toggle("Data roaming").id(cid("roaming")).checked(m.roaming).on_change(move |cx, e| {
             if let EventValue::Bool(on) = e.value {
                 cell_command(cx, &r, &yr, if on { "roaming on" } else { "roaming off" });
             }
@@ -440,7 +450,7 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
                     r
                 })
                 .collect();
-            c = c.child(list().id("cells").children(rows));
+            c = c.child(list().id(cid("cells")).children(rows));
         }
     }
     let (a, ya) = (st.clone(), sys.clone());
@@ -918,6 +928,7 @@ fn select_section(cx: &mut Ctx, st: &Shared, sys: &SysRef, i: usize) {
     s.section = i.min(SECTIONS.len() - 1);
     s.notice.clear();
     cx.set_selected("sections", Some(s.section));
+    cx.set_scroll("page", 0);
 }
 
 fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {

@@ -319,4 +319,97 @@ public class UiCompositorTest {
         assertEquals(50, last[1], "x in the program's pixels (scale 2)");
         assertEquals(25, last[2]);
     }
+
+    @Test
+    void opacityZeroRectIsSkippedByHitTest() throws Exception {
+        Compositor c = comp(UiLimits.defaults());
+        UiConnection shell = open(c, 10, UiProto.Role.SHELL);
+        UiConnection app = mappedApp(c, shell, 11, 1, 0, 0, 100, 100);
+        app.send(enc(
+                new UiProto.TreeOps(1, List.of(
+                        new UiProto.TreeOp.Create(2, 0, UiCodec.APPEND, UiProto.NodeKind.RECT, List.of(
+                                new UiProto.Prop.X(0), new UiProto.Prop.Y(0), new UiProto.Prop.W(100), new UiProto.Prop.H(100),
+                                new UiProto.Prop.Fill(0x222222FF), new UiProto.Prop.HitId(3))),
+                        new UiProto.TreeOp.Create(3, 0, UiCodec.APPEND, UiProto.NodeKind.RECT, List.of(
+                                new UiProto.Prop.X(0), new UiProto.Prop.Y(0), new UiProto.Prop.W(100), new UiProto.Prop.H(100),
+                                new UiProto.Prop.Fill(0xFF0000FF), new UiProto.Prop.Opacity(0), new UiProto.Prop.HitId(7)))
+                )),
+                new UiProto.Commit(1)));
+        c.tick();
+        got(app, UiProto.Pointer.class); // drain
+        c.pointer(UiProto.PointerKind.MOVE, 20, 20, 0, UiProto.Button.NONE, 0);
+        List<UiProto.Pointer> ptrs = got(app, UiProto.Pointer.class);
+        assertFalse(ptrs.isEmpty());
+        assertEquals(3, ptrs.get(ptrs.size() - 1).hitId(), "opacity-0 overlay must not intercept hit testing");
+    }
+
+    @Test
+    void pixelSurfaceResizeAccountsMemoryExactly() throws Exception {
+        Compositor c = comp(UiLimits.defaults().withResourceBytes(4096));
+        UiConnection shell = open(c, 10, UiProto.Role.SHELL);
+        UiConnection app = open(c, 11, UiProto.Role.APP);
+        // 10x10 RGBA = 400 bytes
+        app.send(enc(new UiProto.SurfaceCreate(1, UiProto.SurfaceKind.PIXELS, UiProto.SurfaceRole.WINDOW, UiProto.Layer.NONE,
+                0, 0, 0, 10, 10, UiProto.PixelFormat.RGBA8888, 1, "px")));
+        c.tick();
+        assertFalse(app.isClosed());
+        // Resize to 20x20 = 1600 bytes (still under 4096 cap)
+        app.send(enc(new UiProto.SurfaceResize(1, 20, 20, UiProto.PixelFormat.RGBA8888, 1)));
+        c.tick();
+        assertFalse(app.isClosed());
+        // Resize repeatedly to 20x20: must not leak/double-charge past 4096 cap
+        for (int i = 0; i < 5; i++) {
+            app.send(enc(new UiProto.SurfaceResize(1, 20, 20, UiProto.PixelFormat.RGBA8888, 1)));
+        }
+        c.tick();
+        assertFalse(app.isClosed(), "repeated resizes must not double-charge memory quota");
+        // Destroy and re-create 30x30 = 3600 bytes: only fits if previous 1600 bytes were freed
+        app.send(enc(new UiProto.SurfaceDestroy(1)));
+        app.send(enc(new UiProto.SurfaceCreate(2, UiProto.SurfaceKind.PIXELS, UiProto.SurfaceRole.WINDOW, UiProto.Layer.NONE,
+                0, 0, 0, 30, 30, UiProto.PixelFormat.RGBA8888, 1, "px2")));
+        c.tick();
+        assertFalse(app.isClosed(), "destroying resized pixel surface must refund its resized byte charge");
+    }
+
+    @Test
+    void watchdogResetsBackoffAfterStableShellRun() throws Exception {
+        Compositor c = comp(UiLimits.defaults());
+        host.nextPid = 60;
+        c.startShell();
+        UiConnection shell1 = open(c, 60, UiProto.Role.SHELL);
+        UiConnection app = mappedApp(c, shell1, 11, 1, 10, 10, 100, 100);
+        // Quick crash pushes backoff up (0 -> 1).
+        shell1.close();
+        host.now += 500;
+        c.tick();
+        assertEquals(2, host.spawned.size());
+        UiConnection shell2 = open(c, 61, UiProto.Role.SHELL);
+        // Run stably for >= 30s, then become unresponsive so watchdog kills it.
+        host.now += 31_000;
+        app.send(enc(new UiProto.SurfaceSetTitle(1, "hang")));
+        c.tick();
+        host.now += 5_001;
+        c.tick();
+        assertTrue(c.safeMode());
+        // Backoff should have reset to 500 ms (not 5000 ms).
+        host.now += 500;
+        c.tick();
+        assertEquals(3, host.spawned.size(), "stable shell run should reset restart backoff to 500 ms");
+    }
+
+    @Test
+    void deltaApplierKeyframeResetsGraphicsModeToConsole() {
+        var display = new com.example.evanscomputermod.computer.TerminalDisplay();
+        display.setDisplayMode(1);
+        assertEquals(1, display.getDisplayMode());
+        var kf = new com.example.evanscomputermod.network.TerminalDeltaPacket.ParsedDelta(
+                com.example.evanscomputermod.network.TerminalDeltaPacket.PACKET_TYPE_KEYFRAME,
+                1L, 0, 0,
+                null, 80, 24, 0, 0, true,
+                null, null, 0, 0,
+                0, List.of(), List.of(), false, null, List.of(), List.of(),
+                0, 0L, 0L, null, null, 0L);
+        com.example.evanscomputermod.network.DeltaApplier.applyKeyframe(display, kf);
+        assertEquals(0, display.getDisplayMode(), "keyframe with displayMode 0 must reset display from graphics to text");
+    }
 }

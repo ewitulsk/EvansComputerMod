@@ -145,6 +145,9 @@ final class Surface {
         return isPixels() ? bh * pscale : contentH;
     }
 
+    /** Resource quota bytes currently charged to {@code conn.resourceBytes} for this surface. */
+    long chargedBytes;
+
     long bytes() {
         return isPixels() ? (long) bw * bh * (4 + TerminalDisplay.bytesPerPixel(format)) : 0;
     }

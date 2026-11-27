@@ -93,8 +93,11 @@ public final class ClientUiSceneHooks {
             DisplayClientHooks.toMain(() -> {
                 ClientUiScenes.Ack ack = ClientUiScenes.onMessage(computerId, displayId, msg, data.length, nowMs(), recvUs);
                 if (ack == null) return;
-                if (ack.generation() <= 0 || ack.missing() != null) RECEIVED.remove(key);
-                else if (already >= 0 && ack.generation() <= already) return; // acked on receipt
+                if (ack.generation() <= 0 || ack.missing() != null) {
+                    // Only clear RECEIVED if the decode thread hasn't already advanced to a newer epoch/generation.
+                    RECEIVED.computeIfPresent(key, (k, cur) ->
+                            (cur[0] == ack.epoch() && (already < 0 || cur[1] <= already)) ? null : cur);
+                } else if (already >= 0 && ack.generation() <= already) return; // acked on receipt
                 send(computerId, displayId, ack.epoch(), ack.generation(), ack.missing(), recvUs);
             });
         });
