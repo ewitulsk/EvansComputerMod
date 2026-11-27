@@ -98,8 +98,8 @@ PROGRAMS
         (edit uses it to leave a question, GUI apps to close a popup),
         press Shift+Esc: the program gets a plain Esc and the screen
         stays open. Ctrl+Esc and Alt+Esc go to the computer as they are
-        (Ctrl+Esc opens the desktop's launcher). No program exits on Esc;
-        Ctrl+C does that.
+        (Ctrl+Esc opens the desktop's Start menu; Alt+Space opens All
+        Apps). No program exits on Esc; Ctrl+C does that.
 
 COPY AND PASTE
     At the Terminal block, drag with the mouse to select text (double

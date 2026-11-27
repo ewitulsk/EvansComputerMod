@@ -91,7 +91,10 @@ public final class Compositor {
     private UiConnection pasteArmed;
     private long pasteArmedAt;
     private int nextNid = 1;
-    private final Map<Integer, Object[]> notifications = new HashMap<>();
+    private static final int MAX_NOTIFICATIONS = 256;
+    private final Map<Integer, Object[]> notifications = new LinkedHashMap<>();
+    private boolean wasAnimating;
+    private boolean deferShowConsole;
     /** Notification actions for apps that had quit, delivered when the app connects again. */
     private final Map<String, List<UiProto.NotificationAction>> pendingActions = new HashMap<>();
     /** {@code OpenFile} paths for apps that haven't connected yet, by pid (open with). */
@@ -275,23 +278,35 @@ public final class Compositor {
         return c;
     }
 
-    synchronized boolean handleAll(UiConnection c, List<UiProto.Message> msgs, int bytes) {
-        try {
-            for (UiProto.Message m : msgs) {
-                if (c.closed) return false;
-                handle(c, m);
+    boolean handleAll(UiConnection c, List<UiProto.Message> msgs, int bytes) {
+        boolean showConsole = false;
+        boolean ok;
+        synchronized (this) {
+            deferShowConsole = false;
+            try {
+                for (UiProto.Message m : msgs) {
+                    if (c.closed) {
+                        ok = false;
+                        return false;
+                    }
+                    handle(c, m);
+                }
+                ok = !c.closed;
+            } catch (UiError e) {
+                disconnectLocked(c, e);
+                ok = false;
+            } catch (RuntimeException e) {
+                host.log("internal error handling a UI message: " + e);
+                disconnectLocked(c, new UiError(UiProto.ErrorCode.INTERNAL, "internal error"));
+                ok = false;
+            } finally {
+                showConsole = deferShowConsole;
+                deferShowConsole = false;
+                drainFails();
             }
-            return !c.closed;
-        } catch (UiError e) {
-            disconnectLocked(c, e);
-            return false;
-        } catch (RuntimeException e) {
-            host.log("internal error handling a UI message: " + e);
-            disconnectLocked(c, new UiError(UiProto.ErrorCode.INTERNAL, "internal error"));
-            return false;
-        } finally {
-            drainFails();
         }
+        if (showConsole) host.showConsole();
+        return ok;
     }
 
     synchronized void fail(UiConnection c, UiError e) {
@@ -319,12 +334,20 @@ public final class Compositor {
     }
 
     private void disconnectLocked(UiConnection c, UiError reason) {
+        disconnectLocked(c, reason, false);
+    }
+
+    private void disconnectLocked(UiConnection c, UiError reason, boolean safeModeAlreadyEntered) {
         if (c.closed && !conns.containsKey(c.id)) return;
         for (Surface s : new ArrayList<>(c.surfaces.values())) destroySurface(s);
         c.surfaces.clear();
         c.resources.clear();
         conns.remove(c.id);
         hotkeyClaims.remove(c.id);
+        // Drop strong references to closed connections in notification records (appId in [2] remains for relaunch).
+        for (Object[] n : notifications.values()) {
+            if (n[0] == c) n[0] = null;
+        }
         MediaEntry ended = media.remove(c.id);
         if (ended != null) {
             UiProto.MediaInfo none = new UiProto.MediaInfo(ended.info().title(), ended.info().artist(), ended.info().album(), 0, 0,
@@ -341,9 +364,11 @@ public final class Compositor {
             List<PermissionAnswer> waiting = new ArrayList<>(permissionWaiters.values());
             permissionWaiters.clear();
             for (PermissionAnswer a : waiting) a.answered(false, false);
-            long ran = host.nowMs() - shellConnectedMs;
-            if (ran >= STABLE_SHELL_MS) backoff = 0;
-            enterSafeMode(reason != null ? "the shell broke the protocol" : "the shell closed its connection", true);
+            if (!safeModeAlreadyEntered) {
+                long ran = host.nowMs() - shellConnectedMs;
+                if (ran >= STABLE_SHELL_MS) backoff = 0;
+                enterSafeMode(reason != null ? "the shell broke the protocol" : "the shell closed its connection", true);
+            }
         }
     }
 
@@ -446,12 +471,14 @@ public final class Compositor {
                 if (res == null) throw UiError.unknown("no resource " + r.id());
                 c.resourceBytes -= res.bytes();
                 damageResourceUsers(c, r.id());
+                requestTick(0);
             }
             case UiProto.HotkeyClaim h -> claimHotkey(c, h);
             case UiProto.PointerLock p -> pointerLock(c, p);
             case UiProto.Launch l -> {
                 if (CONSOLE_APP.equals(l.appId())) {
-                    host.showConsole();
+                    // Defer outside Compositor's lock to prevent AB-BA deadlock with UiManager.
+                    deferShowConsole = true;
                     return;
                 }
                 int pid = host.launch(c.pid, l.appId(), l.args());
@@ -501,7 +528,15 @@ public final class Compositor {
                 if (w != null && w.visible != v.visible()) {
                     w.visible = v.visible();
                     damageWindow(w);
-                    if (!w.visible && w == focused) setFocus(null);
+                    if (!w.visible) {
+                        if (w == focused) setFocus(null);
+                        if (grab == w.surface) grab = null;
+                        if (hover == w.surface) {
+                            deliverPointer(hover, UiProto.PointerKind.LEAVE, pointerX, pointerY, UiProto.Button.NONE, 0);
+                            hover = null;
+                        }
+                    }
+                    requestTick(0);
                 }
             }
             case UiProto.SetOpacity o -> {
@@ -622,7 +657,7 @@ public final class Compositor {
     /** A notification from the system about app {@code appId} (no app connection posts it). */
     public synchronized void postSystem(String appId, String tag, String title, String body) {
         int nid = nextNid++;
-        notifications.put(nid, new Object[]{null, tag, appId});
+        putNotification(nid, new Object[]{null, tag, appId});
         posted.add(new PostedNotification(nid, appId, tag, title, body, host.nowMs()));
         if (posted.size() > 64) posted.remove(0);
         if (shell != null) shell.queue(new UiProto.NotificationPosted(nid, appId, tag, title, body, "", List.of()));
@@ -631,11 +666,18 @@ public final class Compositor {
     /** Post a notification that passed its permission check. */
     private void post(UiConnection c, UiProto.Notify n) {
         int nid = nextNid++;
-        notifications.put(nid, new Object[]{c, n.tag(), c.appId});
+        putNotification(nid, new Object[]{c, n.tag(), c.appId});
         posted.add(new PostedNotification(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), host.nowMs()));
         if (posted.size() > 64) posted.remove(0);
         if (shell != null) {
             shell.queue(new UiProto.NotificationPosted(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
+        }
+    }
+
+    private void putNotification(int nid, Object[] record) {
+        notifications.put(nid, record);
+        while (notifications.size() > MAX_NOTIFICATIONS) {
+            notifications.remove(notifications.keySet().iterator().next());
         }
     }
 
@@ -725,10 +767,11 @@ public final class Compositor {
     private void pickFile(UiConnection c, UiProto.PickFile p) {
         java.util.function.Consumer<String> answer = picked -> {
             String path = picked == null ? "" : picked;
+            // Install the one-file sandbox grant BEFORE queueing FilePicked (which wakes the app).
+            if (!path.isEmpty() && !c.closed) host.filePicked(c.pid, path, true);
             synchronized (Compositor.this) {
                 if (!c.closed) c.queue(new UiProto.FilePicked(p.req(), path));
             }
-            if (!path.isEmpty()) host.filePicked(c.pid, path, true);
         };
         FilePicker picker = filePicker;
         if (picker != null) picker.pick(c.appId, p, answer);
@@ -844,13 +887,15 @@ public final class Compositor {
                 if (s.layer() != UiProto.Layer.NONE) throw UiError.malformed("only layer surfaces have a layer");
             }
         }
+        long charged = 0;
         if (s.kind() == UiProto.SurfaceKind.PIXELS) {
             if (s.format() == UiProto.PixelFormat.NONE) throw UiError.malformed("a pixel surface needs a format");
             checkPixelSize(s.w(), s.h(), s.scale());
-            long bytes = (long) s.w() * s.h() * (4 + TerminalDisplay.bytesPerPixel(s.format().code));
-            charge(c, bytes);
+            charged = (long) s.w() * s.h() * (4 + TerminalDisplay.bytesPerPixel(s.format().code));
+            charge(c, charged);
         }
         Surface sf = new Surface(c, s, parent);
+        sf.chargedBytes = charged;
         c.surfaces.put(sf.id, sf);
         switch (s.role()) {
             case WINDOW -> {
@@ -899,7 +944,8 @@ public final class Compositor {
         for (Surface p : new ArrayList<>(popups)) if (p.parent == s) destroySurface(p);
         c.surfaces.remove(s.id);
         c.nodes -= s.tree != null ? s.tree.size() : 0;
-        c.resourceBytes -= s.bytes();
+        c.resourceBytes -= s.chargedBytes;
+        s.chargedBytes = 0;
         layers.remove(s);
         popups.remove(s);
         if (hover == s) hover = null;
@@ -918,6 +964,7 @@ public final class Compositor {
             }
             if (safeMode) safeLayout();
         }
+        requestTick(0);
     }
 
     private void resize(UiConnection c, UiProto.SurfaceResize r) throws UiError {
@@ -925,10 +972,16 @@ public final class Compositor {
         if (!s.isPixels()) throw UiError.badState("SurfaceResize on a tree surface");
         if (r.format() == UiProto.PixelFormat.NONE) throw UiError.malformed("a pixel surface needs a format");
         checkPixelSize(r.w(), r.h(), r.scale());
-        long old = s.bytes();
+        long old = s.chargedBytes;
         long now = (long) r.w() * r.h() * (4 + TerminalDisplay.bytesPerPixel(r.format().code));
         c.resourceBytes -= old;
-        charge(c, now);
+        try {
+            charge(c, now);
+        } catch (UiError e) {
+            c.resourceBytes += old;
+            throw e;
+        }
+        s.chargedBytes = now;
         s.resizePending = true;
         s.newBw = r.w();
         s.newBh = r.h();
@@ -995,6 +1048,7 @@ public final class Compositor {
             if (s.resizePending) {
                 byte[] raw = s.pendingRaw;
                 s.setBuffer(s.newBw, s.newBh, s.newFormat, s.newScale);
+                s.timed = null; // discard stale timed frames with old dimensions/stride
                 s.pendingRaw = raw;
                 Px.convert(raw, s.format, s.palette, s.bw, s.bh, 0, 0, s.bw, s.bh, s.argb);
                 s.resizePending = false;
@@ -1389,10 +1443,15 @@ public final class Compositor {
         requestTick(0);
     }
 
-    /** The window of a legacy connection, or 0. */
+    /** The primary window of a connection (focused if owned, else surface 1, else any window), or 0. */
     public synchronized int windowOf(UiConnection c) {
-        Surface s = c.surfaces.get(1);
-        return s != null && s.window != null ? s.window.id : 0;
+        if (focused != null && focused.surface.conn == c) return focused.id;
+        Surface s1 = c.surfaces.get(1);
+        if (s1 != null && s1.window != null) return s1.window.id;
+        for (Surface s : c.surfaces.values()) {
+            if (s.window != null) return s.window.id;
+        }
+        return 0;
     }
 
     // =================================================================== shell messages
@@ -1478,7 +1537,10 @@ public final class Compositor {
         if (s.window != null && shell != null) {
             shell.queue(new UiProto.WindowChanged(s.window.id, s.title, s.minW, s.minH, s.maxW, s.maxH));
         }
-        if (safeMode) damage.add(new Box(0, 0, display.deviceW(), SAFE_BAR_H * display.scale()));
+        if (safeMode) {
+            damage.add(new Box(0, 0, display.deviceW(), SAFE_BAR_H * display.scale()));
+            requestTick(0);
+        }
     }
 
     private void pointerLock(UiConnection c, UiProto.PointerLock p) throws UiError {
@@ -1575,6 +1637,11 @@ public final class Compositor {
         pointerY = y;
         buttons = held;
         Surface target = grab != null ? grab : surfaceAt(x, y);
+        if (target != hover && grab == null) {
+            if (hover != null) deliverPointer(hover, UiProto.PointerKind.LEAVE, x, y, UiProto.Button.NONE, 0);
+            hover = target;
+            if (target != null) deliverPointer(target, UiProto.PointerKind.ENTER, x, y, UiProto.Button.NONE, 0);
+        }
         if (kind == UiProto.PointerKind.DOWN) {
             dismissPopups(target);
             if (target != null && grab == null) grab = target;
@@ -1588,11 +1655,6 @@ public final class Compositor {
                 else shell.queue(new UiProto.WindowRequest(target.window.id, UiProto.WindowAction.ACTIVATE, 0));
             }
         }
-        if (target != hover && grab == null) {
-            if (hover != null) deliverPointer(hover, UiProto.PointerKind.LEAVE, x, y, UiProto.Button.NONE, 0);
-            hover = target;
-            if (target != null) deliverPointer(target, UiProto.PointerKind.ENTER, x, y, UiProto.Button.NONE, 0);
-        }
         if (target != null) deliverPointer(target, kind, x, y, button, scroll);
         if (kind == UiProto.PointerKind.UP && held == 0) {
             Surface g = grab;
@@ -1602,6 +1664,8 @@ public final class Compositor {
                 deliverPointer(g, UiProto.PointerKind.LEAVE, x, y, UiProto.Button.NONE, 0);
                 hover = under;
                 if (under != null) deliverPointer(under, UiProto.PointerKind.ENTER, x, y, UiProto.Button.NONE, 0);
+            } else {
+                hover = under;
             }
         }
         drainFails();
@@ -1626,6 +1690,7 @@ public final class Compositor {
     }
 
     private void dismissPopups(Surface target) {
+        boolean any = false;
         for (Surface p : new ArrayList<>(popups)) {
             if (p.popupDone || !p.mapped) continue;
             boolean inside = false;
@@ -1634,8 +1699,10 @@ public final class Compositor {
                 p.popupDone = true;
                 damageSurface(p);
                 p.conn.queue(new UiProto.PopupDone(p.id));
+                any = true;
             }
         }
+        if (any) requestTick(0);
     }
 
     /**
@@ -1654,8 +1721,8 @@ public final class Compositor {
                 swallowed.add(hid);
                 return true;
             }
-            if (down && !repeat && safeMode && hid == HID_TAB && mods == UiProto.Mods.ALT) {
-                cycleFocus();
+            if (down && safeMode && hid == HID_TAB && (mods & UiProto.Mods.MASK) == UiProto.Mods.ALT) {
+                if (!repeat) cycleFocus();
                 swallowed.add(hid);
                 return true;
             }
@@ -1813,14 +1880,15 @@ public final class Compositor {
             }
         }
         drainFails();
-        // Animations damage their windows every refresh.
+        // Animations damage their windows every refresh, plus one final composite after they finish.
         boolean animating = false;
         for (UiWindow w : stack) {
-            if (w.animating(now) || w.animating(now - periodMs() * 2)) {
-                animating |= w.animating(now);
-                damage.add(displayBox());
-            }
+            if (w.animating(now)) animating = true;
         }
+        if (animating || wasAnimating) {
+            damage.add(displayBox());
+        }
+        wasAnimating = animating;
         // Frame pacing: only visible surfaces get Frame (§5). A timed producer gets it when its queue has room.
         boolean framesWaiting = false;
         long nowUs = DisplayClockNow();
@@ -1847,9 +1915,11 @@ public final class Compositor {
         long next = Long.MAX_VALUE;
         if (shell != null) {
             if (shell.unreadAgeMs(now) > limits.shellTimeoutMs()) {
+                long ran = now - shellConnectedMs;
+                if (ran >= STABLE_SHELL_MS) backoff = 0;
                 enterSafeMode("the shell stopped answering", true);
                 UiConnection dead = shell;
-                disconnectLocked(dead, null);
+                disconnectLocked(dead, null, true);
             } else {
                 next = Math.min(next, 1000);
             }
@@ -2210,7 +2280,7 @@ public final class Compositor {
         return out;
     }
 
-    /** Like {@link #locateText} for any open popup surface. */
+    /** Like {@link #locateText} for any open popup surface or frameless shell overlay ({@code shell:*}). */
     public synchronized int[] locatePopupText(String text, boolean contains) {
         for (Surface s : popups) {
             if (s.tree == null || !s.mapped || s.popupDone) continue;
@@ -2218,6 +2288,21 @@ public final class Compositor {
             if (lu == null) continue;
             Geo g = geo(s, host.nowMs());
             if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
+        }
+        return locateShellOverlayText(null, text, contains);
+    }
+
+    /** Like {@link #locateText} for a visible frameless shell overlay window ({@code shell:*}, or exact {@code title}). */
+    public synchronized int[] locateShellOverlayText(String title, String text, boolean contains) {
+        for (int i = stack.size() - 1; i >= 0; i--) {
+            UiWindow w = stack.get(i);
+            if (!w.visible || !w.placed || !w.surface.mapped || w.surface.tree == null) continue;
+            if (w.surface.conn != shell) continue;
+            if (title != null ? !w.surface.title.equals(title) : !w.surface.title.startsWith("shell:")) continue;
+            int[] lu = NodeTree.findText(w.surface.tree.root(), text, contains);
+            if (lu == null) continue;
+            Geo g = geo(w.surface, host.nowMs());
+            if (g != null) return onTop(w.surface, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
         }
         return null;
     }

@@ -78,7 +78,7 @@ public class UiLargeResourceTest {
         computer.executeMain();
         computer.startWorkerThread();
         waitFor(() -> comp() != null && comp().shellConnected(), 30_000, "the desktop shell to connect");
-        waitFor(() -> comp().layerTexts("taskbar").contains("Apps"), 10_000, "the taskbar");
+        waitFor(() -> comp().layerTexts("taskbar").contains("Start"), 10_000, "the taskbar");
     }
 
     @AfterEach

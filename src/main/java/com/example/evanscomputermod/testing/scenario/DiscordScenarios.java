@@ -114,8 +114,9 @@ public final class DiscordScenarios {
         b.send(host, "gui");
         b.expect(host, "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r, host) != null && comp(r, host).shellConnected() ? null : "waiting for the shell", host + "'s desktop is up", 15_000);
-        b.await(r -> clickOn(r, host, "taskbar", "Apps"), host + ": click Apps on the taskbar", 10_000);
-        b.await(r -> clickOn(r, host, "popup", "Discord"), host + ": click Discord in the launcher", 5_000);
+        b.await(r -> clickOn(r, host, "taskbar", "Start"), host + ": click Start on the taskbar", 10_000);
+        b.await(r -> clickOn(r, host, "popup", "All Apps >"), host + ": click All Apps > in Start", 5_000);
+        b.await(r -> clickOn(r, host, "popup", "Discord"), host + ": click Discord in All Apps", 5_000);
         b.await(r -> comp(r, host).layerTexts("permission").contains("Allow Discord to use network?") ? null
                 : "no dialog: " + comp(r, host).layerTexts("permission"), host + ": Discord asks for the network as it looks for backends", 20_000);
         b.await(r -> clickOn(r, host, "permission", "Allow"), host + ": click Allow", 5_000);

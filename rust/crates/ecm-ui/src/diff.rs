@@ -172,9 +172,12 @@ impl TreeState {
                 self.forget(id);
             }
         }
-        // Kind changes leave the old node under the same key until removed:
-        // move those entries aside so the new node gets a fresh id.
-        for &id in &deferred {
+        // Kind changes leave old removed nodes under the same key until the
+        // deferred ancestor is removed at the end: move every surviving removed
+        // node aside so replacement nodes get fresh ids.
+        let mut remaining_removed: Vec<u32> = removed.iter().copied().filter(|id| self.keys.contains_key(id)).collect();
+        remaining_removed.sort_unstable();
+        for id in remaining_removed {
             let key = self.keys[&id].clone();
             if let Some(n) = self.nodes.remove(&key) {
                 let aside = format!("\u{0}removed:{id}");

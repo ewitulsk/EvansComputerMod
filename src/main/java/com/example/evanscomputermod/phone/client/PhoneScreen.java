@@ -130,13 +130,34 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
         return false;
     }
 
+    @Override
+    public boolean shouldCloseOnEsc() {
+        return false;
+    }
+
+    /** Set when an Alt/Ctrl chord ran so macOS Option+letter doesn't also inject a char into the open app. */
+    private boolean chordCharSuppressed;
+
     // ------------------------------------------------------------ keyboard: every key goes to the phone
 
     @Override
     public boolean keyPressed(int key, int scan, int mods) {
+        chordCharSuppressed = false;
         if (key == GLFW.GLFW_KEY_ESCAPE) {
-            onClose();
+            boolean shift = (mods & GLFW.GLFW_MOD_SHIFT) != 0;
+            boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+            boolean alt = (mods & GLFW.GLFW_MOD_ALT) != 0;
+            boolean sup = (mods & GLFW.GLFW_MOD_SUPER) != 0;
+            if (!shift && !ctrl && !alt && !sup) {
+                onClose();
+                return true;
+            }
+            rawKey(key, shift ? (mods & ~GLFW.GLFW_MOD_SHIFT) : mods, true);
+            if (shift && !ctrl && !alt && !sup) type("\u001b");
             return true;
+        }
+        if ((mods & (GLFW.GLFW_MOD_ALT | GLFW.GLFW_MOD_CONTROL)) != 0 && key >= GLFW.GLFW_KEY_A && key <= GLFW.GLFW_KEY_Z) {
+            chordCharSuppressed = true;
         }
         rawKey(key, mods, true);
         String seq = encodeKey(key, mods);
@@ -148,6 +169,38 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
     public boolean keyReleased(int key, int scan, int mods) {
         rawKey(key, mods, false);
         return true;
+    }
+
+    private void releaseHeldInputs() {
+        if (phone == null) {
+            held.clear();
+            buttons = 0;
+            return;
+        }
+        for (int k : new java.util.ArrayList<>(held)) {
+            rawKey(k, 0, false);
+        }
+        held.clear();
+        if (buttons != 0) {
+            int x = Math.max(0, lastX), y = Math.max(0, lastY);
+            for (int b = 0; b <= 2; b++) {
+                byte mask = bit(b);
+                if ((buttons & mask) != 0) {
+                    buttons &= (byte) ~mask;
+                    com.example.evanscomputermod.computer.ui.ClientUiScenes.pointer(phone, IComputerHost.DISPLAY_OWN,
+                            MouseInputPacket.KIND_UP, x, y, b, 0, System.nanoTime() / 1_000_000L);
+                    PacketDistributor.sendToServer(new MouseInputPacket(phone, (byte) IComputerHost.DISPLAY_OWN,
+                            MouseInputPacket.KIND_UP, (short) x, (short) y, buttons, (byte) b, (byte) 0));
+                }
+            }
+            buttons = 0;
+        }
+    }
+
+    @Override
+    public void removed() {
+        releaseHeldInputs();
+        super.removed();
     }
 
     /** GLFW keys held, to tell repeats from presses. */
@@ -177,10 +230,11 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
         }
         if (hid == 0) return;
         keysSent++;
-        com.example.evanscomputermod.computer.ui.ClientUiScenes.key(phone, IComputerHost.DISPLAY_OWN, hid,
+        int protoMods = mods & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK;
+        com.example.evanscomputermod.computer.ui.ClientUiScenes.key(phone, IComputerHost.DISPLAY_OWN, hid, protoMods,
                 action != com.example.evanscomputermod.network.KeyInputPacket.UP, System.nanoTime() / 1_000_000L);
         PacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(phone,
-                (byte) IComputerHost.DISPLAY_OWN, action, hid, mods & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
+                (byte) IComputerHost.DISPLAY_OWN, action, hid, protoMods));
     }
 
     /** VT sequence or control character for a key that doesn't produce typed text, or null. */
@@ -207,6 +261,10 @@ public class PhoneScreen extends Screen implements com.example.evanscomputermod.
 
     @Override
     public boolean charTyped(char c, int mods) {
+        if (chordCharSuppressed) {
+            chordCharSuppressed = false;
+            return true;
+        }
         if (c >= 32 && c != 127) {
             type(String.valueOf(c));
             if (phone != null) com.example.evanscomputermod.computer.ui.ClientUiScenes.typed(phone, IComputerHost.DISPLAY_OWN,

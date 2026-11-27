@@ -822,6 +822,7 @@ public final class PhoneHost implements IComputerHost {
     /** The holder's pass (display pump); the mirror keeps its own low rate, set by the tick. */
     private void syncNow() {
         if (!attached) return;
+        if (!viewerSnapshot.recipients(DISPLAY_MIRROR).isEmpty()) mirrorPending = true;
         List<UUID> own = viewerSnapshot.recipients(DISPLAY_OWN);
         if (!own.isEmpty()) {
             UUID h = own.get(0);
@@ -836,7 +837,6 @@ public final class PhoneHost implements IComputerHost {
                 holderSync.forceKeyframe();
             }
         }
-        if (!viewerSnapshot.recipients(DISPLAY_MIRROR).isEmpty()) mirrorPending = true;
     }
 
     /**

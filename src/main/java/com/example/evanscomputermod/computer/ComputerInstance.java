@@ -2964,6 +2964,10 @@ public class ComputerInstance implements AutoCloseable {
         } else if (td != null) {
             td.setDisplayMode(0);
         }
+        if (!screenDevice.isOwnedByProgram()) {
+            TerminalDisplay sd = mirrorTarget();
+            if (sd != null) sd.setDisplayMode(0);
+        }
         lastPaletteDirtyCounter = -1;
         lastPixelDirtyCounter = -1;
         lastScreenPaletteDirtyCounter = -1;

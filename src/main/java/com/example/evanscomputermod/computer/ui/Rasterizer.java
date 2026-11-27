@@ -405,7 +405,7 @@ public final class Rasterizer {
             if (n.kind == UiProto.NodeKind.GROUP) {
                 int h = hit(n, gx, gy, cs, c, px, py);
                 if (h != 0) return h;
-                if (n.hitId != 0) {
+                if (n.opacity != 0 && n.hitId != 0) {
                     Box b = Box.xywh(gx + n.x * cs, gy + n.y * cs, n.w * cs, n.h * cs);
                     if (b.contains(px, py)) return n.hitId;
                 }

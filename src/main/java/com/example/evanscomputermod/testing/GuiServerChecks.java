@@ -226,12 +226,12 @@ public final class GuiServerChecks {
             }
             if (!desktopReady) {
                 Compositor c = ui.compositor();
-                if (c == null || !c.shellConnected() || !c.layerTexts("taskbar").contains("Apps")) return;
+                if (c == null || !c.shellConnected() || !c.layerTexts("taskbar").contains("Start")) return;
                 List<Compositor.WindowInfo> apps = c.windows().stream().filter(x -> !x.shell() && x.mapped() && x.placed()).toList();
                 if (apps.stream().noneMatch(x -> x.appId().equals("settings")) || apps.stream().noneMatch(x -> x.appId().equals("terminal"))) return;
                 Compositor.WindowInfo term = apps.stream().filter(x -> x.appId().equals("terminal")).findFirst().get();
                 if (c.textsOf(term.id()).stream().noneMatch(t -> t.contains("logged in as"))) return;
-                int[] at = c.locateLayerText("taskbar", "Apps", false);
+                int[] at = c.locateLayerText("taskbar", "Start", false);
                 if (at == null) return;
                 desktopReady = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_p3_desktop {}", ui.status().strip().replace('\n', ';'));

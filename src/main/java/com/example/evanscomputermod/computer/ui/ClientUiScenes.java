@@ -121,8 +121,9 @@ public final class ClientUiScenes {
                 if (!mirror.missing().isEmpty()) {
                     long[] miss = mirror.missing().stream().mapToLong(Long::longValue).toArray();
                     mirror.missing().clear();
-                    Ack a = keyframeRequest(key, mirror.epoch(), nowMs);
-                    return a == null ? null : new Ack(a.epoch(), 0, miss);
+                    // Never throttle missing-image requests behind KEYFRAME_RETRY_MS: otherwise those keys are permanently lost.
+                    LAST_KEYFRAME_REQUEST.put(key, nowMs);
+                    return new Ack(mirror.epoch(), 0, miss);
                 }
                 return new Ack(mirror.epoch(), mirror.generation(), null);
             }
@@ -174,8 +175,13 @@ public final class ClientUiScenes {
 
     /** A key on a display this client draws. */
     public static void key(UUID computerId, int displayId, int hid, boolean down, long nowMs) {
+        key(computerId, displayId, hid, 0, down, nowMs);
+    }
+
+    /** A key with protocol modifier bits on a display this client draws. */
+    public static void key(UUID computerId, int displayId, int hid, int mods, boolean down, long nowMs) {
         UiSceneMirror m = get(computerId, displayId);
-        if (m != null) m.key(hid, down, nowMs);
+        if (m != null) m.key(hid, mods, down, nowMs);
     }
 
     /** Leaving a world: scenes go, images stay (they're addressed by content). */

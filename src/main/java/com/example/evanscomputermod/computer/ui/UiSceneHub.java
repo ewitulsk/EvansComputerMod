@@ -130,6 +130,7 @@ public final class UiSceneHub {
     private int epoch = -1;
     private long headGen;
     private final Map<ViewerKey, Viewer> viewers = new HashMap<>();
+    private volatile boolean anyViewers;
     private final Map<Integer, Long> displayBytes = new HashMap<>();
     private final Deflater deflater = new Deflater(Deflater.BEST_SPEED);
     private long totalBytes, keyframesBuilt;
@@ -338,14 +339,17 @@ public final class UiSceneHub {
      * untimed after the last timed frame). Clients show it after any timed
      * frames still waiting.
      */
-    private void refine(long nowUs, SceneExporter ex) {
-        if (ex == null) return;
+    /** Collect lossy streams that stood still long enough to refine; called under hub lock, refined unlocked. */
+    private List<int[]> collectRefines(long nowUs) {
+        List<int[]> out = null;
         for (TStream st : streams.values()) {
             if (!st.lossyOut || !st.pending.isEmpty() || nowUs - st.lastFrameUs < REFINE_AFTER_US) continue;
-            ex.refine(st.target, st.scope, st.id);
+            if (out == null) out = new ArrayList<>();
+            out.add(new int[]{st.target, st.scope, st.id});
             st.lossyOut = false;
             timedRefines++;
         }
+        return out;
     }
 
     /** The timed messages after {@code from} (tseq), or null when the log doesn't reach back. */
@@ -415,7 +419,9 @@ public final class UiSceneHub {
             v.sentGen = -1;
             v.ackedGen = -1;
             v.timedSent = -1;
+            v.inFlight.clear();
             v.inFlightTimed.clear();
+            v.inFlightBytes = 0;
         }
     }
 
@@ -443,10 +449,11 @@ public final class UiSceneHub {
         Set<UUID> want = new HashSet<>(ex == null ? List.of() : ids);
         long nowMs = System.currentTimeMillis();
         long nowUs = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
+        List<int[]> toRefine;
         synchronized (this) {
             drain();
             drainTimed(nowUs);
-            refine(nowUs, ex);
+            toRefine = ex == null ? null : collectRefines(nowUs);
             for (Viewer v : viewers.values()) {
                 long[] oldest = v.inFlight.peekFirst();
                 long[] oldestT = v.inFlightTimed.peekFirst();
@@ -471,6 +478,11 @@ public final class UiSceneHub {
                 Viewer v = viewers.computeIfAbsent(new ViewerKey(id, displayId), k -> new Viewer());
                 if (v.needsKeyframe || (v.sentGen < headGen && chainFrom(v.sentGen) == null)) wantKeyframe = true;
             }
+            anyViewers = !viewers.isEmpty();
+        }
+        // Refine outside the hub lock to preserve lock order (Compositor -> UiSceneHub, never reverse).
+        if (toRefine != null && ex != null) {
+            for (int[] r : toRefine) ex.refine(r[0], r[1], r[2]);
         }
         SceneExporter.Step kf = null;
         if (wantKeyframe && ex != null) {
@@ -479,6 +491,7 @@ public final class UiSceneHub {
                 keyframesBuilt++;
             }
         }
+        boolean retryKeyframe = false;
         synchronized (this) {
             drain();
             drainTimed(nowUs);
@@ -492,7 +505,12 @@ public final class UiSceneHub {
                     chain = chainFrom(v.sentGen);
                 }
                 if (chain == null) {
-                    if (kf == null || kf.epoch() != epoch || kf.to() != headGen) continue; // next pass
+                    List<SceneExporter.Step> tail = null;
+                    if (kf == null || kf.epoch() != epoch || kf.to() > headGen
+                            || (kf.to() < headGen && (tail = chainFrom(kf.to())) == null)) {
+                        retryKeyframe = true;
+                        continue; // retry on next pass
+                    }
                     resources(key, v, kf.images(), ex, out);
                     out.add(new Object[]{key, kf.data()});
                     v.keyframes++;
@@ -503,6 +521,15 @@ public final class UiSceneHub {
                     v.inFlightTimed.clear();
                     v.inFlightBytes = 0;
                     sent(v, kf.to(), kf.data().length, nowMs);
+                    if (tail != null) {
+                        for (SceneExporter.Step s : tail) {
+                            resources(key, v, s.images(), ex, out);
+                            out.add(new Object[]{key, s.data()});
+                            v.steps++;
+                            v.sentGen = s.to();
+                            sent(v, s.to(), s.data().length, nowMs);
+                        }
+                    }
                     // Frames queued and not shown in the keyframe follow it (the keyframe is "now").
                     for (Map.Entry<Long, TStream> e : streams.entrySet()) {
                         long shown = kf.timedShown().getOrDefault(e.getKey(), 0L);
@@ -546,6 +573,10 @@ public final class UiSceneHub {
         for (Object[] o : out) {
             ViewerKey k = (ViewerKey) o[0];
             sink.send(k.player(), k.displayId(), (byte[]) o[1]);
+        }
+        if (retryKeyframe) {
+            java.util.function.LongConsumer w = waker;
+            if (w != null) w.accept(0L);
         }
     }
 
@@ -670,8 +701,8 @@ public final class UiSceneHub {
         return viewers.containsKey(new ViewerKey(player, displayId));
     }
 
-    public synchronized boolean hasViewers() {
-        return !viewers.isEmpty();
+    public boolean hasViewers() {
+        return anyViewers;
     }
 
     public synchronized int viewerCount() {

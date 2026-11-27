@@ -740,12 +740,13 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             action = com.example.evanscomputermod.network.KeyInputPacket.UP;
         }
         if (hid == 0) return;
+        int protoMods = modifiers & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK;
         com.example.evanscomputermod.computer.ui.ClientUiScenes.key(te.getComputerId(),
-                com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, hid,
+                com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, hid, protoMods,
                 action != com.example.evanscomputermod.network.KeyInputPacket.UP, System.nanoTime() / 1_000_000L);
         ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(
                 te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, action, hid,
-                modifiers & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
+                protoMods));
     }
 
     private void sendText(String text) {
@@ -765,15 +766,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
      * chord (Ctrl+Esc opens the desktop's launcher).
      */
     private void handleEscape(int modifiers) {
-        boolean shift = (modifiers & 1) != 0, ctrl = (modifiers & 2) != 0, alt = (modifiers & 4) != 0;
-        if (!shift && !ctrl && !alt) {
+        boolean shift = (modifiers & 1) != 0, ctrl = (modifiers & 2) != 0, alt = (modifiers & 4) != 0, sup = (modifiers & 8) != 0;
+        if (!shift && !ctrl && !alt && !sup) {
             this.onClose();
             return;
         }
         sendRawKey(256, shift ? modifiers & ~1 : modifiers, true);
         altTyped = false;
-        // Shift+Esc sends plain Esc to console programs; Ctrl+Esc / Alt+Esc are chords (e.g. desktop launcher).
-        if (shift && !ctrl && !alt) {
+        // Shift+Esc sends plain Esc to console programs; Ctrl+Esc / Alt+Esc / Super+Esc are chords.
+        if (shift && !ctrl && !alt && !sup) {
             sendInput("\u001b");
         }
     }
@@ -792,6 +793,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         }
         sendRawKey(keyCode, modifiers, true);
         altTyped = false;
+        // Ctrl+Alt+Backspace is the console/GUI switch chord: never also feed Alt+Backspace (\x1b\b) to the console.
+        if (ctrl && alt && keyCode == 259) {
+            return true;
+        }
 
         if (isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode))) {
             return true;
@@ -937,8 +942,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     private boolean handleCharTyped(int cp) {
         char codePoint = (char) cp;
         if (isControllerChar(codePoint)) return true;
-        if (altTyped) return true;
+        // Always deliver printable chars to GUI text fields (macOS Option+letter produces @, ~, €, etc.);
+        // only gate console TerminalInputPacket on altTyped (which already sent ESC + letter to console).
         if (cp >= 32 && cp != 127) sendText(Character.toString(cp));
+        if (altTyped) return true;
         if (cp >= 32 && cp != 127) {
             // UTF-8 text is fine: the terminal shows the nearest character it can draw.
             sendInput(Character.toString(cp));
@@ -1007,12 +1014,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (isMouseCaptureEligible()) {
+            if (scrollY == 0) return true;
             int[] fb = mouseToGfxPixel(mouseX, mouseY);
             if (fb != null) {
                 byte dir = (byte) (scrollY > 0 ? 1 : -1);
                 sendMouseEvent(MouseInputPacket.KIND_SCROLL, fb[0], fb[1], (byte) 0, dir);
                 return true;
             }
+            return true;
         }
         // The kernel scrolls its scrollback (Shift+Up/Down), or turns them into
         // arrows for a full-screen program.
@@ -1234,17 +1243,19 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
 
     private boolean handleMouseClicked(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
         if (clickControllerToggle(mouseX, mouseY, button)) return true;
-        // In gfx mode, clicks inside the quad forward to the guest instead of starting text selection.
+        // In gfx/GUI mode, clicks inside the quad forward to the guest; clicks in letterbox padding must not fall through to console paste/selection.
         if (isMouseCaptureEligible()) {
             int[] fb = mouseToGfxPixel(mouseX, mouseY);
             if (fb != null) {
                 byte bit = buttonMaskBit(button);
                 if (bit != 0) {
                     lastButtonsHeld |= bit;
+                    lastSentFbX = fb[0];
+                    lastSentFbY = fb[1];
                     sendMouseEvent(MouseInputPacket.KIND_DOWN, fb[0], fb[1], (byte) button, (byte) 0);
-                    return true;
                 }
             }
+            return true;
         }
 
         if (button == 1 && mouseToCharPos(mouseX, mouseY) != null) {
@@ -1296,7 +1307,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         if (bit != 0 && (lastButtonsHeld & bit) != 0) {
             lastButtonsHeld &= (byte) ~bit;
             if (isMouseCaptureEligible()) {
-                int[] fb = mouseToGfxPixel(mouseX, mouseY);
+                int[] fb = mouseToGfxPixel(mouseX, mouseY, true);
                 if (fb == null) {
                     fb = new int[]{Math.max(0, lastSentFbX), Math.max(0, lastSentFbY)};
                 }
@@ -1450,8 +1461,28 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         // Don't update locally - let the server/WASM handle all input and sync back
     }
     
+    private void releaseHeldInputs() {
+        for (int k : new java.util.ArrayList<>(heldKeys)) {
+            sendRawKey(k, 0, false);
+        }
+        heldKeys.clear();
+        if (lastButtonsHeld != 0) {
+            int x = Math.max(0, lastSentFbX);
+            int y = Math.max(0, lastSentFbY);
+            for (int b = 0; b <= 2; b++) {
+                byte bit = buttonMaskBit(b);
+                if ((lastButtonsHeld & bit) != 0) {
+                    lastButtonsHeld &= (byte) ~bit;
+                    sendMouseEvent(MouseInputPacket.KIND_UP, x, y, (byte) b, (byte) 0);
+                }
+            }
+            lastButtonsHeld = 0;
+        }
+    }
+
     @Override
-    public void onClose() {
+    public void removed() {
+        releaseHeldInputs();
         if (controllerOn()) {
             com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(null);
         }
@@ -1459,6 +1490,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
             gfxTexture.close();
             gfxTexture = null;
         }
+        super.removed();
+    }
+
+    @Override
+    public void onClose() {
+        releaseHeldInputs();
         super.onClose();
     }
 

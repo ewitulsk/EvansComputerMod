@@ -106,7 +106,7 @@ final class LegacyWindow implements UiConnection.LegacySink {
         byte[] e = new byte[10];
         java.nio.ByteBuffer.wrap(e).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                 .put(k).putShort((short) x).putShort((short) y).put((byte) buttons)
-                .put((byte) (button > 0 ? button - 1 : 0)).put((byte) Integer.signum(scroll));
+                .put((byte) (button > 0 ? button - 1 : 0)).put((byte) -Integer.signum(scroll));
         synchronized (mouse) {
             if (mouse.size() >= MOUSE_RING) mouse.pollFirst();
             mouse.addLast(e);

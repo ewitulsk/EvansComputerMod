@@ -84,6 +84,27 @@ public final class ClientPrediction {
         return predictions;
     }
 
+    /** Clear all cached references into the mirror's scene tree (called on KEYFRAME reset). */
+    void reset() {
+        hoverSurface = null;
+        hoverHit = 0;
+        pressSurface = null;
+        pressHit = 0;
+        leftDown = false;
+        scrolls.clear();
+        dragA = dragB = null;
+        dragging = false;
+        dragDx = dragDy = 0;
+        dragPlacedX = Integer.MIN_VALUE;
+        typeSurface = null;
+        typeNode = 0;
+        typeServerText = null;
+        typed.setLength(0);
+        typedDeletes = 0;
+        saved.clear();
+        savedIn.clear();
+    }
+
     // ------------------------------------------------------------ input
 
     /**
@@ -146,14 +167,20 @@ public final class ClientPrediction {
         return ok;
     }
 
-    /** A key (HID usage): Backspace removes a predicted or server character before the caret. */
-    boolean key(int hid, boolean down, long clientNowMs) {
-        if (!down || hid != 0x2A) return false;
+    /** A key (HID usage with protocol mods): unmodified Backspace removes one character before the caret. */
+    boolean key(int hid, int mods, boolean down, long clientNowMs) {
+        if (!down || hid != 0x2A || mods != 0) return false;
         undo();
         boolean ok = beginTyping(clientNowMs);
         if (ok) {
-            if (typed.length() > 0) typed.setLength(typed.length() - 1);
-            else typedDeletes++;
+            if (typed.length() > 0) {
+                int len = typed.length();
+                int cut = len >= 2 && Character.isLowSurrogate(typed.charAt(len - 1))
+                        && Character.isHighSurrogate(typed.charAt(len - 2)) ? 2 : 1;
+                typed.setLength(len - cut);
+            } else {
+                typedDeletes++;
+            }
             typeAtMs = clientNowMs;
         }
         redo(clientNowMs);
@@ -241,8 +268,9 @@ public final class ClientPrediction {
         return null;
     }
 
-    /** The deepest scroll group and the topmost drag node containing (px, py), with the drawing geometry. */
+    /** The deepest topmost scroll group and topmost drag node containing (px, py), with the drawing geometry. */
     private static void walk(NodeTree.Node g, int tx, int ty, int s, Box clip, int px, int py, NodeTree.Node[] found) {
+        if (g.opacity == 0) return;
         int gx = tx + g.x * s, gy = ty + g.y * s, cs = s * g.scale;
         if (g.id == 0) {
             gx = tx;
@@ -255,13 +283,7 @@ public final class ClientPrediction {
             c = c == null ? gb : c.intersect(gb);
         }
         if (c != null && !c.contains(px, py)) return;
-        if (g.id != 0) {
-            Box gb = Box.xywh(gx, gy, g.w * s, g.h * s);
-            if (gb.contains(px, py)) {
-                if (g.scroll != 0) found[0] = g;
-                if (g.dragWindow != 0 && found[1] == null) found[1] = g;
-            }
-        }
+        // Visit children in front-to-back order first so topmost (deepest) scroll/drag targets win over occluded siblings.
         List<NodeTree.Node> ch = g.children();
         for (int i = ch.size() - 1; i >= 0; i--) {
             NodeTree.Node n = ch.get(i);
@@ -270,6 +292,13 @@ public final class ClientPrediction {
             } else if (n.dragWindow != 0 && found[1] == null) {
                 Box b = NodeTree.localBox(n).scale(cs).translate(gx, gy);
                 if (b.contains(px, py)) found[1] = n;
+            }
+        }
+        if (g.id != 0) {
+            Box gb = Box.xywh(gx, gy, g.w * s, g.h * s);
+            if (gb.contains(px, py)) {
+                if (g.scroll != 0 && found[0] == null) found[0] = g;
+                if (g.dragWindow != 0 && found[1] == null) found[1] = g;
             }
         }
     }

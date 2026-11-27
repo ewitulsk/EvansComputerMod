@@ -250,7 +250,8 @@ fn desktop_frames_places_stacks_and_focuses_windows() {
     let fs = desk.surface_titled("frame:1");
     assert!(desk.t.has(fs, "Terminal"));
     let tb = desk.d.state.borrow().taskbar;
-    assert!(desk.t.has(tb, "Terminal") && desk.t.has(tb, "09:41") && desk.t.has(tb, "Apps"));
+    let tb_texts = desk.t.of(tb);
+    assert!(desk.t.has(tb, "Terminal") && desk.t.has(tb, "09:41") && desk.t.has(tb, "Start"), "tb texts: {tb_texts:?}");
 
     // A second window cascades on top.
     let out = desk.open(3, 4, "files", "Files");
@@ -346,37 +347,90 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     assert!(!all.iter().any(|m| matches!(m, Message::Launch(_))), "a restarted shell doesn't relaunch the session");
     let tb = desk.d.state.borrow().taskbar;
 
-    // The Apps button opens the launcher popup above the taskbar.
-    let apps = hit(&desk.d.app, tb, "apps");
-    let out = desk.step(click(tb, apps));
-    let pop = out.iter().find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None }).expect("launcher popup");
-    assert_eq!((pop.role, pop.parent), (proto::SurfaceRole::Popup, tb));
-    assert!(pop.y < 0, "above the taskbar");
-    desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
-    for name in ["Terminal", "Files", "Text Editor", "Settings", "Notes", "Visual Programmer", "Pat's Game"] {
-        assert!(desk.t.has(pop.surface, name), "launcher lists {name}");
+    // The Start button opens the frameless shell:start overlay window.
+    let start_btn = hit(&desk.d.app, tb, "start");
+    let out = desk.step(click(tb, start_btn));
+    let start_sf = out
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("start menu window");
+    assert_eq!((start_sf.role, start_sf.title.as_str()), (proto::SurfaceRole::Window, "shell:start"));
+    let out = desk.step(vec![Message::WindowOpened(proto::WindowOpened {
+        window: 50,
+        pid: 1,
+        app_id: "desktop".into(),
+        title: "shell:start".into(),
+        min_w: 0,
+        min_h: 0,
+        max_w: 0,
+        max_h: 0,
+        icon: String::new(),
+        parent: 0,
+    })]);
+    let p = places(&out);
+    let sr = p[&50];
+    assert!(out.iter().any(|m| matches!(m, Message::FocusWindow(f) if f.window == 50)));
+    desk.step(vec![configure(start_sf.surface, 1, sr.2, sr.3, proto::window_states::ACTIVATED)]);
+    for name in ["Most Used", "Terminal", "Files", "Settings", "All Apps >", "Console", "Exit GUI"] {
+        assert!(desk.t.has(start_sf.surface, name), "Start menu shows {name}");
     }
-    let row = desk.d.app.core.window(pop.surface).unwrap().hit_id_of_row("apps", 3).unwrap();
-    let out = desk.step(click(pop.surface, row));
-    assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "settings")));
-    assert!(out.iter().any(|m| matches!(m, Message::SurfaceDestroy(d) if d.surface == pop.surface)));
-    // Apps installed later (the App Store) appear the next time the launcher opens; the Text Editor
-    // system app (open with) is the core Text Editor's twin and isn't listed twice.
+    // Typing in Start's auto-focused search box finds Pat's Game and Enter launches it.
+    desk.step(vec![Message::Text(proto::Text { surface: start_sf.surface, text: "Pat".into() })]);
+    assert!(desk.t.has(start_sf.surface, "Pat's Game"), "search finds Pat's Game");
+    let out = desk.step(vec![Message::Key(proto::Key { surface: start_sf.surface, key: 0x28, mods: 0, down: true, repeat: false })]);
+    assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "dev.pat.game")));
+    assert!(out.iter().any(|m| matches!(m, Message::SurfaceDestroy(d) if d.surface == start_sf.surface)));
+    assert_eq!(desk.d.state.borrow().usage.count("dev.pat.game"), 1, "usage count recorded");
+
+    // Apps installed later (and shadowed system apps) reflect in the macOS-style All Apps overlay.
     for (id, name) in [("dev.new.app", "New App"), ("dev.ecm.editor", "Text Editor")] {
         std::fs::create_dir_all(root.join("apps").join(id)).unwrap();
-        std::fs::write(root.join("apps").join(id).join("app.toml"), format!("name = \"{name}\"
-")).unwrap();
+        std::fs::write(root.join("apps").join(id).join("app.toml"), format!("name = \"{name}\"\n")).unwrap();
     }
-    let out = desk.step(click(tb, apps));
-    let pop = out.iter().find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None }).expect("launcher popup again");
-    desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
-    assert!(desk.t.has(pop.surface, "New App"), "a newly installed app is listed");
+    let all_btn = hit(&desk.d.app, tb, "all_apps");
+    let out = desk.step(click(tb, all_btn));
+    let all_sf = out
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("all apps window");
+    assert_eq!(all_sf.title.as_str(), "shell:apps");
+    let out = desk.step(vec![Message::WindowOpened(proto::WindowOpened {
+        window: 51,
+        pid: 1,
+        app_id: "desktop".into(),
+        title: "shell:apps".into(),
+        min_w: 0,
+        min_h: 0,
+        max_w: 0,
+        max_h: 0,
+        icon: String::new(),
+        parent: 0,
+    })]);
+    let ar = places(&out)[&51];
+    desk.step(vec![configure(all_sf.surface, 1, ar.2, ar.3, proto::window_states::ACTIVATED)]);
+    assert!(desk.t.has(all_sf.surface, "New App"), "a newly installed app is listed in All Apps");
+    assert!(desk.t.has(all_sf.surface, "Most Used:"), "All Apps shows Most Used strip");
     let items = desk.d.state.borrow().launch_items.clone();
     assert!(items.iter().any(|i| i.program == "dev.new.app" && i.label == "New App"));
     assert!(!items.iter().any(|i| i.program == "dev.ecm.editor"), "{items:?}");
-    let row = desk.d.app.core.window(pop.surface).unwrap().hit_id_of_row("apps", items.iter().position(|i| i.program == "dev.new.app").unwrap()).unwrap();
-    let out = desk.step(click(pop.surface, row));
+    // Search "New App" in All Apps and press Enter -> launches by app id.
+    desk.step(vec![Message::Text(proto::Text { surface: all_sf.surface, text: "New App".into() })]);
+    let out = desk.step(vec![Message::Key(proto::Key { surface: all_sf.surface, key: 0x28, mods: 0, down: true, repeat: false })]);
     assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "dev.new.app")), "Launch by app id (the app manager starts it)");
+
+    // Taskbar Settings quick-menu popup opens and launches a specific section.
+    let set_btn = hit(&desk.d.app, tb, "tray:settings");
+    let out = desk.step(click(tb, set_btn));
+    let spop = out
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("settings popup");
+    assert_eq!((spop.role, spop.parent), (proto::SurfaceRole::Popup, tb));
+    desk.step(vec![configure(spop.surface, 1, spop.w, spop.h, 0)]);
+    assert!(desk.t.has(spop.surface, "Appearance"));
+    let row = desk.d.app.core.window(spop.surface).unwrap().hit_id_of_row("settings_quick_menu", 2).unwrap();
+    let out = desk.step(click(spop.surface, row));
+    assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "settings" && l.args == vec!["appearance"])));
 
     // A notification becomes a toast; clicking it invokes it.
     let out = desk.step(vec![Message::NotificationPosted(proto::NotificationPosted {
@@ -417,6 +471,116 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     let theme = out.iter().find_map(|m| if let Message::SetTheme(t) = m { Some(t.theme.clone()) } else { None }).expect("SetTheme");
     assert_eq!(theme.name, "ecm-light");
     assert_eq!(theme.get("bg"), Some(ecm_ui::Theme::named("ecm-light").unwrap().bg));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn desktop_icons_folders_and_scalable_all_apps_overlay() {
+    let root = temp_root("desk_icons_scale");
+    // Install 36 apps so the macOS-style All Apps overlay spans multiple pages.
+    for i in 0..36 {
+        let id = format!("dev.scale.app{i:02}");
+        std::fs::create_dir_all(root.join("apps").join(&id)).unwrap();
+        std::fs::write(root.join("apps").join(&id).join("app.toml"), format!("name = \"Scale {i:02}\"\n")).unwrap();
+    }
+    let host = desktop::FakeHost::default();
+    let m = mock("desktop", 640, 400);
+    let sys = MockSys::new(&root);
+    let d = Desktop::with_host(Box::new(m.clone()), Box::new(sys.clone()), Box::new(host.clone()), &[]).unwrap();
+    let mut desk = Desk { d, m, sys, t: Texts::default() };
+    let (wp, tb) = {
+        let s = desk.d.state.borrow();
+        (s.wallpaper, s.taskbar)
+    };
+    desk.step(vec![configure(wp, 1, 640, 400, 0), configure(tb, 1, 640, desktop::TASKBAR_H, 0)]);
+
+    // First-boot seeding placed traditional app shortcuts on /home/Desktop and drew them on the wallpaper.
+    assert!(root.join("home/Desktop/Terminal.desktop").exists());
+    assert!(desk.t.has(wp, "Terminal") && desk.t.has(wp, "Files") && desk.t.has(wp, "Settings"));
+
+    // Create a desktop folder and move a shortcut into it, then double-click the folder -> opens Files at that folder.
+    ecm_apps::desktop_icons::create_folder(&desk.sys, "Projects").unwrap();
+    ecm_apps::desktop_icons::move_into_folder(&desk.sys, &mut desk.d.state.borrow_mut().desktop_layout, "Files.desktop", "Projects").unwrap();
+    desk.sys.state.borrow_mut().now += 2000;
+    desk.step(vec![]);
+    assert!(desk.t.has(wp, "Projects"), "folder appears on wallpaper");
+    let proj = desk.d.state.borrow().desktop_entries.iter().find(|e| e.file_name == "Projects").cloned().unwrap();
+    let grid = ecm_apps::desktop_icons::DesktopGrid::for_work_area(desktop::work_area(&desk.d.state.borrow().display), false);
+    let (rx, ry, rw, rh) = grid.cell_rect(proj.col, proj.row);
+    let (cx_p, cy_p) = (rx + rw / 2, ry + rh / 2);
+    let wall_hit = hit(&desk.d.app, wp, "wall");
+    desk.step(vec![
+        pointer(wp, proto::PointerKind::Down, cx_p, cy_p, wall_hit, proto::Button::Left),
+        pointer(wp, proto::PointerKind::Up, cx_p, cy_p, wall_hit, proto::Button::Left),
+    ]);
+    desk.sys.state.borrow_mut().now += 100;
+    let out = desk.step(vec![
+        pointer(wp, proto::PointerKind::Down, cx_p, cy_p, wall_hit, proto::Button::Left),
+        pointer(wp, proto::PointerKind::Up, cx_p, cy_p, wall_hit, proto::Button::Left),
+    ]);
+    assert!(
+        out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "files" && l.args == vec!["/home/Desktop/Projects"])),
+        "double-clicking a desktop folder opens it directly in Files: {out:?}"
+    );
+
+    // Open All Apps overlay (42 apps total): paginated across multiple pages, searchable, updates Most Used.
+    let all_btn = hit(&desk.d.app, tb, "all_apps");
+    let out = desk.step(click(tb, all_btn));
+    let all_sf = out
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("all apps overlay");
+    let out = desk.step(vec![Message::WindowOpened(proto::WindowOpened {
+        window: 60,
+        pid: 1,
+        app_id: "desktop".into(),
+        title: "shell:apps".into(),
+        min_w: 0,
+        min_h: 0,
+        max_w: 0,
+        max_h: 0,
+        icon: String::new(),
+        parent: 0,
+    })]);
+    let ar = places(&out)[&60];
+    desk.step(vec![configure(all_sf.surface, 1, ar.2, ar.3, proto::window_states::ACTIVATED)]);
+    assert!(desk.t.has(all_sf.surface, "42 apps"), "shows total app count");
+    assert!(desk.t.has(all_sf.surface, "1/"), "multi-page indicator shown: {:?}", desk.t.of(all_sf.surface));
+    // Step to page 2 with Next button.
+    let next_btn = hit(&desk.d.app, all_sf.surface, "apps:next");
+    desk.step(click(all_sf.surface, next_btn));
+    assert!(desk.t.has(all_sf.surface, "2/"), "moved to page 2: {:?}", desk.t.of(all_sf.surface));
+    // Search for an app on a later page and launch it with Enter.
+    desk.step(vec![text(all_sf.surface, "Scale 31")]);
+    assert!(desk.t.has(all_sf.surface, "Scale 31") && desk.t.has(all_sf.surface, "1 app"));
+    let out = desk.step(vec![key(all_sf.surface, 0x28, 0)]);
+    assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "dev.scale.app31")));
+
+    // Re-open Start -> Scale 31 is now in Most Used, and Exit GUI calls host.stop_gui().
+    let start_btn = hit(&desk.d.app, tb, "start");
+    let out = desk.step(click(tb, start_btn));
+    let start_sf = out
+        .iter()
+        .find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None })
+        .expect("start menu");
+    let out = desk.step(vec![Message::WindowOpened(proto::WindowOpened {
+        window: 61,
+        pid: 1,
+        app_id: "desktop".into(),
+        title: "shell:start".into(),
+        min_w: 0,
+        min_h: 0,
+        max_w: 0,
+        max_h: 0,
+        icon: String::new(),
+        parent: 0,
+    })]);
+    let sr = places(&out)[&61];
+    desk.step(vec![configure(start_sf.surface, 1, sr.2, sr.3, proto::window_states::ACTIVATED)]);
+    assert!(desk.t.has(start_sf.surface, "Scale 31"), "Most Used promotes recently launched app");
+    let exit_btn = hit(&desk.d.app, start_sf.surface, "start:exit_gui");
+    desk.step(click(start_sf.surface, exit_btn));
+    assert!(host.state.borrow().stopped, "Exit GUI stops the GUI host");
     let _ = std::fs::remove_dir_all(root);
 }
 

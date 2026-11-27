@@ -73,7 +73,8 @@ public class ModNetwork {
                 (packet, ctx) -> com.example.evanscomputermod.speaker.client.SpeakerClient.onAudioPacket(packet, ctx));
 
         // The GUI clipboard and the player's real one (both ways).
-        registrar.playToServer(
+        // Push runs on the NETWORK thread alongside KeyInputPacket so Ctrl+V sees the updated clipboard.
+        network.playToServer(
                 ClipboardPackets.Push.TYPE,
                 ClipboardPackets.Push.STREAM_CODEC,
                 ClipboardPackets.Push::handle);

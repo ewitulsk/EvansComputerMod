@@ -17,22 +17,59 @@ pub fn get(text: &str, key: &str) -> Option<String> {
         if k.trim() != key {
             continue;
         }
-        let v = strip_comment(v).trim().to_string();
-        return Some(if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') { v[1..v.len() - 1].to_string() } else { v });
+        let v = strip_comment(v).trim();
+        return Some(if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+            unescape(&v[1..v.len() - 1])
+        } else {
+            v.to_string()
+        });
     }
     None
 }
 
 fn strip_comment(v: &str) -> &str {
     let mut in_str = false;
+    let mut esc = false;
     for (i, c) in v.char_indices() {
-        if c == '"' {
-            in_str = !in_str;
-        } else if c == '#' && !in_str {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+        } else if c == '#' {
             return &v[..i];
         }
     }
     v
+}
+
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some(o) => {
+                    out.push('\\');
+                    out.push(o);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// A TOML string literal.
@@ -101,5 +138,14 @@ mod tests {
         let t3 = set(&t2, "shell", &quote("dev.ecm.desktop"));
         assert!(t3.find("shell =").unwrap() < t3.find("[screen]").unwrap(), "new keys go before the first table");
         assert_eq!(get(&set("", "autostart", "true"), "autostart").as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn quoted_escapes_and_hash_round_trip() {
+        let val = "a\"b#c\\d";
+        let doc = set("", "theme", &quote(val));
+        assert_eq!(get(&doc, "theme").as_deref(), Some(val));
+        let with_comment = format!("theme = {} # trailing comment\n", quote(val));
+        assert_eq!(get(&with_comment, "theme").as_deref(), Some(val));
     }
 }

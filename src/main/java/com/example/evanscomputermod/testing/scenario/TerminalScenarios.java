@@ -443,9 +443,9 @@ public final class TerminalScenarios {
                     GuiScenarios.key(r, ScenarioPlayer.hidOf('v'), CTRL);
                 }, "End, Enter, then Ctrl+V with 'pasted from outside' on the player's clipboard")
                 .await(r -> GuiScenarios.shows(r, "editor", "pasted from outside"), "the Editor pasted the real clipboard", 5_000)
-                .note("The launcher's Console item: back to the console (the GUI keeps running)")
-                .mutate(r -> GuiScenarios.clickText(r, "taskbar", "Apps"), "click Apps on the taskbar")
-                .await(r -> GuiScenarios.visible(r, "popup", "Console"), "the launcher lists Console", 5_000)
+                .note("Start menu's Console item: back to the console (the GUI keeps running)")
+                .mutate(r -> GuiScenarios.clickText(r, "taskbar", "Start"), "click Start on the taskbar")
+                .await(r -> GuiScenarios.visible(r, "popup", "Console"), "Start lists Console", 5_000)
                 .mutate(r -> GuiScenarios.clickText(r, "popup", "Console"), "click Console")
                 .await(r -> GuiScenarios.ui(r) != null && !GuiScenarios.ui(r).guiVisible() ? null : "the GUI is still shown",
                         "the console is shown", 5_000)

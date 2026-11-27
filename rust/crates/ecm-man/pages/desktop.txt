@@ -10,10 +10,21 @@ DESCRIPTION
     taskbar at the bottom of the screen, and a title bar and border
     around every app window.
 
-    The taskbar holds the Apps button (the launcher), one button per
-    open window (click to focus it, click the focused one to minimize
-    it), the tray, Wi-Fi bars (a click opens Settings on Wi-Fi),
-    cellular bars when a modem is fitted, and the clock (HH:MM).
+    The desktop wallpaper shows the files, folders and app shortcuts
+    (.desktop files) inside /home/Desktop on a snap-to-grid layout.
+    Double-click an app shortcut to launch it, a file to open it, or a
+    folder to open it directly in Files. Drag an icon to move it to
+    another grid cell (positions persist in /var/desktop/layout.toml) or
+    drop it onto a folder to move it inside that folder. Right-click the
+    desktop for New Folder, Open in Files, Sort by Name, Appearance and
+    Open Terminal; right-click an icon for Open, Rename (F2) and Delete.
+
+    The taskbar holds the Start button (Ctrl+Esc), the All Apps button
+    (3x3 grid icon, Alt+Space), one button per open window (click to
+    focus it, click the focused one to minimize it), the tray, Wi-Fi
+    bars (a click opens Settings on Wi-Fi), cellular bars when a modem
+    is fitted, the Settings quick-menu button (gear icon), and the clock
+    (HH:MM).
 
     The tray shows an icon for each app that is working in the
     background (in a call, playing audio, a radio, a download,
@@ -34,12 +45,17 @@ DESCRIPTION
     level. It is read twice a second while open; click the speaker
     again or outside it to close it.
 
-    The launcher's Console item goes back to the console (the GUI keeps
-    running; gui show or Ctrl+Alt+Backspace returns). The launcher lists
-    the core apps (Terminal, Files, Text Editor,
-    Settings, Notes, Visual Programmer), then every app installed under
-    /apps, the App Store among them. It is read again each time it
-    opens, so an app you just installed is there at once.
+    The Start menu (Ctrl+Esc) has a live search bar, your Most Used apps
+    (ranked by launches in /var/desktop/usage.toml), All Apps >, Places
+    (Home, Desktop), Settings quick links, Console (returns to the
+    console while the GUI keeps running; gui show or Ctrl+Alt+Backspace
+    returns) and Exit GUI (stops the GUI).
+
+    The All Apps overlay (3x3 taskbar icon, Start > All Apps >, or
+    Alt+Space) shows a macOS-style searchable, paginated grid of every
+    core and installed app under /apps, with a Most Used strip, page
+    dots and arrow/wheel paging so any number of apps scales cleanly.
+    Right-click any app tile for Open or Add to Desktop.
 
     Windows: drag the title bar to move a window; drag its border or a
     corner to resize it. An outline follows the pointer and the window
@@ -82,7 +98,10 @@ KEYS
         working in the background).
 
     Ctrl+Esc
-        Open the launcher.
+        Open the Start menu.
+
+    Alt+Space
+        Open the searchable All Apps overlay.
 
 FILES
     /etc/ui.toml

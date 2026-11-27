@@ -232,8 +232,9 @@ public final class AuthScenarios {
         b.expect("alex", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
         b.await(r -> DiscordScenarios.comp(r, "alex") != null && DiscordScenarios.comp(r, "alex").shellConnected() ? null : "waiting for the shell",
                 "alex's desktop is up", 15_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "alex", "taskbar", "Apps"), "alex: click Apps on the taskbar", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "Discord"), "alex: click Discord in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "taskbar", "Start"), "alex: click Start on the taskbar", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "All Apps >"), "alex: click All Apps > in Start", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "Discord"), "alex: click Discord in All Apps", 5_000);
         b.await(r -> DiscordScenarios.comp(r, "alex").layerTexts("permission").contains("Allow Discord to use network?") ? null
                 : "no dialog: " + DiscordScenarios.comp(r, "alex").layerTexts("permission"), "Discord asks for the network", 20_000);
         b.await(r -> DiscordScenarios.clickOn(r, "alex", "permission", "Allow"), "alex: click Allow", 5_000);
@@ -253,8 +254,9 @@ public final class AuthScenarios {
         b.await(r -> DiscordScenarios.shows(r, "alex", "First time here"), "Other is another realm: a first contact, its own sign-in", 10_000);
 
         b.note("Music keeps its own logins: it asks for Village Accounts too; alex signs in with the same account");
-        b.await(r -> DiscordScenarios.clickOn(r, "alex", "taskbar", "Apps"), "alex: click Apps on the taskbar", 10_000);
-        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "Music"), "alex: click Music in the launcher", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "taskbar", "Start"), "alex: click Start on the taskbar", 10_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "All Apps >"), "alex: click All Apps > in Start", 5_000);
+        b.await(r -> DiscordScenarios.clickOn(r, "alex", "popup", "Music"), "alex: click Music in All Apps", 5_000);
         b.await(r -> DiscordScenarios.comp(r, "alex").layerTexts("permission").contains("Allow Music to use network?") ? null
                 : "no dialog: " + DiscordScenarios.comp(r, "alex").layerTexts("permission"), "Music asks for the network", 20_000);
         b.await(r -> DiscordScenarios.clickOn(r, "alex", "permission", "Allow"), "alex: click Allow", 5_000);

@@ -56,8 +56,9 @@ KEYS
         Switch between the console and the GUI, from either side (like
         gui toggle). Only the side on screen gets the keys. It does
         nothing on an ePhone, which is always in the GUI. The desktop's
-        launcher (Apps) also has a Console item that goes back to the
-        console; type gui show (or press the keys again) to return.
+        Start menu also has Console (returns to the console while the
+        GUI keeps running; type gui show or press the keys again to
+        return) and Exit GUI (like gui stop).
 
 CLIPBOARD
     Copy and paste in GUI apps use your real computer's clipboard: what

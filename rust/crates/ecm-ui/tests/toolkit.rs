@@ -552,3 +552,117 @@ fn notes_sample_runs_its_session() {
     assert_eq!(String::from_utf8(saved).unwrap(), r#"{"notes":["first","milk","eggs é"]}"#);
     let _ = EventValue::None;
 }
+
+#[test]
+fn column_shrinks_scroll_view_and_dialog_traps_focus() {
+    // R1: ScrollView inside Column with tall content shrinks to remaining height and scrolls.
+    let mut rig = Rig::new(|_| {
+        let mut items = column().gap(4);
+        for i in 0..40 {
+            items = items.child(label(format!("item {i}")));
+        }
+        column().gap(4).child(label("Header").id("hdr")).child(scroll_view(items).id("sv")).child(label("Footer").id("ftr"))
+    });
+    rig.configure(200, 120);
+    let win = rig.app.core.window(1).unwrap();
+    let sv = win.rect_of("sv").unwrap();
+    let ftr = win.rect_of("ftr").unwrap();
+    assert!(sv.h > 0 && sv.y + sv.h <= ftr.y, "sv {sv:?} should stay above footer {ftr:?}");
+    assert!(ftr.y + ftr.h <= 120, "footer {ftr:?} should stay inside window");
+    assert!(win.scrollbar_hit_ids("sv").is_some(), "shrunk scroll view must render a scrollbar");
+
+    // R2: Dialog traps Tab focus and clears background focus.
+    let show = Rc::new(RefCell::new(false));
+    let show_v = show.clone();
+    let mut rig = Rig::new(move |_| {
+        let mut s = stack().child(column().child(text_field().id("bg_field")).child(button("Bg").id("bg_btn")));
+        if *show_v.borrow() {
+            s = s.child(dialog("Modal").id("dlg").child(text_field().id("dlg_field")).child(button("OK").id("dlg_ok")));
+        }
+        s
+    });
+    rig.configure(300, 200);
+    rig.app.core.window_mut(1).unwrap().focus(Some("bg_field"));
+    rig.app.core.mark_all_dirty();
+    rig.send(vec![]);
+    assert_eq!(rig.app.core.window(1).unwrap().focused(), Some("#bg_field"));
+
+    *show.borrow_mut() = true;
+    rig.app.core.mark_all_dirty();
+    rig.send(vec![]);
+    assert_eq!(rig.app.core.window(1).unwrap().focused(), None, "background focus cleared when dialog opens");
+
+    // Tab cycles only inside the dialog.
+    rig.send(vec![Message::Key(proto::Key { surface: 1, key: ecm_ui::window::keys::TAB, mods: 0, down: true, repeat: false })]);
+    assert_eq!(rig.app.core.window(1).unwrap().focused(), Some("#dlg_field"));
+    rig.send(vec![Message::Key(proto::Key { surface: 1, key: ecm_ui::window::keys::TAB, mods: 0, down: true, repeat: false })]);
+    assert_eq!(rig.app.core.window(1).unwrap().focused(), Some("#dlg_ok"));
+    rig.send(vec![Message::Key(proto::Key { surface: 1, key: ecm_ui::window::keys::TAB, mods: 0, down: true, repeat: false })]);
+    assert_eq!(rig.app.core.window(1).unwrap().focused(), Some("#dlg_field"));
+}
+
+#[test]
+fn right_click_ignored_on_button_and_popup_done_forwarded() {
+    let clicks = Rc::new(RefCell::new(0usize));
+    let c1 = clicks.clone();
+    let done = Rc::new(RefCell::new(Vec::<u32>::new()));
+    let d1 = done.clone();
+    let mut rig = Rig::new(move |_| {
+        let c2 = c1.clone();
+        button("Go").id("go").on_click(move |cx, _| {
+            *c2.borrow_mut() += 1;
+            cx.popup_menu(10, 10, ["One", "Two"], |_, _| {});
+        })
+    });
+    rig.app.on_message(move |_, m| {
+        if let Message::PopupDone(p) = m {
+            d1.borrow_mut().push(p.surface);
+        }
+    });
+    rig.configure(200, 120);
+    let hit = rig.app.core.window(1).unwrap().hit_id_of("go").unwrap();
+    // R11: right click does not activate button.
+    rig.send(vec![
+        Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Down, x: 10, y: 10, buttons: proto::buttons::RIGHT, button: proto::Button::Right, scroll_x: 0, scroll_y: 0, hit_id: hit }),
+        Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Up, x: 10, y: 10, buttons: 0, button: proto::Button::Right, scroll_x: 0, scroll_y: 0, hit_id: hit }),
+    ]);
+    assert_eq!(*clicks.borrow(), 0, "right-click must not fire button on_click");
+
+    // Left click activates button and opens popup (surface 2).
+    rig.send(vec![
+        Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Down, x: 10, y: 10, buttons: proto::buttons::LEFT, button: proto::Button::Left, scroll_x: 0, scroll_y: 0, hit_id: hit }),
+        Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Up, x: 10, y: 10, buttons: 0, button: proto::Button::Left, scroll_x: 0, scroll_y: 0, hit_id: hit }),
+    ]);
+    assert_eq!(*clicks.borrow(), 1);
+    let popup_surface = rig.app.core.windows.iter().find(|w| w.surface != 1).unwrap().surface;
+    // R9: PopupDone closes popup AND still notifies app's on_message.
+    rig.send(vec![Message::PopupDone(proto::PopupDone { surface: popup_surface })]);
+    assert_eq!(*done.borrow(), vec![popup_surface]);
+    assert!(rig.app.core.window(popup_surface).is_none());
+}
+
+#[test]
+fn diff_nested_kind_change_with_survivor_allocates_fresh_id() {
+    use ecm_ui::diff::{SceneNode, TreeState};
+    let mut ts = TreeState::new();
+    let mut b1 = SceneNode::new("b", NodeKind::Group, vec![]);
+    b1.children.push(SceneNode::new("c", NodeKind::Text, vec![Prop::Text("keep".into())]));
+    let mut a1 = SceneNode::new("a", NodeKind::Group, vec![]);
+    a1.children.push(b1);
+    let ops1 = ts.update(&[a1]);
+    let mut model = Model::default();
+    model.apply(&ops1);
+    let old_b = ts.id_of("b").unwrap();
+
+    // Both "a" and "b" change kind (Group -> Rect), while "c" survives at the root.
+    let new = vec![
+        SceneNode::new("a", NodeKind::Rect, vec![Prop::W(20)]),
+        SceneNode::new("b", NodeKind::Rect, vec![Prop::W(10)]),
+        SceneNode::new("c", NodeKind::Text, vec![Prop::Text("keep".into())]),
+    ];
+    let ops2 = ts.update(&new);
+    model.apply(&ops2);
+    let new_b = ts.id_of("b").unwrap();
+    assert_ne!(old_b, new_b, "nested removed node with kind change must get a fresh id");
+    assert!(model.text_id("keep").is_some(), "surviving grandchild stays in tree");
+}

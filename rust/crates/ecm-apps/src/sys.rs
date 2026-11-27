@@ -382,6 +382,10 @@ pub fn make_dir(sys: &dyn Sys, path: &str) -> Result<(), String> {
     std::fs::create_dir(host_path(&sys.root(), path)).map_err(|e| e.to_string())
 }
 
+pub fn make_dir_all(sys: &dyn Sys, path: &str) -> Result<(), String> {
+    std::fs::create_dir_all(host_path(&sys.root(), path)).map_err(|e| e.to_string())
+}
+
 pub fn remove(sys: &dyn Sys, path: &str) -> Result<(), String> {
     let p = host_path(&sys.root(), path);
     if p.is_dir() {
@@ -712,7 +716,9 @@ mod host {
                 }
                 let ctl = format!("/dev/micctl.{name}");
                 let rate = ctl_value(&ctl, "rate").unwrap_or(48000).max(8000) as usize;
-                let frame = (ctl_value(&ctl, "bits").unwrap_or(16) as usize / 8) * ctl_value(&ctl, "channels").unwrap_or(1).max(1) as usize;
+                let bits = ctl_value(&ctl, "bits").unwrap_or(16).max(8) as usize;
+                let channels = ctl_value(&ctl, "channels").unwrap_or(1).max(1) as usize;
+                let frame = (bits / 8).max(1) * channels;
                 let file = &mut m.iter_mut().find(|(n, _)| n == name)?.1;
                 // 50 ms (waits the first time), then whatever this stream has captured since.
                 let mut peak = -99;
@@ -720,7 +726,7 @@ mod host {
                 for _ in 0..4 {
                     let mut buf = vec![0u8; want.max(1) * frame];
                     let n = file.read(&mut buf).ok()?;
-                    let samples: Vec<i16> = if frame % 2 == 0 {
+                    let samples: Vec<i16> = if bits >= 16 {
                         buf[..n].chunks_exact(frame).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
                     } else {
                         buf[..n].chunks_exact(frame).map(|b| ((b[0] as i16) - 128) << 8).collect()

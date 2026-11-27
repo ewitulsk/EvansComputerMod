@@ -44,5 +44,11 @@ public final class GuiTests {
     public static void gui_client_render(GameTestHelper h) {
         TestDriver.scenario(h, NS, GuiScenarios.ALL.get("gui_client_render"), true);
     }
+
+    /** Desktop icons & folders, Start menu, Settings quick menu, and scalable All Apps overlay. */
+    @GameTest(template = "gametest_empty", timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".launcher")
+    public static void desktop_launcher(GameTestHelper h) {
+        TestDriver.scenario(h, NS, GuiScenarios.ALL.get("desktop_launcher"), true);
+    }
 }
 //?}

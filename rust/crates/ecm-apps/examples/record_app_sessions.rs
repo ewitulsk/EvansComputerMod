@@ -452,11 +452,11 @@ fn desktop_apps() -> Vec<u8> {
     let toast = d.state.borrow().toasts[0].clone();
     shell.push(&[configure(toast.surface, 1, 240, toast.height, 0)]);
     turn_desk(&mut d);
-    // The Apps button, clicked where the compositor draws the taskbar.
+    // The Start button, clicked where the compositor draws the taskbar.
     let tb = d.state.borrow().taskbar;
     let (b, hit) = {
         let win = d.app.core.window(tb).unwrap();
-        (win.rect_of("apps").unwrap(), win.hit_id_of("apps").unwrap())
+        (win.rect_of("start").unwrap(), win.hit_id_of("start").unwrap())
     };
     let (lx, ly) = (b.x + b.w / 2, b.y + b.h / 2);
     let (x, y) = (lx, h - desktop::TASKBAR_H + ly);
@@ -465,14 +465,21 @@ fn desktop_apps() -> Vec<u8> {
     let p = |kind, buttons, button| Message::Pointer(proto::Pointer { surface: tb, kind, x: lx, y: ly, buttons, button, scroll_x: 0, scroll_y: 0, hit_id: hit });
     shell.push(&[p(proto::PointerKind::Enter, 0, proto::Button::None), p(proto::PointerKind::Down, proto::buttons::LEFT, proto::Button::Left), p(proto::PointerKind::Up, 0, proto::Button::Left)]);
     turn_desk(&mut d);
-    let pop = d.state.borrow().launcher.unwrap();
-    let (pw, ph) = {
-        // The popup asked for its size in SurfaceCreate: the compositor configures it with that.
-        let st = s.borrow();
-        let msgs = scan_creates(&st.out);
-        msgs.into_iter().rev().find(|c| c.surface == pop && c.role == proto::SurfaceRole::Popup).map(|c| (c.w, c.h)).unwrap()
-    };
-    shell.push(&[configure(pop, 1, pw, ph, 0)]);
+    let ov = d.state.borrow().overlay.as_ref().unwrap().clone();
+    shell.push(&[Message::WindowOpened(proto::WindowOpened {
+        window: 99,
+        pid: 1,
+        app_id: "dev.ecm.desktop".into(),
+        title: "shell:start".into(),
+        min_w: 0,
+        min_h: 0,
+        max_w: 0,
+        max_h: 0,
+        icon: String::new(),
+        parent: 0,
+    })]);
+    turn_desk(&mut d);
+    shell.push(&[configure(ov.surface, 1, ov.rect.2, ov.rect.3, proto::window_states::ACTIVATED)]);
     turn_desk(&mut d);
     s.borrow_mut().advance(0);
     s.borrow_mut().snap("desktop_apps");

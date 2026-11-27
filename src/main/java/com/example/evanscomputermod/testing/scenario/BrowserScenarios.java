@@ -227,11 +227,14 @@ public final class BrowserScenarios {
 
     /** {@link #openBrowser} where the Browser opens on {@code opened} (a Tech Village house PC: its village's website). */
     static void openBrowserTo(Scenario.Builder b, Pc pc, Function<ScenarioRun, String> opened, String what) {
-        b.await(r -> pc.comp(r) != null && pc.comp(r).locateLayerText("taskbar", "Apps", false) != null ? null : "no taskbar yet",
-                "the taskbar's Apps button is drawn", 10_000);
-        b.mutate(r -> pc.click(r, pc.comp(r).locateLayerText("taskbar", "Apps", false)), "click Apps on the taskbar");
-        b.await(r -> pc.comp(r).locatePopupText("Browser", false) != null ? null : "the launcher has no Browser",
-                "the launcher lists Browser (a system app)", 5_000);
+        b.await(r -> pc.comp(r) != null && pc.comp(r).locateLayerText("taskbar", "Start", false) != null ? null : "no taskbar yet",
+                "the taskbar's Start button is drawn", 10_000);
+        b.mutate(r -> pc.click(r, pc.comp(r).locateLayerText("taskbar", "Start", false)), "click Start on the taskbar");
+        b.await(r -> pc.comp(r).locatePopupText("All Apps >", false) != null ? null : "Start has no All Apps >",
+                "Start menu opens", 5_000);
+        b.mutate(r -> pc.click(r, pc.comp(r).locatePopupText("All Apps >", false)), "click All Apps >");
+        b.await(r -> pc.comp(r).locatePopupText("Browser", false) != null ? null : "All Apps has no Browser",
+                "All Apps lists Browser (a system app)", 5_000);
         b.mutate(r -> pc.click(r, pc.comp(r).locatePopupText("Browser", false)), "click Browser");
         b.await(r -> pc.window(r) != null ? null : "no Browser window yet", "the Browser opens", 20_000);
         b.await(opened, what, 30_000);
